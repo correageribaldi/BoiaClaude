@@ -28,7 +28,7 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
   console.log('✅ Bot conectado ao WhatsApp com sucesso!');
-  console.log('📊 Assistente Financeiro BoiaClaude está rodando.');
+  console.log('📊 Cronos Assistente Pessoal está rodando.');
   console.log('   Envie "ajuda" no WhatsApp para ver os comandos.');
 });
 
@@ -68,7 +68,7 @@ client.on('message', async (msg) => {
 });
 
 async function start() {
-  console.log('🚀 Iniciando Assistente Financeiro BoiaClaude...');
+  console.log('🚀 Iniciando Cronos Assistente Pessoal...');
 
   // Inicializar tabelas no PostgreSQL
   try {

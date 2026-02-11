@@ -26,7 +26,7 @@ function parseData(str) {
 }
 
 function ajudaMsg() {
-  return `🤖 *Assistente Financeiro BoiaClaude*
+  return `🤖 *Cronos Assistente Pessoal*
 
 Olá! Eu ajudo você a controlar suas finanças pelo WhatsApp.
 
@@ -56,7 +56,7 @@ _Exemplos:_
 • *categorias* - Ver categorias disponíveis
 • *ajuda* - Mostrar esta mensagem
 
-🤖 *Linguagem natural (IA):*
+💬 *Linguagem natural:*
 Você também pode escrever naturalmente:
 • _"gastei 50 reais no almoço"_
 • _"recebi 3000 de salário"_
@@ -263,8 +263,7 @@ async function handleMensagemIA(usuarioId, texto) {
       `📝 Descrição: ${descricao}\n` +
       `📂 Categoria: ${categoria || 'Outros'}\n` +
       `📅 Data: ${dataExibir}\n` +
-      `🆔 ID: #${result.lastInsertRowid}\n\n` +
-      `🤖 _Interpretado por IA_`;
+      `🆔 ID: #${result.lastInsertRowid}`;
   }
 
   return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
@@ -303,7 +302,7 @@ async function handleConsulta(usuarioId, consulta) {
     }
   }
 
-  msg += `\n🤖 _Consulta por IA_`;
+  // sem rodapé de IA
   return msg;
 }
 
