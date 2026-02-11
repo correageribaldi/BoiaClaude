@@ -1,5 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
+const { interpretarMensagem } = require('./ai');
 
 function parseValor(str) {
   // Aceita formatos: 100 | 100.50 | 100,50 | 1.000,50 | R$ 100,50
@@ -55,10 +56,16 @@ _Exemplos:_
 🗑️ *Outros:*
 • *excluir* <id> - Excluir um lançamento
 • *categorias* - Ver categorias disponíveis
-• *ajuda* - Mostrar esta mensagem`;
+• *ajuda* - Mostrar esta mensagem
+
+🤖 *Linguagem natural (IA):*
+Você também pode escrever naturalmente:
+• _"gastei 50 reais no almoço"_
+• _"recebi 3000 de salário"_
+• _"paguei 120 de conta de luz ontem"_`;
 }
 
-function handleMessage(usuarioId, texto) {
+async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
 
@@ -93,8 +100,8 @@ function handleMessage(usuarioId, texto) {
     return handleExcluir(usuarioId, msg);
   }
 
-  // Mensagem não reconhecida
-  return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
+  // Mensagem não reconhecida → tentar interpretar com IA
+  return await handleMensagemIA(usuarioId, msg);
 }
 
 function handleTransacao(usuarioId, msg) {
@@ -200,6 +207,54 @@ function handleExcluir(usuarioId, msg) {
   }
 
   return `🗑️ Lançamento #${id} excluído com sucesso!`;
+}
+
+async function handleMensagemIA(usuarioId, texto) {
+  const resultado = await interpretarMensagem(texto);
+
+  if (!resultado) {
+    return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
+  }
+
+  if (resultado.acao === 'nenhuma') {
+    return `Não identifiquei uma transação financeira na sua mensagem.\n\nDigite *ajuda* para ver como registrar despesas e receitas.`;
+  }
+
+  if (resultado.acao === 'comando') {
+    return `Parece que você quer usar um comando. Tente digitar: *${resultado.dica || 'ajuda'}*`;
+  }
+
+  if (resultado.acao === 'transacao') {
+    const { tipo, valor, descricao, categoria, data } = resultado;
+
+    if (!tipo || !valor || !descricao) {
+      return `Não consegui extrair todas as informações. Tente ser mais específico.\n\nExemplo: _"gastei 50 reais no almoço"_`;
+    }
+
+    if (valor <= 0) {
+      return `❌ O valor precisa ser positivo.`;
+    }
+
+    // Converter data dd/mm/aaaa para yyyy-mm-dd
+    let dataFormatada = null;
+    if (data) {
+      dataFormatada = parseData(data);
+    }
+
+    const result = db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFormatada);
+    const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
+    const dataExibir = dataFormatada ? fmt.formatarData(dataFormatada) : 'Hoje';
+
+    return `${emoji} *${tipo.charAt(0).toUpperCase() + tipo.slice(1)} registrada!*\n\n` +
+      `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
+      `📝 Descrição: ${descricao}\n` +
+      `📂 Categoria: ${categoria || 'Outros'}\n` +
+      `📅 Data: ${dataExibir}\n` +
+      `🆔 ID: #${result.lastInsertRowid}\n\n` +
+      `🤖 _Interpretado por IA_`;
+  }
+
+  return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
 }
 
 module.exports = { handleMessage };

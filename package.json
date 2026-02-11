@@ -16,9 +16,10 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "whatsapp-web.js": "^1.26.0",
+    "better-sqlite3": "^11.7.0",
+    "openai": "^6.21.0",
     "puppeteer-core": "^24.0.0",
     "qrcode-terminal": "^0.12.0",
-    "better-sqlite3": "^11.7.0"
+    "whatsapp-web.js": "^1.26.0"
   }
 }

@@ -57,7 +57,7 @@ client.on('message', async (msg) => {
   const usuarioId = msg.from;
 
   try {
-    const resposta = handleMessage(usuarioId, texto);
+    const resposta = await handleMessage(usuarioId, texto);
     await msg.reply(resposta);
   } catch (error) {
     console.error('Erro ao processar mensagem:', error);
@@ -66,6 +66,11 @@ client.on('message', async (msg) => {
 });
 
 console.log('🚀 Iniciando Assistente Financeiro BoiaClaude...');
+if (process.env.OPENAI_API_KEY) {
+  console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');
+} else {
+  console.log('⚠️  OPENAI_API_KEY não configurada - IA desabilitada, apenas comandos diretos.');
+}
 client.initialize();
 
 // Graceful shutdown
