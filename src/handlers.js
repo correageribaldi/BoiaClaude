@@ -3,7 +3,6 @@ const fmt = require('./formatters');
 const { interpretarMensagem } = require('./ai');
 
 function parseValor(str) {
-  // Aceita formatos: 100 | 100.50 | 100,50 | 1.000,50 | R$ 100,50
   const limpo = str.replace(/r\$\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
   const valor = parseFloat(limpo);
   if (isNaN(valor) || valor <= 0) return null;
@@ -12,7 +11,6 @@ function parseValor(str) {
 
 function parseData(str) {
   if (!str) return null;
-  // Aceita dd/mm/aaaa ou dd/mm
   const partes = str.trim().split('/');
   if (partes.length === 2) {
     const [dia, mes] = partes;
@@ -62,15 +60,17 @@ _Exemplos:_
 Você também pode escrever naturalmente:
 • _"gastei 50 reais no almoço"_
 • _"recebi 3000 de salário"_
-• _"paguei 120 de conta de luz ontem"_`;
+• _"paguei 120 de conta de luz ontem"_
+• _"quanto gastei com comida nos últimos 3 dias?"_
+• _"quais foram minhas despesas esta semana?"_`;
 }
 
 async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
 
-  // Comando: ajuda / menu / help / start
-  if (['ajuda', 'menu', 'help', '/start', 'oi', 'olá', 'ola', 'hi', 'hello'].includes(lower)) {
+  // Comando: ajuda / menu / help
+  if (['ajuda', 'menu', 'help', '/start'].includes(lower)) {
     return ajudaMsg();
   }
 
@@ -80,7 +80,7 @@ async function handleMessage(usuarioId, texto) {
     return `📂 *Categorias disponíveis:*\n\n${cats.map(c => `• ${c}`).join('\n')}`;
   }
 
-  // Comando: despesa / receita
+  // Comando: despesa / receita (direto)
   if (lower.startsWith('despesa ') || lower.startsWith('receita ')) {
     return await handleTransacao(usuarioId, msg);
   }
@@ -100,13 +100,13 @@ async function handleMessage(usuarioId, texto) {
     return await handleExcluir(usuarioId, msg);
   }
 
-  // Mensagem não reconhecida → tentar interpretar com IA
+  // IA interpreta tudo: saudações, transações, consultas, etc.
   return await handleMensagemIA(usuarioId, msg);
 }
 
 async function handleTransacao(usuarioId, msg) {
   const partes = msg.split(/\s+/);
-  const tipo = partes[0].toLowerCase(); // despesa ou receita
+  const tipo = partes[0].toLowerCase();
 
   if (partes.length < 3) {
     return `❌ Formato: *${tipo}* <valor> <descrição> [categoria] [data]\n\nExemplo: ${tipo} 50 Almoço restaurante Alimentação`;
@@ -117,7 +117,6 @@ async function handleTransacao(usuarioId, msg) {
     return `❌ Valor inválido: "${partes[1]}"\n\nUse formatos como: 50 | 100,50 | 1.500,00`;
   }
 
-  // Tentar identificar data (último argumento no formato dd/mm ou dd/mm/aaaa)
   let data = null;
   let fimDescricao = partes.length;
   const ultimaParte = partes[partes.length - 1];
@@ -126,11 +125,9 @@ async function handleTransacao(usuarioId, msg) {
     fimDescricao--;
   }
 
-  // Tentar identificar categoria (verificar se alguma palavra bate com categorias)
   const categorias = await db.listarCategorias();
   let categoria = null;
 
-  // Checar se a penúltima (ou última, se não tem data) palavra é uma categoria
   const possivelCat = partes[fimDescricao - 1];
   const catEncontrada = categorias.find(c => c.toLowerCase() === possivelCat.toLowerCase());
   if (catEncontrada && fimDescricao > 3) {
@@ -158,7 +155,6 @@ async function handleTransacao(usuarioId, msg) {
 async function handleResumo(usuarioId, msg) {
   const lower = msg.toLowerCase().trim();
 
-  // Resumo anual
   if (lower.startsWith('resumo anual')) {
     const partes = lower.split(/\s+/);
     const ano = partes[2] && /^\d{4}$/.test(partes[2]) ? parseInt(partes[2]) : undefined;
@@ -166,12 +162,10 @@ async function handleResumo(usuarioId, msg) {
     return fmt.formatarResumoAnual(resumo);
   }
 
-  // Resumo mensal
   const partes = lower.split(/\s+/);
   let mes, ano;
 
   if (partes[1]) {
-    // resumo 01 ou resumo 01/2025
     const subPartes = partes[1].split('/');
     mes = parseInt(subPartes[0]);
     if (subPartes[1]) ano = parseInt(subPartes[1]);
@@ -213,17 +207,35 @@ async function handleMensagemIA(usuarioId, texto) {
   const resultado = await interpretarMensagem(texto);
 
   if (!resultado) {
+    // Fallback se IA não disponível
+    const saudacoes = ['oi', 'olá', 'ola', 'hi', 'hello', 'bom dia', 'boa tarde', 'boa noite', 'e aí', 'eai'];
+    if (saudacoes.some(s => texto.toLowerCase().includes(s))) {
+      return ajudaMsg();
+    }
     return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
   }
 
-  if (resultado.acao === 'nenhuma') {
-    return `Não identifiquei uma transação financeira na sua mensagem.\n\nDigite *ajuda* para ver como registrar despesas e receitas.`;
+  // Saudação - resposta amigável da IA
+  if (resultado.acao === 'saudacao') {
+    return resultado.resposta;
   }
 
+  // Consulta - buscar no banco e formatar resultado
+  if (resultado.acao === 'consulta') {
+    return await handleConsulta(usuarioId, resultado);
+  }
+
+  // Mensagem não financeira - resposta gentil da IA
+  if (resultado.acao === 'nenhuma') {
+    return resultado.resposta || `Não identifiquei uma transação financeira na sua mensagem.\n\nDigite *ajuda* para ver como registrar despesas e receitas.`;
+  }
+
+  // Comando sugerido
   if (resultado.acao === 'comando') {
     return `Parece que você quer usar um comando. Tente digitar: *${resultado.dica || 'ajuda'}*`;
   }
 
+  // Transação via IA
   if (resultado.acao === 'transacao') {
     const { tipo, valor, descricao, categoria, data } = resultado;
 
@@ -235,15 +247,16 @@ async function handleMensagemIA(usuarioId, texto) {
       return `❌ O valor precisa ser positivo.`;
     }
 
-    // Converter data dd/mm/aaaa para yyyy-mm-dd
-    let dataFormatada = null;
-    if (data) {
-      dataFormatada = parseData(data);
+    // data já vem em YYYY-MM-DD do novo prompt
+    let dataFinal = data || null;
+    // Se vier no formato dd/mm/aaaa (fallback), converter
+    if (dataFinal && dataFinal.includes('/')) {
+      dataFinal = parseData(dataFinal);
     }
 
-    const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFormatada);
+    const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal);
     const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
-    const dataExibir = dataFormatada ? fmt.formatarData(dataFormatada) : 'Hoje';
+    const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
 
     return `${emoji} *${tipo.charAt(0).toUpperCase() + tipo.slice(1)} registrada!*\n\n` +
       `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
@@ -255,6 +268,43 @@ async function handleMensagemIA(usuarioId, texto) {
   }
 
   return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
+}
+
+async function handleConsulta(usuarioId, consulta) {
+  const filtros = {
+    tipo: consulta.tipo || null,
+    categoria: consulta.categoria || null,
+    dataInicio: consulta.dataInicio || null,
+    dataFim: consulta.dataFim || null,
+    descricao: consulta.descricao || null,
+  };
+
+  const [transacoes, totais] = await Promise.all([
+    db.consultarTransacoes(usuarioId, filtros),
+    db.consultarTotalTransacoes(usuarioId, filtros),
+  ]);
+
+  if (totais.quantidade === 0) {
+    return `🔍 *${consulta.pergunta || 'Consulta'}*\n\nNenhum lançamento encontrado para esta busca.`;
+  }
+
+  let msg = `🔍 *${consulta.pergunta || 'Consulta'}*\n\n`;
+  msg += `💰 *Total:* ${fmt.formatarMoeda(totais.total)} (${totais.quantidade} lançamento${totais.quantidade > 1 ? 's' : ''})\n`;
+
+  if (transacoes.length > 0) {
+    msg += `\n📋 *Detalhes:*\n`;
+    for (const t of transacoes.slice(0, 10)) {
+      const emoji = t.tipo === 'receita' ? '🟢' : '🔴';
+      msg += `${emoji} ${fmt.formatarData(t.data)} | ${fmt.formatarMoeda(t.valor)} | _${t.descricao}_ (${t.categoria})\n`;
+    }
+
+    if (transacoes.length > 10) {
+      msg += `\n_... e mais ${transacoes.length - 10} lançamentos_`;
+    }
+  }
+
+  msg += `\n🤖 _Consulta por IA_`;
+  return msg;
 }
 
 module.exports = { handleMessage };

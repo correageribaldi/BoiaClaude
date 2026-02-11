@@ -130,6 +130,79 @@ async function excluirTransacao(usuarioId, transacaoId) {
   return { changes: result.rowCount };
 }
 
+async function consultarTransacoes(usuarioId, filtros = {}) {
+  const { tipo, categoria, dataInicio, dataFim, descricao, limite } = filtros;
+  let query = `
+    SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data
+    FROM transacoes
+    WHERE usuario_id = $1
+  `;
+  const params = [usuarioId];
+  let idx = 2;
+
+  if (tipo) {
+    query += ` AND tipo = $${idx++}`;
+    params.push(tipo);
+  }
+  if (categoria) {
+    query += ` AND categoria ILIKE $${idx++}`;
+    params.push(`%${categoria}%`);
+  }
+  if (dataInicio) {
+    query += ` AND data >= $${idx++}`;
+    params.push(dataInicio);
+  }
+  if (dataFim) {
+    query += ` AND data <= $${idx++}`;
+    params.push(dataFim);
+  }
+  if (descricao) {
+    query += ` AND descricao ILIKE $${idx++}`;
+    params.push(`%${descricao}%`);
+  }
+
+  query += ` ORDER BY data DESC, id DESC LIMIT $${idx}`;
+  params.push(limite || 20);
+
+  const result = await pool.query(query, params);
+  return result.rows;
+}
+
+async function consultarTotalTransacoes(usuarioId, filtros = {}) {
+  const { tipo, categoria, dataInicio, dataFim, descricao } = filtros;
+  let query = `
+    SELECT COALESCE(SUM(valor), 0)::float as total, COUNT(*)::int as quantidade
+    FROM transacoes
+    WHERE usuario_id = $1
+  `;
+  const params = [usuarioId];
+  let idx = 2;
+
+  if (tipo) {
+    query += ` AND tipo = $${idx++}`;
+    params.push(tipo);
+  }
+  if (categoria) {
+    query += ` AND categoria ILIKE $${idx++}`;
+    params.push(`%${categoria}%`);
+  }
+  if (dataInicio) {
+    query += ` AND data >= $${idx++}`;
+    params.push(dataInicio);
+  }
+  if (dataFim) {
+    query += ` AND data <= $${idx++}`;
+    params.push(dataFim);
+  }
+  if (descricao) {
+    query += ` AND descricao ILIKE $${idx++}`;
+    params.push(`%${descricao}%`);
+  }
+
+  const result = await pool.query(query, params);
+  return result.rows[0];
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -144,4 +217,6 @@ module.exports = {
   resumoAnual,
   excluirTransacao,
   listarCategorias,
+  consultarTransacoes,
+  consultarTotalTransacoes,
 };
