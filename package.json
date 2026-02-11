@@ -1,0 +1,23 @@
+{
+  "name": "boia-claude-whatsapp-financeiro",
+  "version": "1.0.0",
+  "description": "Assistente financeiro pessoal via WhatsApp - cadastro de despesas, receitas e resumos",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "financeiro",
+    "bot",
+    "despesas",
+    "receitas"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "whatsapp-web.js": "^1.26.0",
+    "qrcode-terminal": "^0.12.0",
+    "better-sqlite3": "^11.7.0"
+  }
+}
