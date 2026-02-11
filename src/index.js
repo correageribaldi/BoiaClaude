@@ -2,10 +2,14 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { handleMessage } = require('./handlers');
 
+const CHROMIUM_PATH = process.env.CHROMIUM_PATH
+  || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
+
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
     headless: true,
+    executablePath: CHROMIUM_PATH,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
