@@ -17,6 +17,7 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.7.0",
+    "dotenv": "^17.2.4",
     "openai": "^6.21.0",
     "puppeteer-core": "^24.0.0",
     "qrcode-terminal": "^0.12.0",

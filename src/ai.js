@@ -1,7 +1,13 @@
 const OpenAI = require('openai');
 const db = require('./database');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai;
+function getOpenAI() {
+  if (!openai) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 const SYSTEM_PROMPT = `Você é um assistente financeiro que interpreta mensagens de usuários em português brasileiro.
 Sua tarefa é extrair informações financeiras da mensagem e retornar APENAS um JSON válido (sem markdown, sem texto extra).
@@ -42,7 +48,7 @@ async function interpretarMensagem(texto) {
     const hoje = new Date();
     const dataHoje = hoje.toLocaleDateString('pt-BR');
 
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
       messages: [
         { role: 'system', content: prompt },
