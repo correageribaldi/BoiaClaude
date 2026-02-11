@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { handleMessage } = require('./handlers');
+const db = require('./database');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
@@ -66,13 +67,28 @@ client.on('message', async (msg) => {
   }
 });
 
-console.log('🚀 Iniciando Assistente Financeiro BoiaClaude...');
-if (process.env.OPENAI_API_KEY) {
-  console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');
-} else {
-  console.log('⚠️  OPENAI_API_KEY não configurada - IA desabilitada, apenas comandos diretos.');
+async function start() {
+  console.log('🚀 Iniciando Assistente Financeiro BoiaClaude...');
+
+  // Inicializar tabelas no PostgreSQL
+  try {
+    await db.initTables();
+    console.log('🗄️  Banco de dados PostgreSQL conectado e tabelas criadas.');
+  } catch (err) {
+    console.error('❌ Erro ao conectar no PostgreSQL:', err.message);
+    process.exit(1);
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');
+  } else {
+    console.log('⚠️  OPENAI_API_KEY não configurada - IA desabilitada, apenas comandos diretos.');
+  }
+
+  client.initialize();
 }
-client.initialize();
+
+start();
 
 // Graceful shutdown
 process.on('SIGINT', () => {

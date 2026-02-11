@@ -1,36 +1,25 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { Pool } = require('pg');
 
-const DB_PATH = path.join(__dirname, '..', process.env.DB_NAME || 'financeiro.db');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
-let db;
-
-function getDb() {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initTables();
-  }
-  return db;
-}
-
-function initTables() {
-  db.exec(`
+async function initTables() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS categorias (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       nome TEXT NOT NULL UNIQUE
     );
 
     CREATE TABLE IF NOT EXISTS transacoes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       usuario_id TEXT NOT NULL,
       tipo TEXT NOT NULL CHECK(tipo IN ('despesa', 'receita')),
-      valor REAL NOT NULL,
+      valor NUMERIC(12,2) NOT NULL,
       descricao TEXT NOT NULL,
       categoria TEXT,
-      data TEXT NOT NULL DEFAULT (date('now')),
-      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+      data DATE NOT NULL DEFAULT CURRENT_DATE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
     CREATE INDEX IF NOT EXISTS idx_transacoes_usuario
@@ -41,39 +30,43 @@ function initTables() {
       ON transacoes(tipo);
   `);
 
-  // Inserir categorias padrão
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
     'Freelance', 'Investimentos', 'Outros'
   ];
 
-  const insert = db.prepare('INSERT OR IGNORE INTO categorias (nome) VALUES (?)');
   for (const cat of categoriasPadrao) {
-    insert.run(cat);
+    await pool.query(
+      'INSERT INTO categorias (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING',
+      [cat]
+    );
   }
 }
 
-function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data) {
-  const stmt = getDb().prepare(`
-    INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  return stmt.run(usuarioId, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0]);
+async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data) {
+  const result = await pool.query(
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id`,
+    [usuarioId, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0]]
+  );
+  return { lastInsertRowid: result.rows[0].id };
 }
 
-function listarTransacoes(usuarioId, tipo, limite) {
-  const stmt = getDb().prepare(`
-    SELECT id, tipo, valor, descricao, categoria, data
-    FROM transacoes
-    WHERE usuario_id = ? AND (? IS NULL OR tipo = ?)
-    ORDER BY data DESC, id DESC
-    LIMIT ?
-  `);
-  return stmt.all(usuarioId, tipo, tipo, limite || 10);
+async function listarTransacoes(usuarioId, tipo, limite) {
+  const result = await pool.query(
+    `SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data
+     FROM transacoes
+     WHERE usuario_id = $1 AND ($2::text IS NULL OR tipo = $2)
+     ORDER BY data DESC, id DESC
+     LIMIT $3`,
+    [usuarioId, tipo, limite || 10]
+  );
+  return result.rows;
 }
 
-function resumoMensal(usuarioId, mes, ano) {
+async function resumoMensal(usuarioId, mes, ano) {
   const agora = new Date();
   const m = mes || agora.getMonth() + 1;
   const a = ano || agora.getFullYear();
@@ -81,66 +74,70 @@ function resumoMensal(usuarioId, mes, ano) {
   const inicioMes = `${a}-${mesStr}-01`;
   const fimMes = `${a}-${mesStr}-31`;
 
-  const stmt = getDb().prepare(`
-    SELECT
-      tipo,
-      SUM(valor) as total,
-      COUNT(*) as quantidade
-    FROM transacoes
-    WHERE usuario_id = ?
-      AND data >= ? AND data <= ?
-    GROUP BY tipo
-  `);
-  const totais = stmt.all(usuarioId, inicioMes, fimMes);
+  const totaisResult = await pool.query(
+    `SELECT
+       tipo,
+       SUM(valor)::float as total,
+       COUNT(*)::int as quantidade
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND data >= $2 AND data <= $3
+     GROUP BY tipo`,
+    [usuarioId, inicioMes, fimMes]
+  );
 
-  const stmtCat = getDb().prepare(`
-    SELECT
-      categoria,
-      tipo,
-      SUM(valor) as total,
-      COUNT(*) as quantidade
-    FROM transacoes
-    WHERE usuario_id = ?
-      AND data >= ? AND data <= ?
-    GROUP BY categoria, tipo
-    ORDER BY total DESC
-  `);
-  const porCategoria = stmtCat.all(usuarioId, inicioMes, fimMes);
+  const catResult = await pool.query(
+    `SELECT
+       categoria,
+       tipo,
+       SUM(valor)::float as total,
+       COUNT(*)::int as quantidade
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND data >= $2 AND data <= $3
+     GROUP BY categoria, tipo
+     ORDER BY total DESC`,
+    [usuarioId, inicioMes, fimMes]
+  );
 
-  return { mes: m, ano: a, totais, porCategoria };
+  return { mes: m, ano: a, totais: totaisResult.rows, porCategoria: catResult.rows };
 }
 
-function resumoAnual(usuarioId, ano) {
+async function resumoAnual(usuarioId, ano) {
   const a = ano || new Date().getFullYear();
 
-  const stmt = getDb().prepare(`
-    SELECT
-      substr(data, 6, 2) as mes,
-      tipo,
-      SUM(valor) as total,
-      COUNT(*) as quantidade
-    FROM transacoes
-    WHERE usuario_id = ?
-      AND data >= ? AND data <= ?
-    GROUP BY mes, tipo
-    ORDER BY mes
-  `);
-  return { ano: a, meses: stmt.all(usuarioId, `${a}-01-01`, `${a}-12-31`) };
+  const result = await pool.query(
+    `SELECT
+       TO_CHAR(data, 'MM') as mes,
+       tipo,
+       SUM(valor)::float as total,
+       COUNT(*)::int as quantidade
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND data >= $2 AND data <= $3
+     GROUP BY mes, tipo
+     ORDER BY mes`,
+    [usuarioId, `${a}-01-01`, `${a}-12-31`]
+  );
+  return { ano: a, meses: result.rows };
 }
 
-function excluirTransacao(usuarioId, transacaoId) {
-  const stmt = getDb().prepare(`
-    DELETE FROM transacoes WHERE id = ? AND usuario_id = ?
-  `);
-  return stmt.run(transacaoId, usuarioId);
+async function excluirTransacao(usuarioId, transacaoId) {
+  const result = await pool.query(
+    'DELETE FROM transacoes WHERE id = $1 AND usuario_id = $2',
+    [transacaoId, usuarioId]
+  );
+  return { changes: result.rowCount };
 }
 
-function listarCategorias() {
-  return getDb().prepare('SELECT nome FROM categorias ORDER BY nome').all().map(r => r.nome);
+async function listarCategorias() {
+  const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
+  return result.rows.map(r => r.nome);
 }
 
 module.exports = {
-  getDb,
+  pool,
+  initTables,
   adicionarTransacao,
   listarTransacoes,
   resumoMensal,

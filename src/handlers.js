@@ -76,35 +76,35 @@ async function handleMessage(usuarioId, texto) {
 
   // Comando: categorias
   if (lower === 'categorias') {
-    const cats = db.listarCategorias();
+    const cats = await db.listarCategorias();
     return `📂 *Categorias disponíveis:*\n\n${cats.map(c => `• ${c}`).join('\n')}`;
   }
 
   // Comando: despesa / receita
   if (lower.startsWith('despesa ') || lower.startsWith('receita ')) {
-    return handleTransacao(usuarioId, msg);
+    return await handleTransacao(usuarioId, msg);
   }
 
   // Comando: resumo
   if (lower.startsWith('resumo')) {
-    return handleResumo(usuarioId, msg);
+    return await handleResumo(usuarioId, msg);
   }
 
   // Comando: lista
   if (lower.startsWith('lista')) {
-    return handleLista(usuarioId, msg);
+    return await handleLista(usuarioId, msg);
   }
 
   // Comando: excluir
   if (lower.startsWith('excluir ')) {
-    return handleExcluir(usuarioId, msg);
+    return await handleExcluir(usuarioId, msg);
   }
 
   // Mensagem não reconhecida → tentar interpretar com IA
   return await handleMensagemIA(usuarioId, msg);
 }
 
-function handleTransacao(usuarioId, msg) {
+async function handleTransacao(usuarioId, msg) {
   const partes = msg.split(/\s+/);
   const tipo = partes[0].toLowerCase(); // despesa ou receita
 
@@ -127,7 +127,7 @@ function handleTransacao(usuarioId, msg) {
   }
 
   // Tentar identificar categoria (verificar se alguma palavra bate com categorias)
-  const categorias = db.listarCategorias();
+  const categorias = await db.listarCategorias();
   let categoria = null;
 
   // Checar se a penúltima (ou última, se não tem data) palavra é uma categoria
@@ -143,7 +143,7 @@ function handleTransacao(usuarioId, msg) {
     return `❌ Informe uma descrição para o lançamento.`;
   }
 
-  const result = db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data);
+  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data);
   const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
   const dataFormatada = data ? fmt.formatarData(data) : 'Hoje';
 
@@ -155,14 +155,14 @@ function handleTransacao(usuarioId, msg) {
     `🆔 ID: #${result.lastInsertRowid}`;
 }
 
-function handleResumo(usuarioId, msg) {
+async function handleResumo(usuarioId, msg) {
   const lower = msg.toLowerCase().trim();
 
   // Resumo anual
   if (lower.startsWith('resumo anual')) {
     const partes = lower.split(/\s+/);
     const ano = partes[2] && /^\d{4}$/.test(partes[2]) ? parseInt(partes[2]) : undefined;
-    const resumo = db.resumoAnual(usuarioId, ano);
+    const resumo = await db.resumoAnual(usuarioId, ano);
     return fmt.formatarResumoAnual(resumo);
   }
 
@@ -177,22 +177,22 @@ function handleResumo(usuarioId, msg) {
     if (subPartes[1]) ano = parseInt(subPartes[1]);
   }
 
-  const resumo = db.resumoMensal(usuarioId, mes, ano);
+  const resumo = await db.resumoMensal(usuarioId, mes, ano);
   return fmt.formatarResumoMensal(resumo);
 }
 
-function handleLista(usuarioId, msg) {
+async function handleLista(usuarioId, msg) {
   const lower = msg.toLowerCase().trim();
   let tipo = null;
 
   if (lower.includes('despesa')) tipo = 'despesa';
   else if (lower.includes('receita')) tipo = 'receita';
 
-  const transacoes = db.listarTransacoes(usuarioId, tipo, 10);
+  const transacoes = await db.listarTransacoes(usuarioId, tipo, 10);
   return fmt.formatarListaTransacoes(transacoes);
 }
 
-function handleExcluir(usuarioId, msg) {
+async function handleExcluir(usuarioId, msg) {
   const partes = msg.split(/\s+/);
   const idStr = partes[1]?.replace('#', '');
   const id = parseInt(idStr);
@@ -201,7 +201,7 @@ function handleExcluir(usuarioId, msg) {
     return `❌ Informe o ID do lançamento para excluir.\n\nExemplo: excluir 5`;
   }
 
-  const result = db.excluirTransacao(usuarioId, id);
+  const result = await db.excluirTransacao(usuarioId, id);
   if (result.changes === 0) {
     return `❌ Lançamento #${id} não encontrado.`;
   }
@@ -241,7 +241,7 @@ async function handleMensagemIA(usuarioId, texto) {
       dataFormatada = parseData(data);
     }
 
-    const result = db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFormatada);
+    const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFormatada);
     const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
     const dataExibir = dataFormatada ? fmt.formatarData(dataFormatada) : 'Hoje';
 

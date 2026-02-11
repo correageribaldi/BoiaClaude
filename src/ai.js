@@ -42,7 +42,7 @@ async function interpretarMensagem(texto) {
   }
 
   try {
-    const categorias = db.listarCategorias().join(', ');
+    const categorias = (await db.listarCategorias()).join(', ');
     const prompt = SYSTEM_PROMPT.replace('{{CATEGORIAS}}', categorias);
 
     const hoje = new Date();
