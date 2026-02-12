@@ -78,6 +78,30 @@ Agora me diz como você quer começar:
 *3.* Ver tudo que eu posso fazer (eu te mando a lista completa)`;
 }
 
+function foraDoEscopoMsg() {
+  return `Desculpa, mas eu não consigo te ajudar com isso agora 😅
+
+Mas olha tudo que eu posso fazer por você:
+
+💰 *Finanças*
+• Registrar despesas e receitas (texto, áudio ou foto)
+• Organizar por categoria
+• Ver resumo do mês ou do ano
+• Controlar contas pendentes e saldo
+
+⏰ *Lembretes*
+• Criar lembretes únicos (_"me lembre daqui 30 min..."_)
+• Criar lembretes recorrentes (_"todo dia às 8h..."_)
+• Listar e cancelar lembretes
+
+📊 *Consultas*
+• Perguntar quanto gastou em algo (_"quanto gastei com comida?"_)
+• Ver lista de lançamentos
+• Ver saldo e pendentes
+
+É só mandar uma mensagem e eu resolvo! 💪`;
+}
+
 function ajudaMsg() {
   return `🤖 *Cronos Assistente Pessoal*
 
@@ -388,7 +412,7 @@ async function handleLiquidar(usuarioId, msg) {
 
 async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   if (!resultado) {
-    return fallbackMsg || `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
+    return fallbackMsg || foraDoEscopoMsg();
   }
 
   // Saudação - resposta amigável da IA
@@ -416,9 +440,9 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return resultado.resposta;
   }
 
-  // Mensagem não financeira - resposta gentil da IA
+  // Mensagem fora do escopo - mostra o que o bot sabe fazer
   if (resultado.acao === 'nenhuma') {
-    return resultado.resposta || `Não identifiquei uma transação financeira na sua mensagem.\n\nDigite *ajuda* para ver como registrar despesas e receitas.`;
+    return foraDoEscopoMsg();
   }
 
   // Comando sugerido
@@ -481,7 +505,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return msg;
   }
 
-  return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
+  return foraDoEscopoMsg();
 }
 
 async function handleMensagemIA(usuarioId, texto) {
