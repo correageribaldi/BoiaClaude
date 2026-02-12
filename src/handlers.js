@@ -529,8 +529,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
       return fmt.formatarPendentes(pendentes);
     }
     if (resultado.dica === 'resumo') {
-      const resumo = await db.resumoMensal(usuarioId);
-      return fmt.formatarResumoMensal(resumo);
+      // Chamar handleResumo para gerar gráfico também
+      return await handleResumo(usuarioId, 'resumo');
     }
     if (resultado.dica === 'lista') {
       const transacoes = await db.listarTransacoes(usuarioId, null, 10);
