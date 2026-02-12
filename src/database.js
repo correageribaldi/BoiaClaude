@@ -40,6 +40,24 @@ async function initTables() {
       ON transacoes(status);
   `);
 
+  // Tabela para controlar lembretes enviados (evitar duplicatas)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lembretes_enviados (
+      id SERIAL PRIMARY KEY,
+      transacao_id INTEGER NOT NULL REFERENCES transacoes(id) ON DELETE CASCADE,
+      usuario_id TEXT NOT NULL,
+      rodada INTEGER NOT NULL CHECK(rodada IN (1, 2, 3)),
+      data_envio DATE NOT NULL DEFAULT CURRENT_DATE,
+      enviado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(transacao_id, rodada, data_envio)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lembretes_data
+      ON lembretes_enviados(data_envio);
+    CREATE INDEX IF NOT EXISTS idx_lembretes_transacao
+      ON lembretes_enviados(transacao_id);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -267,6 +285,45 @@ async function calcularSaldos(usuarioId) {
   };
 }
 
+// Buscar transações pendentes que vencem hoje ou já venceram (para lembretes)
+async function buscarPendentesParaLembrete(rodada) {
+  const result = await pool.query(
+    `SELECT t.id, t.usuario_id, t.tipo, t.valor::float, t.descricao, t.categoria,
+            TO_CHAR(t.data, 'YYYY-MM-DD') as data
+     FROM transacoes t
+     WHERE t.status = 'pendente'
+       AND t.data <= CURRENT_DATE
+       AND NOT EXISTS (
+         SELECT 1 FROM lembretes_enviados le
+         WHERE le.transacao_id = t.id
+           AND le.rodada = $1
+           AND le.data_envio = CURRENT_DATE
+       )
+     ORDER BY t.usuario_id, t.data ASC`,
+    [rodada]
+  );
+  return result.rows;
+}
+
+// Registrar que um lembrete foi enviado
+async function registrarLembreteEnviado(transacaoId, usuarioId, rodada) {
+  await pool.query(
+    `INSERT INTO lembretes_enviados (transacao_id, usuario_id, rodada, data_envio)
+     VALUES ($1, $2, $3, CURRENT_DATE)
+     ON CONFLICT (transacao_id, rodada, data_envio) DO NOTHING`,
+    [transacaoId, usuarioId, rodada]
+  );
+}
+
+// Verificar se a transação já foi paga (para parar lembretes futuros)
+async function transacaoAindaPendente(transacaoId) {
+  const result = await pool.query(
+    `SELECT status FROM transacoes WHERE id = $1`,
+    [transacaoId]
+  );
+  return result.rows[0]?.status === 'pendente';
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -286,4 +343,7 @@ module.exports = {
   liquidarTransacao,
   listarPendentes,
   calcularSaldos,
+  buscarPendentesParaLembrete,
+  registrarLembreteEnviado,
+  transacaoAindaPendente,
 };

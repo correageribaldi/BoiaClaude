@@ -4,6 +4,7 @@ const qrcode = require('qrcode-terminal');
 const { handleMessage, handleImageMessage } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
+const { iniciarLembretes } = require('./lembretes');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
@@ -31,6 +32,9 @@ client.on('ready', () => {
   console.log('✅ Bot conectado ao WhatsApp com sucesso!');
   console.log('📊 Cronos Assistente Pessoal está rodando.');
   console.log('   Envie "ajuda" no WhatsApp para ver os comandos.');
+
+  // Iniciar sistema de lembretes automáticos
+  iniciarLembretes(client);
 });
 
 client.on('authenticated', () => {
