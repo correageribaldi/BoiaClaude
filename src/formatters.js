@@ -148,7 +148,6 @@ function formatarPendentes(transacoes) {
   msg += `━━━━━━━━━━━━━━━\n`;
   if (totalDespesas > 0) msg += `💸 *Total a pagar:* ${formatarMoeda(totalDespesas)}\n`;
   if (totalReceitas > 0) msg += `💰 *Total a receber:* ${formatarMoeda(totalReceitas)}\n`;
-  msg += `\n_Para liquidar: *pagar #ID* ou *receber #ID*_`;
 
   return msg;
 }

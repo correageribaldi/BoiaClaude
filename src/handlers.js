@@ -392,9 +392,8 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
     `🆔 ID: #${result.lastInsertRowid}`;
 
   if (status === 'pendente') {
-    const acao = tipo === 'receita' ? 'receber' : 'pagar';
-    const quando = tipo === 'receita' ? 'Quando receber' : 'Quando pagar';
-    msg += `\n\n_${quando}, envie: *${acao} #${result.lastInsertRowid}*_`;
+    const quando = tipo === 'receita' ? 'receber' : 'pagar';
+    msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
   }
 
   return msg;
@@ -522,9 +521,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
       `🆔 ID: #${result.lastInsertRowid}`;
 
     if (statusFinal === 'pendente') {
-      const acao = tipo === 'receita' ? 'receber' : 'pagar';
-      const quando = tipo === 'receita' ? 'Quando receber' : 'Quando pagar';
-      msg += `\n\n_${quando}, envie: *${acao} #${result.lastInsertRowid}*_`;
+      const quando = tipo === 'receita' ? 'receber' : 'pagar';
+      msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
     }
 
     return msg;
