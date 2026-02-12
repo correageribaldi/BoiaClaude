@@ -80,8 +80,9 @@ Agora me diz como você quer começar:
 *3.* Ver tudo que eu posso fazer (eu te mando a lista completa)`;
 }
 
-function foraDoEscopoMsg() {
-  return `Desculpa, mas eu não consigo te ajudar com isso agora 😅
+function foraDoEscopoMsg(nome) {
+  const nomeExibir = nome ? `${nome}, ` : '';
+  return `${nomeExibir}desculpa, mas eu não consigo te ajudar com isso agora 😅
 
 Mas olha tudo que eu posso fazer por você:
 
@@ -456,15 +457,29 @@ async function handleLiquidar(usuarioId, msg) {
 
 async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   if (!resultado) {
-    return fallbackMsg || foraDoEscopoMsg();
+    if (fallbackMsg) return fallbackMsg;
+    const usuario = await db.buscarUsuario(usuarioId);
+    return foraDoEscopoMsg(usuario?.nome || null);
   }
 
-  // Saudação - usar mensagem de boas-vindas personalizada do Cronos
+  // Saudação - verificar se é usuário novo ou existente
   if (resultado.acao === 'saudacao') {
-    // Buscar nome do usuário no banco para personalizar a mensagem
+    // Buscar nome e verificar se já tem transações cadastradas
     const usuario = await db.buscarUsuario(usuarioId);
     const nome = usuario?.nome || null;
-    return mensagemBoasVindas(nome);
+
+    // Verificar se o usuário já tem alguma transação (se já usa o bot)
+    const transacoes = await db.listarTransacoes(usuarioId, null, 1);
+    const jaUsaBot = transacoes && transacoes.length > 0;
+
+    if (jaUsaBot) {
+      // Usuário existente - saudação curta e amigável
+      const nomeExibir = nome || 'amigo(a)';
+      return resultado.resposta.replace(/{{NOME}}/g, nomeExibir);
+    } else {
+      // Usuário novo - mensagem de boas-vindas completa
+      return mensagemBoasVindas(nome);
+    }
   }
 
   // Lembrete único
@@ -514,7 +529,9 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Mensagem fora do escopo - mostra o que o bot sabe fazer
   if (resultado.acao === 'nenhuma') {
-    return foraDoEscopoMsg();
+    const usuario = await db.buscarUsuario(usuarioId);
+    const nome = usuario?.nome || null;
+    return foraDoEscopoMsg(nome);
   }
 
   // Comando sugerido
