@@ -12,7 +12,7 @@ function braveSearch(query, count = 5) {
       q: query,
       count: String(count),
       country: 'BR',
-      search_lang: 'pt',
+      search_lang: 'pt-br',
       ui_lang: 'pt-BR',
     });
 

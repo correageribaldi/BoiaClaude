@@ -11,7 +11,7 @@ const params = new URLSearchParams({
   q: query,
   count: '5',
   country: 'BR',
-  search_lang: 'pt',
+  search_lang: 'pt-br',
   ui_lang: 'pt-BR',
 });
 
