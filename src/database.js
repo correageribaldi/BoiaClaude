@@ -526,6 +526,17 @@ async function listarCategorias() {
   return result.rows.map(r => r.nome);
 }
 
+// Limpar todos os dados de um usuário (para testes)
+async function limparDadosUsuario(usuarioId) {
+  await pool.query('DELETE FROM transacoes WHERE usuario_id = $1', [usuarioId]);
+  await pool.query('DELETE FROM lembretes_enviados WHERE usuario_id = $1', [usuarioId]);
+  await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [usuarioId]);
+  await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [usuarioId]);
+  await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [usuarioId]);
+  await pool.query('DELETE FROM usuarios WHERE usuario_id = $1', [usuarioId]);
+  return true;
+}
+
 // Definir limite de gastos para uma categoria
 async function definirLimite(usuarioId, categoria, valorLimite) {
   const result = await pool.query(
@@ -642,4 +653,5 @@ module.exports = {
   listarLimites,
   removerLimite,
   verificarLimite,
+  limparDadosUsuario,
 };

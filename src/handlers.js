@@ -249,6 +249,12 @@ async function handleMessage(usuarioId, texto) {
     return await handleListarRecorrentes(usuarioId);
   }
 
+  // Comando: resetar/começar do zero (para testes)
+  if (lower === 'resetar' || lower === 'começar do zero' || lower === 'limpar tudo' || lower === 'zerar dados') {
+    await db.limparDadosUsuario(usuarioId);
+    return mensagemBoasVindas(true);
+  }
+
   // IA interpreta tudo: saudações, transações, consultas, etc.
   return await handleMensagemIA(usuarioId, msg);
 }
