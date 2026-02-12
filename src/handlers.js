@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem } = require('./ai');
+const { interpretarMensagem, analisarImagem } = require('./ai');
 
 function parseValor(str) {
   const limpo = str.replace(/r\$\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
@@ -62,7 +62,11 @@ Você também pode escrever naturalmente:
 • _"recebi 3000 de salário"_
 • _"paguei 120 de conta de luz ontem"_
 • _"quanto gastei com comida nos últimos 3 dias?"_
-• _"quais foram minhas despesas esta semana?"_`;
+• _"quais foram minhas despesas esta semana?"_
+
+🎤 *Áudio:* Envie mensagens de voz para registrar transações!
+
+📸 *Imagens:* Envie fotos de boletos, notas fiscais ou cupons para registrar automaticamente!`;
 }
 
 async function handleMessage(usuarioId, texto) {
@@ -203,16 +207,9 @@ async function handleExcluir(usuarioId, msg) {
   return `🗑️ Lançamento #${id} excluído com sucesso!`;
 }
 
-async function handleMensagemIA(usuarioId, texto) {
-  const resultado = await interpretarMensagem(texto);
-
+async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   if (!resultado) {
-    // Fallback se IA não disponível
-    const saudacoes = ['oi', 'olá', 'ola', 'hi', 'hello', 'bom dia', 'boa tarde', 'boa noite', 'e aí', 'eai'];
-    if (saudacoes.some(s => texto.toLowerCase().includes(s))) {
-      return ajudaMsg();
-    }
-    return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
+    return fallbackMsg || `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
   }
 
   // Saudação - resposta amigável da IA
@@ -269,6 +266,28 @@ async function handleMensagemIA(usuarioId, texto) {
   return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
 }
 
+async function handleMensagemIA(usuarioId, texto) {
+  const resultado = await interpretarMensagem(texto);
+
+  if (!resultado) {
+    const saudacoes = ['oi', 'olá', 'ola', 'hi', 'hello', 'bom dia', 'boa tarde', 'boa noite', 'e aí', 'eai'];
+    if (saudacoes.some(s => texto.toLowerCase().includes(s))) {
+      return ajudaMsg();
+    }
+  }
+
+  return await processarResultadoIA(usuarioId, resultado);
+}
+
+async function handleImageMessage(usuarioId, base64Data, mimetype) {
+  const resultado = await analisarImagem(base64Data, mimetype);
+  return await processarResultadoIA(
+    usuarioId,
+    resultado,
+    '❌ Não consegui analisar a imagem. Envie uma foto clara de um boleto, nota fiscal ou cupom.'
+  );
+}
+
 async function handleConsulta(usuarioId, consulta) {
   const filtros = {
     tipo: consulta.tipo || null,
@@ -306,4 +325,4 @@ async function handleConsulta(usuarioId, consulta) {
   return msg;
 }
 
-module.exports = { handleMessage };
+module.exports = { handleMessage, handleImageMessage };

@@ -131,4 +131,66 @@ async function transcreverAudio(base64Data) {
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio };
+const IMAGE_PROMPT = `Analise esta imagem de um documento financeiro (boleto, nota fiscal, cupom fiscal, recibo, fatura, etc).
+Extraia as informações e retorne APENAS um JSON válido (sem markdown, sem texto extra).
+
+Categorias disponíveis: {{CATEGORIAS}}
+Data de hoje: {{DATA_HOJE}}
+
+Se a imagem for um documento financeiro válido, retorne:
+{"acao": "transacao", "tipo": "despesa", "valor": 0.00, "descricao": "descrição curta do que é o pagamento/compra", "categoria": "categoria mais adequada", "data": "YYYY-MM-DD ou null se não encontrar"}
+
+REGRAS:
+- "valor": extraia o valor total do documento (número positivo, ex: 150.90)
+- "descricao": resuma o que é (ex: "Conta de luz março", "Compra Supermercado X", "Boleto internet")
+- "categoria": escolha a mais adequada entre as disponíveis. Se não tiver certeza, use "Outros"
+- "data": extraia a data de vencimento/emissão no formato YYYY-MM-DD. Se não encontrar, use null
+- Para boletos, prefira a data de vencimento
+- Para notas/cupons, use a data de emissão
+
+Se a imagem NÃO for um documento financeiro:
+{"acao": "nenhuma", "resposta": "mensagem explicando que não identificou um documento financeiro na imagem e dando exemplos do que pode enviar (boleto, nota fiscal, cupom, recibo)"}`;
+
+async function analisarImagem(base64Data, mimetype) {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+
+  try {
+    const categorias = (await db.listarCategorias()).join(', ');
+    const hoje = new Date();
+    const dataHoje = hoje.toLocaleDateString('pt-BR');
+
+    const prompt = IMAGE_PROMPT
+      .replace('{{CATEGORIAS}}', categorias)
+      .replace('{{DATA_HOJE}}', dataHoje);
+
+    const dataUrl = `data:${mimetype};base64,${base64Data}`;
+
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: prompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
+          ],
+        },
+      ],
+      temperature: 0.2,
+      max_tokens: 400,
+    });
+
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) return null;
+
+    const jsonStr = content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    return JSON.parse(jsonStr);
+  } catch (err) {
+    console.error('[AI] Erro ao analisar imagem:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem };

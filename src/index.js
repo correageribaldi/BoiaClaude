@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage } = require('./handlers');
+const { handleMessage, handleImageMessage } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 
@@ -73,8 +73,22 @@ client.on('message', async (msg) => {
       await msg.reply('❌ Erro ao processar o áudio. Tente novamente ou envie por texto.');
       return;
     }
+  } else if (msg.hasMedia && msg.type === 'image') {
+    // Processar imagens (boletos, notas fiscais, cupons)
+    try {
+      const media = await msg.downloadMedia();
+      if (media && media.data) {
+        console.log(`[IMAGEM] Recebida imagem de ${usuarioId}, analisando...`);
+        const resposta = await handleImageMessage(usuarioId, media.data, media.mimetype);
+        await msg.reply(resposta);
+      }
+    } catch (error) {
+      console.error('[IMAGEM] Erro ao processar imagem:', error.message);
+      await msg.reply('❌ Erro ao processar a imagem. Envie uma foto clara de um boleto ou nota fiscal.');
+    }
+    return;
   } else if (msg.hasMedia) {
-    // Ignorar outros tipos de mídia (imagens, vídeos, documentos)
+    // Ignorar outros tipos de mídia (vídeos, documentos, stickers, etc.)
     return;
   } else {
     texto = msg.body;
@@ -106,6 +120,7 @@ async function start() {
   if (process.env.OPENAI_API_KEY) {
     console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');
     console.log('🎤 Transcrição de áudio ativa (Whisper) - envie áudios para registrar transações.');
+    console.log('📸 Leitura de imagens ativa (Vision) - envie fotos de boletos e notas fiscais.');
   } else {
     console.log('⚠️  OPENAI_API_KEY não configurada - IA e transcrição de áudio desabilitadas.');
   }
