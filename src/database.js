@@ -162,9 +162,12 @@ async function resumoMensal(usuarioId, mes, ano) {
   const agora = new Date();
   const m = mes || agora.getMonth() + 1;
   const a = ano || agora.getFullYear();
+
+  // Calcular o último dia do mês corretamente
+  const ultimoDia = new Date(a, m, 0).getDate();
   const mesStr = String(m).padStart(2, '0');
   const inicioMes = `${a}-${mesStr}-01`;
-  const fimMes = `${a}-${mesStr}-31`;
+  const fimMes = `${a}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
   const totaisResult = await pool.query(
     `SELECT
