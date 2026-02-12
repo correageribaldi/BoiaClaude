@@ -1,4 +1,7 @@
 const OpenAI = require('openai');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const db = require('./database');
 
 let openai;
@@ -102,4 +105,30 @@ async function interpretarMensagem(texto) {
   }
 }
 
-module.exports = { interpretarMensagem };
+async function transcreverAudio(base64Data) {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+
+  const buffer = Buffer.from(base64Data, 'base64');
+  const tmpPath = path.join(os.tmpdir(), `cronos_audio_${Date.now()}.ogg`);
+
+  try {
+    fs.writeFileSync(tmpPath, buffer);
+
+    const transcription = await getOpenAI().audio.transcriptions.create({
+      model: 'whisper-1',
+      file: fs.createReadStream(tmpPath),
+      language: 'pt',
+    });
+
+    return transcription.text?.trim() || null;
+  } catch (err) {
+    console.error('[AI] Erro ao transcrever áudio:', err.message);
+    return null;
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio };

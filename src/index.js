@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { handleMessage } = require('./handlers');
+const { transcreverAudio } = require('./ai');
 const db = require('./database');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
@@ -47,16 +48,39 @@ client.on('disconnected', (reason) => {
 });
 
 client.on('message', async (msg) => {
-  // Ignorar mensagens de grupo, status e mídia
+  // Ignorar mensagens de grupo e status
   if (msg.from.includes('@g.us')) return;
   if (msg.from === 'status@broadcast') return;
-  if (msg.hasMedia) return;
 
-  const texto = msg.body;
-  if (!texto || texto.trim().length === 0) return;
-
-  // Usar o número do remetente como ID do usuário
   const usuarioId = msg.from;
+  let texto = null;
+
+  // Processar mensagens de áudio/voz
+  if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
+    try {
+      const media = await msg.downloadMedia();
+      if (media && media.data) {
+        console.log(`[ÁUDIO] Recebido áudio de ${usuarioId}, transcrevendo...`);
+        texto = await transcreverAudio(media.data);
+        if (!texto) {
+          await msg.reply('❌ Não consegui entender o áudio. Tente novamente ou envie por texto.');
+          return;
+        }
+        console.log(`[ÁUDIO] Transcrição: "${texto}"`);
+      }
+    } catch (error) {
+      console.error('[ÁUDIO] Erro ao processar áudio:', error.message);
+      await msg.reply('❌ Erro ao processar o áudio. Tente novamente ou envie por texto.');
+      return;
+    }
+  } else if (msg.hasMedia) {
+    // Ignorar outros tipos de mídia (imagens, vídeos, documentos)
+    return;
+  } else {
+    texto = msg.body;
+  }
+
+  if (!texto || texto.trim().length === 0) return;
 
   try {
     const resposta = await handleMessage(usuarioId, texto);
@@ -81,8 +105,9 @@ async function start() {
 
   if (process.env.OPENAI_API_KEY) {
     console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');
+    console.log('🎤 Transcrição de áudio ativa (Whisper) - envie áudios para registrar transações.');
   } else {
-    console.log('⚠️  OPENAI_API_KEY não configurada - IA desabilitada, apenas comandos diretos.');
+    console.log('⚠️  OPENAI_API_KEY não configurada - IA e transcrição de áudio desabilitadas.');
   }
 
   client.initialize();
