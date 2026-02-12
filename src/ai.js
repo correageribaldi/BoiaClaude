@@ -33,8 +33,11 @@ TIPOS DE AÇÃO:
 4. COMANDO (pedir resumo, lista, excluir, saldo, pendentes):
 {"acao": "comando", "dica": "resumo|lista|excluir|saldo|pendentes"}
 
-5. NÃO FINANCEIRO (assuntos sem relação com finanças):
-{"acao": "nenhuma", "resposta": "mensagem gentil explicando que você é um assistente financeiro e dando exemplos de como pode ajudar"}
+5. LEMBRETE (me lembre, lembra de, me avisa, daqui X minutos/horas, às X horas):
+{"acao": "lembrete", "minutos": 0, "horario": "HH:MM ou null", "mensagem": "o que lembrar"}
+
+6. NÃO FINANCEIRO (assuntos sem relação com finanças):
+{"acao": "nenhuma", "resposta": "mensagem gentil explicando que você é um assistente pessoal financeiro e dando exemplos de como pode ajudar"}
 
 REGRAS GERAIS:
 - SEMPRE retorne JSON válido, nunca texto puro
@@ -94,8 +97,19 @@ REGRAS PARA COMANDO:
 - "me mostra o resumo", "como foi o mês" → dica: "resumo"
 - "lista meus gastos" → dica: "lista"
 
+REGRAS PARA LEMBRETE:
+- "minutos": número de minutos a partir de agora (para "daqui 10 minutos" → 10, "daqui 1 hora" → 60, "daqui 2 horas" → 120, "daqui meia hora" → 30)
+- "horario": se o usuário indicar horário fixo ("às 15:00", "às 3 da tarde" → "15:00"), coloque aqui e use minutos = 0
+- "mensagem": o que deve ser lembrado, de forma clara e curta
+- Exemplos:
+  - "me lembre daqui 10 min de pegar o Noah" → {"acao": "lembrete", "minutos": 10, "horario": null, "mensagem": "Pegar o Noah na escola"}
+  - "lembra de ligar pro dentista às 14:00" → {"acao": "lembrete", "minutos": 0, "horario": "14:00", "mensagem": "Ligar pro dentista"}
+  - "me avisa em 1 hora pra tomar o remédio" → {"acao": "lembrete", "minutos": 60, "horario": null, "mensagem": "Tomar o remédio"}
+  - "daqui meia hora me lembra da reunião" → {"acao": "lembrete", "minutos": 30, "horario": null, "mensagem": "Reunião"}
+  - "me lembra amanhã às 8 de ligar pro banco" → {"acao": "lembrete", "minutos": 0, "horario": "08:00", "mensagem": "Ligar pro banco", "amanha": true}
+
 REGRAS PARA NÃO FINANCEIRO:
-- Seja gentil e redirecione para o uso financeiro
+- Seja gentil e redirecione para o uso financeiro ou lembretes
 - Dê exemplos de como a pessoa pode usar o bot`;
 
 async function interpretarMensagem(texto) {

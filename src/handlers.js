@@ -78,6 +78,12 @@ _Exemplos:_
 • *lista despesas* - Últimas despesas
 • *lista receitas* - Últimas receitas
 
+⏰ *Lembretes:*
+• _"me lembre daqui 10 min de pegar o Noah"_
+• _"lembra às 15:00 da reunião"_
+• *lembretes* - Ver lembretes ativos
+• *cancelar lembrete* <id> - Cancelar lembrete
+
 🗑️ *Outros:*
 • *excluir* <id> - Excluir um lançamento
 • *categorias* - Ver categorias disponíveis
@@ -150,6 +156,16 @@ async function handleMessage(usuarioId, texto) {
   // Comando: pagar / liquidar
   if (lower.startsWith('pagar ') || lower.startsWith('liquidar ')) {
     return await handleLiquidar(usuarioId, msg);
+  }
+
+  // Comando: meus lembretes
+  if (lower === 'lembretes' || lower === 'meus lembretes') {
+    return await handleListarLembretes(usuarioId);
+  }
+
+  // Comando: cancelar lembrete #ID
+  if (lower.startsWith('cancelar lembrete ')) {
+    return await handleCancelarLembrete(usuarioId, msg);
   }
 
   // IA interpreta tudo: saudações, transações, consultas, etc.
@@ -334,6 +350,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return resultado.resposta;
   }
 
+  // Lembrete geral
+  if (resultado.acao === 'lembrete') {
+    return await handleLembrete(usuarioId, resultado);
+  }
+
   // Consulta - buscar no banco e formatar resultado
   if (resultado.acao === 'consulta') {
     return await handleConsulta(usuarioId, resultado);
@@ -458,6 +479,98 @@ async function handleImageMessage(usuarioId, base64Data, mimetype) {
     `*1* - ✅ Já paguei / Já recebi\n` +
     `*2* - ⏳ A pagar / A receber\n` +
     `*0* - ❌ Cancelar`;
+}
+
+async function handleLembrete(usuarioId, resultado) {
+  const { minutos, horario, mensagem, amanha } = resultado;
+
+  if (!mensagem) {
+    return '❌ Não entendi o que devo lembrar. Tente algo como:\n\n_"me lembre daqui 10 minutos de pegar o Noah"_\n_"lembra às 15:00 da reunião"_';
+  }
+
+  let disparaEm;
+  const agora = new Date();
+
+  if (horario) {
+    // Horário fixo (ex: "às 15:00")
+    const [h, m] = horario.split(':').map(Number);
+    disparaEm = new Date(agora);
+    disparaEm.setHours(h, m, 0, 0);
+
+    // Se for amanhã ou se o horário já passou hoje
+    if (amanha || disparaEm <= agora) {
+      disparaEm.setDate(disparaEm.getDate() + 1);
+    }
+  } else if (minutos && minutos > 0) {
+    // Daqui X minutos
+    disparaEm = new Date(agora.getTime() + minutos * 60 * 1000);
+  } else {
+    return '❌ Não entendi quando devo te lembrar. Tente algo como:\n\n_"me lembre daqui 30 minutos"_\n_"me avisa às 14:00"_';
+  }
+
+  const id = await db.criarLembreteGeral(usuarioId, mensagem, disparaEm);
+
+  // Formatar horário para exibição
+  const horaStr = disparaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+  const hoje = new Date();
+  const amanhaDia = new Date(hoje);
+  amanhaDia.setDate(amanhaDia.getDate() + 1);
+
+  let quando;
+  if (disparaEm.toDateString() === hoje.toDateString()) {
+    quando = `hoje às ${horaStr}`;
+  } else if (disparaEm.toDateString() === amanhaDia.toDateString()) {
+    quando = `amanhã às ${horaStr}`;
+  } else {
+    quando = `${disparaEm.toLocaleDateString('pt-BR')} às ${horaStr}`;
+  }
+
+  if (minutos && minutos > 0 && !horario) {
+    const mins = minutos;
+    let tempoStr;
+    if (mins < 60) {
+      tempoStr = `${mins} minuto${mins > 1 ? 's' : ''}`;
+    } else {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      tempoStr = `${h} hora${h > 1 ? 's' : ''}`;
+      if (m > 0) tempoStr += ` e ${m} min`;
+    }
+    return `⏰ *Lembrete criado!*\n\n📝 ${mensagem}\n🕐 Daqui ${tempoStr} (${quando})\n🆔 #${id}\n\n_Para cancelar: *cancelar lembrete #${id}*_`;
+  }
+
+  return `⏰ *Lembrete criado!*\n\n📝 ${mensagem}\n🕐 ${quando}\n🆔 #${id}\n\n_Para cancelar: *cancelar lembrete #${id}*_`;
+}
+
+async function handleListarLembretes(usuarioId) {
+  const lembretes = await db.listarLembretesGerais(usuarioId);
+
+  if (lembretes.length === 0) {
+    return '⏰ Nenhum lembrete ativo no momento.';
+  }
+
+  let msg = '⏰ *Seus lembretes:*\n\n';
+  for (const l of lembretes) {
+    msg += `🔔 *#${l.id}* - ${l.mensagem}\n   📅 ${l.horario}\n\n`;
+  }
+  msg += '_Para cancelar: *cancelar lembrete #ID*_';
+  return msg;
+}
+
+async function handleCancelarLembrete(usuarioId, msg) {
+  const idStr = msg.replace(/cancelar lembrete\s*/i, '').replace('#', '').trim();
+  const id = parseInt(idStr);
+
+  if (!id || isNaN(id)) {
+    return '❌ Informe o ID do lembrete.\n\nExemplo: cancelar lembrete #5';
+  }
+
+  const resultado = await db.cancelarLembreteGeral(usuarioId, id);
+  if (!resultado) {
+    return `❌ Lembrete #${id} não encontrado ou já foi enviado.`;
+  }
+
+  return `✅ Lembrete #${id} cancelado!\n\n_"${resultado.mensagem}"_`;
 }
 
 async function handleConsulta(usuarioId, consulta) {

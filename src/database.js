@@ -58,6 +58,21 @@ async function initTables() {
       ON lembretes_enviados(transacao_id);
   `);
 
+  // Tabela para lembretes gerais (não financeiros)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lembretes_gerais (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      mensagem TEXT NOT NULL,
+      dispara_em TIMESTAMP NOT NULL,
+      enviado BOOLEAN NOT NULL DEFAULT FALSE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lembretes_gerais_disparo
+      ON lembretes_gerais(dispara_em, enviado);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -324,6 +339,51 @@ async function transacaoAindaPendente(transacaoId) {
   return result.rows[0]?.status === 'pendente';
 }
 
+// Criar lembrete geral
+async function criarLembreteGeral(usuarioId, mensagem, disparaEm) {
+  const result = await pool.query(
+    `INSERT INTO lembretes_gerais (usuario_id, mensagem, dispara_em)
+     VALUES ($1, $2, $3)
+     RETURNING id`,
+    [usuarioId, mensagem, disparaEm]
+  );
+  return result.rows[0].id;
+}
+
+// Buscar lembretes que já devem ser disparados
+async function buscarLembretesParaDisparar() {
+  const result = await pool.query(
+    `UPDATE lembretes_gerais
+     SET enviado = TRUE
+     WHERE enviado = FALSE AND dispara_em <= NOW()
+     RETURNING id, usuario_id, mensagem`
+  );
+  return result.rows;
+}
+
+// Listar lembretes pendentes de um usuário
+async function listarLembretesGerais(usuarioId) {
+  const result = await pool.query(
+    `SELECT id, mensagem, TO_CHAR(dispara_em, 'DD/MM HH24:MI') as horario
+     FROM lembretes_gerais
+     WHERE usuario_id = $1 AND enviado = FALSE AND dispara_em > NOW()
+     ORDER BY dispara_em ASC`,
+    [usuarioId]
+  );
+  return result.rows;
+}
+
+// Cancelar lembrete
+async function cancelarLembreteGeral(usuarioId, lembreteId) {
+  const result = await pool.query(
+    `DELETE FROM lembretes_gerais
+     WHERE id = $1 AND usuario_id = $2 AND enviado = FALSE
+     RETURNING id, mensagem`,
+    [lembreteId, usuarioId]
+  );
+  return result.rows[0] || null;
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -346,4 +406,8 @@ module.exports = {
   buscarPendentesParaLembrete,
   registrarLembreteEnviado,
   transacaoAindaPendente,
+  criarLembreteGeral,
+  buscarLembretesParaDisparar,
+  listarLembretesGerais,
+  cancelarLembreteGeral,
 };
