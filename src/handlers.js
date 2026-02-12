@@ -252,7 +252,7 @@ async function handleMessage(usuarioId, texto) {
   // Comando: resetar/começar do zero (para testes)
   if (lower === 'resetar' || lower === 'começar do zero' || lower === 'limpar tudo' || lower === 'zerar dados') {
     await db.limparDadosUsuario(usuarioId);
-    return mensagemBoasVindas(true);
+    return mensagemBoasVindas();
   }
 
   // IA interpreta tudo: saudações, transações, consultas, etc.
