@@ -819,7 +819,8 @@ async function handlePesquisa(resultado) {
     // Fallback: formata manualmente se a IA falhar
     let msg = `🔍 *${pergunta || query}*\n\nEncontrei isso pra você:\n\n`;
     for (const r of resultados.slice(0, 4)) {
-      msg += `📌 *${r.titulo}*\n${r.descricao}\n🔗 ${r.url}\n\n`;
+      const mapsLink = `https://maps.google.com/?q=${encodeURIComponent(r.titulo)}`;
+      msg += `📌 *${r.titulo}*\n${r.descricao}\n📍 ${mapsLink}\n🔗 ${r.url}\n\n`;
     }
     return msg;
   }
