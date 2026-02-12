@@ -249,13 +249,7 @@ async function handleMessage(usuarioId, texto) {
     return await handleListarRecorrentes(usuarioId);
   }
 
-  // Comando: resetar/começar do zero (para testes)
-  if (lower === 'resetar' || lower === 'começar do zero' || lower === 'limpar tudo' || lower === 'zerar dados') {
-    await db.limparDadosUsuario(usuarioId);
-    return mensagemBoasVindas();
-  }
-
-  // IA interpreta tudo: saudações, transações, consultas, etc.
+  // IA interpreta tudo: saudações, transações, consultas, etc. (incluindo reset)
   return await handleMensagemIA(usuarioId, msg);
 }
 
@@ -603,6 +597,13 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 }
 
 async function handleMensagemIA(usuarioId, texto) {
+  // Detectar reset ANTES da IA interpretar (para funcionar em áudio também)
+  const lower = texto.toLowerCase().trim();
+  if (lower === 'resetar' || lower === 'começar do zero' || lower === 'limpar tudo' || lower === 'zerar dados') {
+    await db.limparDadosUsuario(usuarioId);
+    return mensagemBoasVindas();
+  }
+
   const resultado = await interpretarMensagem(texto);
 
   if (!resultado) {
