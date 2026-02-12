@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { handleMessage, handleImageMessage, mensagemBoasVindas } = require('./handlers');
 const { transcreverAudio } = require('./ai');
@@ -123,7 +123,20 @@ client.on('message', async (msg) => {
 
   try {
     const resposta = await handleMessage(usuarioId, texto);
-    await msg.reply(resposta);
+
+    // Verificar se a resposta contém gráfico (objeto) ou é só texto (string)
+    if (typeof resposta === 'object' && resposta.texto && resposta.grafico) {
+      // Enviar texto primeiro
+      await msg.reply(resposta.texto);
+
+      // Enviar gráfico como imagem
+      const media = new MessageMedia('image/png', resposta.grafico.toString('base64'), 'grafico.png');
+      await msg.reply(media);
+      console.log(`[GRAFICO] Gráfico enviado para ${usuarioId}`);
+    } else {
+      // Resposta normal (só texto)
+      await msg.reply(resposta);
+    }
   } catch (error) {
     console.error('Erro ao processar mensagem:', error);
     await msg.reply('❌ Ocorreu um erro ao processar sua mensagem. Tente novamente.');

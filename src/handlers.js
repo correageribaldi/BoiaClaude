@@ -2,6 +2,7 @@ const db = require('./database');
 const fmt = require('./formatters');
 const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa } = require('./ai');
 const { pesquisarWeb } = require('./search');
+const charts = require('./charts');
 
 // Estado temporário para confirmações pendentes (expira em 5 min)
 const confirmacoesPendentes = new Map();
@@ -321,7 +322,17 @@ async function handleResumo(usuarioId, msg) {
   }
 
   const resumo = await db.resumoMensal(usuarioId, mes, ano);
-  return fmt.formatarResumoMensal(resumo);
+  const textoResumo = fmt.formatarResumoMensal(resumo);
+
+  // Gerar gráfico de categorias se houver despesas
+  const grafico = await charts.gerarGraficoCategorias(resumo);
+
+  // Retornar objeto com texto e gráfico (se houver)
+  if (grafico) {
+    return { texto: textoResumo, grafico };
+  }
+
+  return textoResumo;
 }
 
 async function handleLista(usuarioId, msg) {
