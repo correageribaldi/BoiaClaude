@@ -2,6 +2,30 @@ const db = require('./database');
 const fmt = require('./formatters');
 const { interpretarMensagem, analisarImagem } = require('./ai');
 
+// Estado temporário para confirmações pendentes (expira em 5 min)
+const confirmacoesPendentes = new Map();
+
+function salvarConfirmacao(usuarioId, dados) {
+  confirmacoesPendentes.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 5 * 60 * 1000,
+  });
+}
+
+function obterConfirmacao(usuarioId) {
+  const dados = confirmacoesPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    confirmacoesPendentes.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparConfirmacao(usuarioId) {
+  confirmacoesPendentes.delete(usuarioId);
+}
+
 function parseValor(str) {
   const limpo = str.replace(/r\$\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
   const valor = parseFloat(limpo);
@@ -73,6 +97,12 @@ Você também pode escrever naturalmente:
 async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
+
+  // Verificar se há confirmação pendente de imagem
+  const confirmacao = obterConfirmacao(usuarioId);
+  if (confirmacao) {
+    return await handleConfirmacaoImagem(usuarioId, lower, confirmacao);
+  }
 
   // Comando: ajuda / menu / help
   if (['ajuda', 'menu', 'help', '/start'].includes(lower)) {
@@ -225,6 +255,52 @@ async function handleExcluir(usuarioId, msg) {
   return `🗑️ Lançamento #${id} excluído com sucesso!`;
 }
 
+async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
+  // Cancelar
+  if (resposta === '0' || resposta === 'cancelar') {
+    limparConfirmacao(usuarioId);
+    return '❌ Lançamento cancelado.';
+  }
+
+  let status;
+  if (resposta === '1' || resposta === 'pago' || resposta === 'sim' || resposta === 'já paguei' || resposta === 'ja paguei') {
+    status = 'pago';
+  } else if (resposta === '2' || resposta === 'pendente' || resposta === 'a pagar') {
+    status = 'pendente';
+  } else {
+    // Resposta não reconhecida - manter a confirmação ativa
+    return `Responda com:\n*1* - Já paguei/recebi\n*2* - A pagar/receber\n*0* - Cancelar`;
+  }
+
+  limparConfirmacao(usuarioId);
+
+  const { tipo, valor, descricao, categoria, data } = dados;
+  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status);
+  const dataExibir = data ? fmt.formatarData(data) : 'Hoje';
+
+  let emoji, label;
+  if (status === 'pendente') {
+    emoji = tipo === 'receita' ? '⏳💰' : '⏳💸';
+    label = tipo === 'receita' ? 'Receita a receber' : 'Despesa a pagar';
+  } else {
+    emoji = tipo === 'receita' ? '✅💰' : '✅💸';
+    label = tipo === 'receita' ? 'Receita registrada' : 'Despesa registrada';
+  }
+
+  let msg = `${emoji} *${label}!*\n\n` +
+    `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
+    `📝 Descrição: ${descricao}\n` +
+    `📂 Categoria: ${categoria || 'Outros'}\n` +
+    `📅 Data: ${dataExibir}\n` +
+    `🆔 ID: #${result.lastInsertRowid}`;
+
+  if (status === 'pendente') {
+    msg += `\n\n_Quando pagar, envie: *pagar #${result.lastInsertRowid}*_`;
+  }
+
+  return msg;
+}
+
 async function handleLiquidar(usuarioId, msg) {
   const partes = msg.split(/\s+/);
   const idStr = partes[1]?.replace('#', '');
@@ -346,11 +422,42 @@ async function handleMensagemIA(usuarioId, texto) {
 
 async function handleImageMessage(usuarioId, base64Data, mimetype) {
   const resultado = await analisarImagem(base64Data, mimetype);
-  return await processarResultadoIA(
-    usuarioId,
-    resultado,
-    '❌ Não consegui analisar a imagem. Envie uma foto clara de um boleto, nota fiscal ou cupom.'
-  );
+
+  if (!resultado) {
+    return '❌ Não consegui analisar a imagem. Envie uma foto clara de um boleto, nota fiscal ou cupom.';
+  }
+
+  // Se não for transação (ex: imagem não financeira), processar normalmente
+  if (resultado.acao !== 'transacao') {
+    return resultado.resposta || 'Não identifiquei um documento financeiro nesta imagem.';
+  }
+
+  const { tipo, valor, descricao, categoria, data } = resultado;
+
+  if (!tipo || !valor || !descricao) {
+    return '❌ Não consegui extrair as informações do documento. Tente enviar uma foto mais nítida.';
+  }
+
+  let dataFinal = data || null;
+  if (dataFinal && dataFinal.includes('/')) {
+    dataFinal = parseData(dataFinal);
+  }
+
+  // Salvar dados temporários e perguntar o status
+  salvarConfirmacao(usuarioId, { tipo, valor, descricao, categoria, data: dataFinal });
+
+  const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
+  const emoji = tipo === 'receita' ? '💰' : '💸';
+
+  return `📄${emoji} *Documento identificado:*\n\n` +
+    `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
+    `📝 Descrição: ${descricao}\n` +
+    `📂 Categoria: ${categoria || 'Outros'}\n` +
+    `📅 Data: ${dataExibir}\n\n` +
+    `Esse lançamento já foi pago ou ainda está pendente?\n\n` +
+    `*1* - ✅ Já paguei / Já recebi\n` +
+    `*2* - ⏳ A pagar / A receber\n` +
+    `*0* - ❌ Cancelar`;
 }
 
 async function handleConsulta(usuarioId, consulta) {
