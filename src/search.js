@@ -65,22 +65,36 @@ async function pesquisarWeb(query, maxResultados = 5) {
   }
 
   try {
-    console.log(`[SEARCH] Buscando: "${query}"`);
-    const data = await braveSearch(query, maxResultados);
+    // Melhorar query para locais: adicionar termos que trazem resultados mais úteis
+    const queryMelhorada = query + ' endereço telefone';
+    console.log(`[SEARCH] Buscando: "${queryMelhorada}"`);
+    const data = await braveSearch(queryMelhorada, maxResultados * 2); // Buscar mais para filtrar
 
     if (!data || !data.web || !data.web.results || data.web.results.length === 0) {
       console.log('[SEARCH] Nenhum resultado encontrado.');
       return null;
     }
 
-    const resultados = data.web.results.slice(0, maxResultados).map(r => ({
-      titulo: r.title,
-      descricao: r.description || r.meta_url?.hostname || '',
-      url: r.url,
-    }));
+    // Filtrar resultados ruins (sites genéricos, agregadores, etc.)
+    const dominiosRuins = ['wikipedia.org', 'facebook.com', 'instagram.com', 'youtube.com', 'twitter.com'];
+    const resultadosFiltrados = data.web.results
+      .filter(r => {
+        const url = r.url.toLowerCase();
+        // Remove resultados de domínios ruins
+        if (dominiosRuins.some(d => url.includes(d))) return false;
+        // Remove resultados sem descrição útil
+        if (!r.description || r.description.length < 20) return false;
+        return true;
+      })
+      .slice(0, maxResultados)
+      .map(r => ({
+        titulo: r.title,
+        descricao: r.description || r.meta_url?.hostname || '',
+        url: r.url,
+      }));
 
-    console.log(`[SEARCH] ${resultados.length} resultados encontrados.`);
-    return resultados;
+    console.log(`[SEARCH] ${resultadosFiltrados.length} resultados filtrados encontrados.`);
+    return resultadosFiltrados.length > 0 ? resultadosFiltrados : null;
   } catch (err) {
     console.error('[SEARCH] Erro ao pesquisar:', err.message);
     return null;

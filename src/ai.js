@@ -330,17 +330,27 @@ Aqui estão os resultados da pesquisa na internet:
 ${resultadosTexto}
 
 Formate uma resposta CURTA e ÚTIL para WhatsApp com as melhores opções encontradas.
-REGRAS:
-- Máximo 4-5 opções, as mais relevantes
-- Para cada opção coloque: nome, descrição curta (1 linha)
-- Se for um LUGAR/ESTABELECIMENTO (restaurante, café, loja, academia, etc), OBRIGATORIAMENTE inclua um link do Google Maps no formato: https://maps.google.com/?q=Nome+do+Lugar+Cidade (substitua espaços por +)
-  Exemplo: 📍 https://maps.google.com/?q=Restaurante+Sabor+Gaúcho+Canoas+RS
-- Se NÃO for um lugar físico (produto, preço, info), coloque o link normal do resultado
-- Use emojis para deixar visual
-- Seja direto e prático como um amigo
-- Responda em português brasileiro
-- NÃO retorne JSON, retorne texto puro formatado para WhatsApp (use *negrito* e _itálico_)
-- Se os resultados não forem muito bons, traga o que encontrou mesmo assim e sugira refinar a busca`;
+
+REGRAS IMPORTANTES:
+- Máximo 3-4 opções, as mais relevantes e úteis
+- Para cada opção: nome em *negrito*, descrição em 1-2 linhas máximo
+- SEMPRE extraia e mostre informações práticas: endereço, telefone, horário se estiver na descrição
+- Se for um LUGAR FÍSICO (restaurante, loja, academia, clínica, etc):
+  * OBRIGATÓRIO: inclua link do Google Maps: 📍 https://maps.google.com/?q=Nome+Completo+do+Lugar+Cidade+Estado
+  * Exemplo: 📍 https://maps.google.com/?q=Restaurante+Sabor+Gaúcho+Canoas+RS
+  * Use o nome completo e cidade/estado no link
+- Se NÃO for um lugar físico (artigos, preços, informações), coloque: 🔗 [URL do resultado]
+- Use emojis relevantes (🍕 🏪 💊 🏋️ etc)
+- Seja DIRETO: remova informações inúteis dos resultados
+- Responda em português brasileiro informal
+- NÃO retorne JSON, apenas texto formatado para WhatsApp
+- Se os resultados não forem bons: diga "Não achei resultados úteis. Tenta ser mais específico com cidade/bairro"
+- NUNCA inclua resultados genéricos ou sites de agregadores (Facebook, Instagram, Wikipedia)
+
+Exemplo de formatação ideal:
+🍕 *Pizzaria Bella Napoli*
+Rodízio de pizzas R$ 45. Ambiente familiar, aceita reservas.
+📞 (51) 3456-7890 | 📍 https://maps.google.com/?q=Pizzaria+Bella+Napoli+Porto+Alegre+RS`;
 
     const response = await getOpenAI().chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',

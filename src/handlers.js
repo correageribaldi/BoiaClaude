@@ -821,11 +821,15 @@ async function handlePesquisa(resultado) {
 
   if (!respostaFormatada) {
     // Fallback: formata manualmente se a IA falhar
-    let msg = `🔍 *${pergunta || query}*\n\nEncontrei isso pra você:\n\n`;
-    for (const r of resultados.slice(0, 4)) {
+    let msg = `🔍 *${pergunta || query}*\n\n`;
+    const topResultados = resultados.slice(0, 3);
+
+    for (const r of topResultados) {
+      const descricaoCurta = r.descricao.length > 100 ? r.descricao.substring(0, 100) + '...' : r.descricao;
       const mapsLink = `https://maps.google.com/?q=${encodeURIComponent(r.titulo)}`;
-      msg += `📌 *${r.titulo}*\n${r.descricao}\n📍 ${mapsLink}\n🔗 ${r.url}\n\n`;
+      msg += `📌 *${r.titulo}*\n${descricaoCurta}\n📍 ${mapsLink}\n\n`;
     }
+    msg += '_Dica: Seja mais específico com cidade/bairro para melhores resultados_';
     return msg;
   }
 
