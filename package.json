@@ -16,7 +16,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "chart.js": "^4.4.1",
+    "chart.js": "^3.9.1",
     "chartjs-node-canvas": "^4.1.6",
     "dotenv": "^17.2.4",
     "node-cron": "^4.2.1",
