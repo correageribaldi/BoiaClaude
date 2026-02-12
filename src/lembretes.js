@@ -111,6 +111,29 @@ async function verificarLembretesGerais(client) {
   }
 }
 
+// Verifica e envia lembretes recorrentes (roda a cada minuto)
+async function verificarLembretesRecorrentes(client) {
+  try {
+    // Desativar expirados primeiro
+    await db.desativarRecorrentesExpirados();
+
+    const lembretes = await db.buscarRecorrentesParaDisparar();
+
+    for (const l of lembretes) {
+      try {
+        const msg = `🔄 *Lembrete recorrente!*\n\nEi, passando pra te lembrar: *${l.mensagem}*\n\nBora lá! 💪`;
+        await client.sendMessage(l.usuario_id, msg);
+        await db.marcarRecorrenteEnviado(l.id);
+        console.log(`[RECORRENTE] Enviado para ${l.usuario_id}: "${l.mensagem}" (${l.frequencia})`);
+      } catch (err) {
+        console.error(`[RECORRENTE] Erro ao enviar para ${l.usuario_id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[RECORRENTE] Erro ao verificar lembretes:', err.message);
+  }
+}
+
 function iniciarLembretes(client) {
   // Rodada 1: 10:00
   cron.schedule('0 10 * * *', () => {
@@ -130,13 +153,14 @@ function iniciarLembretes(client) {
     executarRodada(client, 3);
   }, { timezone: 'America/Sao_Paulo' });
 
-  // Lembretes gerais: verifica a cada minuto
+  // Lembretes gerais e recorrentes: verifica a cada minuto
   cron.schedule('* * * * *', () => {
     verificarLembretesGerais(client);
+    verificarLembretesRecorrentes(client);
   }, { timezone: 'America/Sao_Paulo' });
 
   console.log('⏰ Lembretes financeiros: 10:00, 13:00 e 20:00 (horário de Brasília)');
-  console.log('🔔 Lembretes gerais: verificação a cada minuto');
+  console.log('🔔 Lembretes gerais e recorrentes: verificação a cada minuto');
 }
 
 module.exports = { iniciarLembretes };

@@ -73,6 +73,26 @@ async function initTables() {
       ON lembretes_gerais(dispara_em, enviado);
   `);
 
+  // Tabela para lembretes recorrentes
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lembretes_recorrentes (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      mensagem TEXT NOT NULL,
+      horario TIME NOT NULL,
+      frequencia TEXT NOT NULL CHECK(frequencia IN ('diario', 'semanal', 'mensal')),
+      dia_semana INTEGER CHECK(dia_semana >= 0 AND dia_semana <= 6),
+      dia_mes INTEGER CHECK(dia_mes >= 1 AND dia_mes <= 31),
+      data_fim DATE,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      ultimo_envio DATE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lembretes_recorrentes_ativo
+      ON lembretes_recorrentes(ativo, horario);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -384,6 +404,75 @@ async function cancelarLembreteGeral(usuarioId, lembreteId) {
   return result.rows[0] || null;
 }
 
+// Criar lembrete recorrente
+async function criarLembreteRecorrente(usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim) {
+  const result = await pool.query(
+    `INSERT INTO lembretes_recorrentes (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
+    [usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim]
+  );
+  return result.rows[0].id;
+}
+
+// Buscar lembretes recorrentes que devem disparar agora
+async function buscarRecorrentesParaDisparar() {
+  const result = await pool.query(
+    `SELECT id, usuario_id, mensagem, frequencia, dia_semana, dia_mes,
+            TO_CHAR(horario, 'HH24:MI') as horario
+     FROM lembretes_recorrentes
+     WHERE ativo = TRUE
+       AND (data_fim IS NULL OR data_fim >= CURRENT_DATE)
+       AND (ultimo_envio IS NULL OR ultimo_envio < CURRENT_DATE)
+       AND horario <= LOCALTIME
+       AND (
+         (frequencia = 'diario')
+         OR (frequencia = 'semanal' AND dia_semana = EXTRACT(DOW FROM CURRENT_DATE)::int)
+         OR (frequencia = 'mensal' AND dia_mes = EXTRACT(DAY FROM CURRENT_DATE)::int)
+       )`
+  );
+  return result.rows;
+}
+
+// Marcar recorrente como enviado hoje
+async function marcarRecorrenteEnviado(lembreteId) {
+  await pool.query(
+    `UPDATE lembretes_recorrentes SET ultimo_envio = CURRENT_DATE WHERE id = $1`,
+    [lembreteId]
+  );
+}
+
+// Desativar recorrentes expirados
+async function desativarRecorrentesExpirados() {
+  await pool.query(
+    `UPDATE lembretes_recorrentes SET ativo = FALSE WHERE data_fim < CURRENT_DATE AND ativo = TRUE`
+  );
+}
+
+// Listar lembretes recorrentes ativos de um usuário
+async function listarLembretesRecorrentes(usuarioId) {
+  const result = await pool.query(
+    `SELECT id, mensagem, TO_CHAR(horario, 'HH24:MI') as horario, frequencia,
+            dia_semana, dia_mes, TO_CHAR(data_fim, 'DD/MM/YYYY') as data_fim
+     FROM lembretes_recorrentes
+     WHERE usuario_id = $1 AND ativo = TRUE
+     ORDER BY horario ASC`,
+    [usuarioId]
+  );
+  return result.rows;
+}
+
+// Cancelar lembrete recorrente
+async function cancelarLembreteRecorrente(usuarioId, lembreteId) {
+  const result = await pool.query(
+    `UPDATE lembretes_recorrentes SET ativo = FALSE
+     WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE
+     RETURNING id, mensagem, frequencia`,
+    [lembreteId, usuarioId]
+  );
+  return result.rows[0] || null;
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -410,4 +499,10 @@ module.exports = {
   buscarLembretesParaDisparar,
   listarLembretesGerais,
   cancelarLembreteGeral,
+  criarLembreteRecorrente,
+  buscarRecorrentesParaDisparar,
+  marcarRecorrenteEnviado,
+  desativarRecorrentesExpirados,
+  listarLembretesRecorrentes,
+  cancelarLembreteRecorrente,
 };
