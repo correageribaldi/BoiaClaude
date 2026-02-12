@@ -505,7 +505,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Comando sugerido
   if (resultado.acao === 'comando') {
-    // Executar diretamente comandos de saldo/pendentes
+    // Executar diretamente comandos de saldo/pendentes/resumo/lista
     if (resultado.dica === 'saldo') {
       const saldos = await db.calcularSaldos(usuarioId);
       return fmt.formatarSaldos(saldos);
@@ -513,6 +513,14 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     if (resultado.dica === 'pendentes') {
       const pendentes = await db.listarPendentes(usuarioId);
       return fmt.formatarPendentes(pendentes);
+    }
+    if (resultado.dica === 'resumo') {
+      const resumo = await db.resumoMensal(usuarioId);
+      return fmt.formatarResumoMensal(resumo);
+    }
+    if (resultado.dica === 'lista') {
+      const transacoes = await db.listarTransacoes(usuarioId, null, 10);
+      return fmt.formatarLista(transacoes, 'todas');
     }
     return `Parece que você quer usar um comando. Tente digitar: *${resultado.dica || 'ajuda'}*`;
   }

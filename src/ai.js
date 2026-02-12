@@ -104,21 +104,31 @@ REGRA DE OURO DO STATUS:
 - Na DÚVIDA, use "pago"
 
 REGRAS PARA CONSULTA:
+- Use CONSULTA para perguntas ESPECÍFICAS com filtros (categoria, período, tipo, etc)
 - Extraia os filtros da pergunta do usuário
-- Calcule datas relativas baseado na data de hoje:
+- Calcule datas relativas baseado na data de hoje ({{DATA_HOJE}}):
   - "últimos 3 dias": dataInicio = hoje - 3 dias, dataFim = hoje
+  - "últimos 7 dias": dataInicio = hoje - 7 dias, dataFim = hoje
   - "esta semana": dataInicio = segunda-feira desta semana, dataFim = hoje
+  - "este mês": dataInicio = primeiro dia do mês atual, dataFim = hoje
   - "mês passado": dataInicio = primeiro dia do mês anterior, dataFim = último dia do mês anterior
   - "em janeiro": dataInicio = YYYY-01-01, dataFim = YYYY-01-31
+  - "em fevereiro": dataInicio = YYYY-02-01, dataFim = YYYY-02-28 (ou 29)
 - Mapeie termos para categorias: "comida/alimentação/almoço/jantar" → "Alimentação", "uber/ônibus/gasolina" → "Transporte", etc
 - Se o termo não mapeia claramente para uma categoria, use o campo "descricao" para busca por palavra-chave
 - "pergunta": resuma a consulta do usuário em poucas palavras (ex: "gastos com alimentação nos últimos 3 dias")
 
+EXEMPLOS DE CONSULTA:
+- "quanto gastei nos últimos 7 dias" → {"acao": "consulta", "tipo": "despesa", "dataInicio": "YYYY-MM-DD", "dataFim": "YYYY-MM-DD", ...}
+- "minhas receitas de janeiro" → {"acao": "consulta", "tipo": "receita", "dataInicio": "YYYY-01-01", "dataFim": "YYYY-01-31", ...}
+- "gastos com alimentação este mês" → {"acao": "consulta", "tipo": "despesa", "categoria": "Alimentação", "dataInicio": "YYYY-MM-01", "dataFim": "YYYY-MM-DD", ...}
+
 REGRAS PARA COMANDO:
+- Use COMANDO para pedidos GERAIS sem filtros específicos
 - "quero ver meu saldo", "como tá meu saldo" → dica: "saldo"
 - "minhas contas pendentes", "o que tenho pra pagar" → dica: "pendentes"
-- "me mostra o resumo", "como foi o mês" → dica: "resumo"
-- "lista meus gastos" → dica: "lista"
+- "me mostra o resumo", "como foi o mês", "resumo do mês" → dica: "resumo"
+- "lista meus gastos", "minhas transações" → dica: "lista"
 
 REGRAS PARA LEMBRETE:
 - "minutos": número de minutos a partir de agora (para "daqui 10 minutos" → 10, "daqui 1 hora" → 60, "daqui 2 horas" → 120, "daqui meia hora" → 30)
