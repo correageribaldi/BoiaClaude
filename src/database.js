@@ -565,10 +565,14 @@ async function removerLimite(usuarioId, categoria) {
 // Verificar limite e gastos de uma categoria no mês atual
 async function verificarLimite(usuarioId, categoria) {
   const agora = new Date();
-  const mes = String(agora.getMonth() + 1).padStart(2, '0');
   const ano = agora.getFullYear();
-  const inicioMes = `${ano}-${mes}-01`;
-  const fimMes = `${ano}-${mes}-31`;
+  const mes = agora.getMonth() + 1;
+
+  // Calcular o último dia do mês corretamente
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const mesStr = String(mes).padStart(2, '0');
+  const inicioMes = `${ano}-${mesStr}-01`;
+  const fimMes = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
   // Buscar limite
   const limiteResult = await pool.query(
