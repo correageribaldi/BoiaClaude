@@ -14,28 +14,37 @@ function formatarData(dataStr) {
 
 function formatarResumoMensal(resumo) {
   const { mes, ano, totais, porCategoria } = resumo;
-  let totalReceitas = 0;
-  let totalDespesas = 0;
-  let qtdReceitas = 0;
-  let qtdDespesas = 0;
+  let receitasPagas = 0, receitasPendentes = 0;
+  let despesasPagas = 0, despesasPendentes = 0;
+  let qtdReceitas = 0, qtdDespesas = 0;
 
   for (const t of totais) {
     if (t.tipo === 'receita') {
-      totalReceitas = t.total;
-      qtdReceitas = t.quantidade;
+      qtdReceitas += t.quantidade;
+      if (t.status === 'pago') receitasPagas = t.total;
+      else receitasPendentes = t.total;
     } else {
-      totalDespesas = t.total;
-      qtdDespesas = t.quantidade;
+      qtdDespesas += t.quantidade;
+      if (t.status === 'pago') despesasPagas = t.total;
+      else despesasPendentes = t.total;
     }
   }
 
-  const saldo = totalReceitas - totalDespesas;
+  const totalReceitas = receitasPagas + receitasPendentes;
+  const totalDespesas = despesasPagas + despesasPendentes;
+  const saldoAtual = receitasPagas - despesasPagas;
+  const saldoPrevisao = totalReceitas - totalDespesas;
 
   let msg = `📊 *Resumo de ${MESES[mes]}/${ano}*\n\n`;
-  msg += `💰 *Receitas:* ${formatarMoeda(totalReceitas)} (${qtdReceitas} lançamentos)\n`;
-  msg += `💸 *Despesas:* ${formatarMoeda(totalDespesas)} (${qtdDespesas} lançamentos)\n`;
-  msg += `━━━━━━━━━━━━━━━\n`;
-  msg += `${saldo >= 0 ? '✅' : '🔴'} *Saldo:* ${formatarMoeda(saldo)}\n`;
+  msg += `💰 *Receitas:* ${formatarMoeda(totalReceitas)} (${qtdReceitas} lanç.)`;
+  if (receitasPendentes > 0) msg += `\n   ├ Recebidas: ${formatarMoeda(receitasPagas)} | A receber: ${formatarMoeda(receitasPendentes)}`;
+  msg += `\n💸 *Despesas:* ${formatarMoeda(totalDespesas)} (${qtdDespesas} lanç.)`;
+  if (despesasPendentes > 0) msg += `\n   ├ Pagas: ${formatarMoeda(despesasPagas)} | A pagar: ${formatarMoeda(despesasPendentes)}`;
+  msg += `\n━━━━━━━━━━━━━━━\n`;
+  msg += `${saldoAtual >= 0 ? '✅' : '🔴'} *Saldo Atual:* ${formatarMoeda(saldoAtual)}\n`;
+  if (receitasPendentes > 0 || despesasPendentes > 0) {
+    msg += `${saldoPrevisao >= 0 ? '🔮✅' : '🔮🔴'} *Saldo Previsão:* ${formatarMoeda(saldoPrevisao)}\n`;
+  }
 
   if (porCategoria.length > 0) {
     const despesasCat = porCategoria.filter(c => c.tipo === 'despesa');
@@ -112,10 +121,55 @@ function formatarListaTransacoes(transacoes) {
   let msg = '📋 *Últimos lançamentos:*\n\n';
   for (const t of transacoes) {
     const emoji = t.tipo === 'receita' ? '🟢' : '🔴';
-    msg += `${emoji} #${t.id} | ${formatarData(t.data)} | ${formatarMoeda(t.valor)}\n`;
+    const statusTag = t.status === 'pendente' ? ' ⏳' : '';
+    msg += `${emoji} #${t.id} | ${formatarData(t.data)} | ${formatarMoeda(t.valor)}${statusTag}\n`;
     msg += `   _${t.descricao}_ (${t.categoria})\n\n`;
   }
   return msg.trim();
+}
+
+function formatarPendentes(transacoes) {
+  if (transacoes.length === 0) {
+    return '✅ Nenhuma conta pendente! Tudo em dia.';
+  }
+
+  let totalDespesas = 0;
+  let totalReceitas = 0;
+
+  let msg = '⏳ *Contas pendentes:*\n\n';
+  for (const t of transacoes) {
+    const emoji = t.tipo === 'receita' ? '🟢' : '🔴';
+    msg += `${emoji} #${t.id} | ${formatarData(t.data)} | ${formatarMoeda(t.valor)}\n`;
+    msg += `   _${t.descricao}_ (${t.categoria})\n\n`;
+    if (t.tipo === 'despesa') totalDespesas += t.valor;
+    else totalReceitas += t.valor;
+  }
+
+  msg += `━━━━━━━━━━━━━━━\n`;
+  if (totalDespesas > 0) msg += `💸 *Total a pagar:* ${formatarMoeda(totalDespesas)}\n`;
+  if (totalReceitas > 0) msg += `💰 *Total a receber:* ${formatarMoeda(totalReceitas)}\n`;
+  msg += `\n_Para liquidar: *pagar #ID*_`;
+
+  return msg;
+}
+
+function formatarSaldos(saldos) {
+  const { saldoAtual, saldoPrevisao, receitasPagas, despesasPagas, receitasPendentes, despesasPendentes } = saldos;
+
+  let msg = `💼 *Seus saldos:*\n\n`;
+  msg += `${saldoAtual >= 0 ? '✅' : '🔴'} *Saldo Atual:* ${formatarMoeda(saldoAtual)}\n`;
+  msg += `   Receitas recebidas: ${formatarMoeda(receitasPagas)}\n`;
+  msg += `   Despesas pagas: ${formatarMoeda(despesasPagas)}\n`;
+  msg += `\n━━━━━━━━━━━━━━━\n\n`;
+  msg += `${saldoPrevisao >= 0 ? '🔮✅' : '🔮🔴'} *Saldo Previsão:* ${formatarMoeda(saldoPrevisao)}\n`;
+  if (receitasPendentes > 0) msg += `   A receber: +${formatarMoeda(receitasPendentes)}\n`;
+  if (despesasPendentes > 0) msg += `   A pagar: -${formatarMoeda(despesasPendentes)}\n`;
+
+  if (receitasPendentes === 0 && despesasPendentes === 0) {
+    msg += `   _Sem pendências - saldo atual = previsão_`;
+  }
+
+  return msg;
 }
 
 module.exports = {
@@ -124,5 +178,7 @@ module.exports = {
   formatarResumoMensal,
   formatarResumoAnual,
   formatarListaTransacoes,
+  formatarPendentes,
+  formatarSaldos,
   MESES,
 };

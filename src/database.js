@@ -30,6 +30,16 @@ async function initTables() {
       ON transacoes(tipo);
   `);
 
+  // Migração: adicionar coluna status (compatível com banco existente)
+  await pool.query(`
+    ALTER TABLE transacoes
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pago'
+      CHECK(status IN ('pendente', 'pago'));
+
+    CREATE INDEX IF NOT EXISTS idx_transacoes_status
+      ON transacoes(status);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -44,19 +54,19 @@ async function initTables() {
   }
 }
 
-async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data) {
+async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status) {
   const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id`,
-    [usuarioId, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0]]
+    [usuarioId, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0], status || 'pago']
   );
   return { lastInsertRowid: result.rows[0].id };
 }
 
 async function listarTransacoes(usuarioId, tipo, limite) {
   const result = await pool.query(
-    `SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data
+    `SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
      FROM transacoes
      WHERE usuario_id = $1 AND ($2::text IS NULL OR tipo = $2)
      ORDER BY data DESC, id DESC
@@ -77,12 +87,13 @@ async function resumoMensal(usuarioId, mes, ano) {
   const totaisResult = await pool.query(
     `SELECT
        tipo,
+       status,
        SUM(valor)::float as total,
        COUNT(*)::int as quantidade
      FROM transacoes
      WHERE usuario_id = $1
        AND data >= $2 AND data <= $3
-     GROUP BY tipo`,
+     GROUP BY tipo, status`,
     [usuarioId, inicioMes, fimMes]
   );
 
@@ -131,9 +142,9 @@ async function excluirTransacao(usuarioId, transacaoId) {
 }
 
 async function consultarTransacoes(usuarioId, filtros = {}) {
-  const { tipo, categoria, dataInicio, dataFim, descricao, limite } = filtros;
+  const { tipo, categoria, dataInicio, dataFim, descricao, status, limite } = filtros;
   let query = `
-    SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data
+    SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
     FROM transacoes
     WHERE usuario_id = $1
   `;
@@ -160,6 +171,10 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
     query += ` AND descricao ILIKE $${idx++}`;
     params.push(`%${descricao}%`);
   }
+  if (status) {
+    query += ` AND status = $${idx++}`;
+    params.push(status);
+  }
 
   query += ` ORDER BY data DESC, id DESC LIMIT $${idx}`;
   params.push(limite || 20);
@@ -169,7 +184,7 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
 }
 
 async function consultarTotalTransacoes(usuarioId, filtros = {}) {
-  const { tipo, categoria, dataInicio, dataFim, descricao } = filtros;
+  const { tipo, categoria, dataInicio, dataFim, descricao, status } = filtros;
   let query = `
     SELECT COALESCE(SUM(valor), 0)::float as total, COUNT(*)::int as quantidade
     FROM transacoes
@@ -198,9 +213,58 @@ async function consultarTotalTransacoes(usuarioId, filtros = {}) {
     query += ` AND descricao ILIKE $${idx++}`;
     params.push(`%${descricao}%`);
   }
+  if (status) {
+    query += ` AND status = $${idx++}`;
+    params.push(status);
+  }
 
   const result = await pool.query(query, params);
   return result.rows[0];
+}
+
+async function liquidarTransacao(usuarioId, transacaoId) {
+  const result = await pool.query(
+    `UPDATE transacoes SET status = 'pago'
+     WHERE id = $1 AND usuario_id = $2 AND status = 'pendente'
+     RETURNING id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data`,
+    [transacaoId, usuarioId]
+  );
+  return result.rows[0] || null;
+}
+
+async function listarPendentes(usuarioId, tipo) {
+  const result = await pool.query(
+    `SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+     FROM transacoes
+     WHERE usuario_id = $1 AND status = 'pendente' AND ($2::text IS NULL OR tipo = $2)
+     ORDER BY data ASC, id ASC`,
+    [usuarioId, tipo || null]
+  );
+  return result.rows;
+}
+
+async function calcularSaldos(usuarioId) {
+  const result = await pool.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as receitas_pagas,
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as despesas_pagas,
+       COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pendente' THEN valor ELSE 0 END), 0)::float as receitas_pendentes,
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente' THEN valor ELSE 0 END), 0)::float as despesas_pendentes,
+       COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0)::float as receitas_total,
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0)::float as despesas_total
+     FROM transacoes
+     WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+  const r = result.rows[0];
+  return {
+    saldoAtual: r.receitas_pagas - r.despesas_pagas,
+    saldoPrevisao: r.receitas_total - r.despesas_total,
+    receitasPagas: r.receitas_pagas,
+    despesasPagas: r.despesas_pagas,
+    receitasPendentes: r.receitas_pendentes,
+    despesasPendentes: r.despesas_pendentes,
+  };
 }
 
 async function listarCategorias() {
@@ -219,4 +283,7 @@ module.exports = {
   listarCategorias,
   consultarTransacoes,
   consultarTotalTransacoes,
+  liquidarTransacao,
+  listarPendentes,
+  calcularSaldos,
 };

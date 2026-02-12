@@ -38,13 +38,16 @@ _Exemplos:_
 • despesa 50 Almoço restaurante Alimentação
 • receita 3000 Salário mensal Salário
 • despesa 150,90 Conta de luz Moradia 05/02
-• despesa 89.90 Uber Transporte 15/01/2025
+
+💼 *Controle financeiro:*
+• *saldo* - Ver saldo atual e previsão
+• *pendentes* - Listar contas a pagar/receber
+• *pagar* <id> - Marcar como pago/recebido
 
 📊 *Resumos:*
 • *resumo* - Resumo do mês atual
 • *resumo* <mês> - Resumo de um mês (ex: resumo 01)
 • *resumo anual* - Resumo do ano
-• *resumo anual* <ano> - Resumo de um ano específico
 
 📋 *Listagens:*
 • *lista* - Últimos 10 lançamentos
@@ -58,15 +61,13 @@ _Exemplos:_
 
 💬 *Linguagem natural:*
 Você também pode escrever naturalmente:
-• _"gastei 50 reais no almoço"_
-• _"recebi 3000 de salário"_
-• _"paguei 120 de conta de luz ontem"_
-• _"quanto gastei com comida nos últimos 3 dias?"_
-• _"quais foram minhas despesas esta semana?"_
+• _"gastei 50 reais no almoço"_ (registra como paga)
+• _"tenho que pagar 200 de internet dia 15"_ (registra como pendente)
+• _"vou receber 5000 de salário dia 05"_ (receita pendente)
+• _"quanto gastei com comida esta semana?"_
 
-🎤 *Áudio:* Envie mensagens de voz para registrar transações!
-
-📸 *Imagens:* Envie fotos de boletos, notas fiscais ou cupons para registrar automaticamente!`;
+🎤 *Áudio:* Envie mensagens de voz!
+📸 *Imagens:* Envie fotos de boletos e notas!`;
 }
 
 async function handleMessage(usuarioId, texto) {
@@ -102,6 +103,23 @@ async function handleMessage(usuarioId, texto) {
   // Comando: excluir
   if (lower.startsWith('excluir ')) {
     return await handleExcluir(usuarioId, msg);
+  }
+
+  // Comando: saldo
+  if (lower === 'saldo') {
+    const saldos = await db.calcularSaldos(usuarioId);
+    return fmt.formatarSaldos(saldos);
+  }
+
+  // Comando: pendentes
+  if (lower === 'pendentes' || lower === 'a pagar' || lower === 'contas') {
+    const pendentes = await db.listarPendentes(usuarioId);
+    return fmt.formatarPendentes(pendentes);
+  }
+
+  // Comando: pagar / liquidar
+  if (lower.startsWith('pagar ') || lower.startsWith('liquidar ')) {
+    return await handleLiquidar(usuarioId, msg);
   }
 
   // IA interpreta tudo: saudações, transações, consultas, etc.
@@ -207,6 +225,29 @@ async function handleExcluir(usuarioId, msg) {
   return `🗑️ Lançamento #${id} excluído com sucesso!`;
 }
 
+async function handleLiquidar(usuarioId, msg) {
+  const partes = msg.split(/\s+/);
+  const idStr = partes[1]?.replace('#', '');
+  const id = parseInt(idStr);
+
+  if (!id || isNaN(id)) {
+    return `❌ Informe o ID do lançamento.\n\nExemplo: pagar #5`;
+  }
+
+  const transacao = await db.liquidarTransacao(usuarioId, id);
+  if (!transacao) {
+    return `❌ Lançamento #${id} não encontrado ou já está pago.`;
+  }
+
+  const emoji = transacao.tipo === 'receita' ? '💰' : '💸';
+  const acao = transacao.tipo === 'receita' ? 'Recebido' : 'Pago';
+
+  return `✅${emoji} *${acao}!* Lançamento #${transacao.id} liquidado.\n\n` +
+    `📝 ${transacao.descricao}\n` +
+    `💵 ${fmt.formatarMoeda(transacao.valor)}\n` +
+    `📂 ${transacao.categoria}`;
+}
+
 async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   if (!resultado) {
     return fallbackMsg || `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
@@ -229,12 +270,21 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Comando sugerido
   if (resultado.acao === 'comando') {
+    // Executar diretamente comandos de saldo/pendentes
+    if (resultado.dica === 'saldo') {
+      const saldos = await db.calcularSaldos(usuarioId);
+      return fmt.formatarSaldos(saldos);
+    }
+    if (resultado.dica === 'pendentes') {
+      const pendentes = await db.listarPendentes(usuarioId);
+      return fmt.formatarPendentes(pendentes);
+    }
     return `Parece que você quer usar um comando. Tente digitar: *${resultado.dica || 'ajuda'}*`;
   }
 
   // Transação via IA
   if (resultado.acao === 'transacao') {
-    const { tipo, valor, descricao, categoria, data } = resultado;
+    const { tipo, valor, descricao, categoria, data, status } = resultado;
 
     if (!tipo || !valor || !descricao) {
       return `Não consegui extrair todas as informações. Tente ser mais específico.\n\nExemplo: _"gastei 50 reais no almoço"_`;
@@ -251,16 +301,31 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
       dataFinal = parseData(dataFinal);
     }
 
-    const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal);
-    const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
+    const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
+    const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
     const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
 
-    return `${emoji} *${tipo.charAt(0).toUpperCase() + tipo.slice(1)} registrada!*\n\n` +
+    let emoji, label;
+    if (statusFinal === 'pendente') {
+      emoji = tipo === 'receita' ? '⏳💰' : '⏳💸';
+      label = tipo === 'receita' ? 'Receita a receber' : 'Despesa a pagar';
+    } else {
+      emoji = tipo === 'receita' ? '✅💰' : '✅💸';
+      label = tipo === 'receita' ? 'Receita registrada' : 'Despesa registrada';
+    }
+
+    let msg = `${emoji} *${label}!*\n\n` +
       `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
       `📝 Descrição: ${descricao}\n` +
       `📂 Categoria: ${categoria || 'Outros'}\n` +
       `📅 Data: ${dataExibir}\n` +
       `🆔 ID: #${result.lastInsertRowid}`;
+
+    if (statusFinal === 'pendente') {
+      msg += `\n\n_Quando pagar, envie: *pagar #${result.lastInsertRowid}*_`;
+    }
+
+    return msg;
   }
 
   return `Não entendi sua mensagem. Digite *ajuda* para ver os comandos disponíveis.`;
