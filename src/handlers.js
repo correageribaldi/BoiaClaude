@@ -396,6 +396,27 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
   }
 
+  // Verificar limite de gastos (apenas para despesas)
+  if (tipo === 'despesa' && categoria) {
+    const limiteInfo = await db.verificarLimite(usuarioId, categoria);
+    if (limiteInfo) {
+      const { limite, gastos, restante, percentual } = limiteInfo;
+      let emoji = '';
+      if (percentual >= 100) emoji = '🚨';
+      else if (percentual >= 80) emoji = '⚠️';
+      else if (percentual >= 60) emoji = '📊';
+      else emoji = '✅';
+
+      msg += `\n\n${emoji} *Limite de ${categoria}:*\n`;
+      msg += `Gasto: ${fmt.formatarMoeda(gastos)} de ${fmt.formatarMoeda(limite)} (${percentual}%)\n`;
+      if (restante > 0) {
+        msg += `Restam: ${fmt.formatarMoeda(restante)} este mês`;
+      } else {
+        msg += `⚠️ *Limite excedido em ${fmt.formatarMoeda(Math.abs(restante))}!*`;
+      }
+    }
+  }
+
   return msg;
 }
 
@@ -462,6 +483,21 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return await handlePesquisa(resultado);
   }
 
+  // Definir limite de gastos
+  if (resultado.acao === 'definir_limite') {
+    return await handleDefinirLimite(usuarioId, resultado);
+  }
+
+  // Listar limites
+  if (resultado.acao === 'listar_limites') {
+    return await handleListarLimites(usuarioId);
+  }
+
+  // Remover limite
+  if (resultado.acao === 'remover_limite') {
+    return await handleRemoverLimite(usuarioId, resultado);
+  }
+
   // Mensagem fora do escopo - mostra o que o bot sabe fazer
   if (resultado.acao === 'nenhuma') {
     return foraDoEscopoMsg();
@@ -523,6 +559,27 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     if (statusFinal === 'pendente') {
       const quando = tipo === 'receita' ? 'receber' : 'pagar';
       msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
+    }
+
+    // Verificar limite de gastos (apenas para despesas)
+    if (tipo === 'despesa' && categoria) {
+      const limiteInfo = await db.verificarLimite(usuarioId, categoria);
+      if (limiteInfo) {
+        const { limite, gastos, restante, percentual } = limiteInfo;
+        let emoji = '';
+        if (percentual >= 100) emoji = '🚨';
+        else if (percentual >= 80) emoji = '⚠️';
+        else if (percentual >= 60) emoji = '📊';
+        else emoji = '✅';
+
+        msg += `\n\n${emoji} *Limite de ${categoria}:*\n`;
+        msg += `Gasto: ${fmt.formatarMoeda(gastos)} de ${fmt.formatarMoeda(limite)} (${percentual}%)\n`;
+        if (restante > 0) {
+          msg += `Restam: ${fmt.formatarMoeda(restante)} este mês`;
+        } else {
+          msg += `⚠️ *Limite excedido em ${fmt.formatarMoeda(Math.abs(restante))}!*`;
+        }
+      }
     }
 
     return msg;
@@ -836,6 +893,64 @@ async function handlePesquisa(resultado) {
   }
 
   return respostaFormatada;
+}
+
+async function handleDefinirLimite(usuarioId, resultado) {
+  const { categoria, valor } = resultado;
+
+  if (!categoria || !valor || valor <= 0) {
+    return '❌ Não consegui entender. Tenta algo como: "limitar gastos com Lazer em 500 reais"';
+  }
+
+  await db.definirLimite(usuarioId, categoria, valor);
+  return `✅ *Limite definido!*\n\n📂 Categoria: ${categoria}\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
+}
+
+async function handleListarLimites(usuarioId) {
+  const limites = await db.listarLimites(usuarioId);
+
+  if (limites.length === 0) {
+    return '📊 Você ainda não definiu nenhum limite de gastos.\n\n_Dica: Me fala algo como "limitar gastos com Alimentação em 1000 reais"_';
+  }
+
+  let msg = '📊 *Seus limites de gastos:*\n\n';
+  for (const l of limites) {
+    const info = await db.verificarLimite(usuarioId, l.categoria);
+    if (info) {
+      const { gastos, limite, restante, percentual } = info;
+      let emoji = '';
+      if (percentual >= 100) emoji = '🚨';
+      else if (percentual >= 80) emoji = '⚠️';
+      else if (percentual >= 60) emoji = '📊';
+      else emoji = '✅';
+
+      msg += `${emoji} *${l.categoria}*\n`;
+      msg += `   Limite: ${fmt.formatarMoeda(limite)}\n`;
+      msg += `   Gasto: ${fmt.formatarMoeda(gastos)} (${percentual}%)\n`;
+      if (restante > 0) {
+        msg += `   Restam: ${fmt.formatarMoeda(restante)}\n\n`;
+      } else {
+        msg += `   ⚠️ Excedido em ${fmt.formatarMoeda(Math.abs(restante))}\n\n`;
+      }
+    }
+  }
+
+  return msg;
+}
+
+async function handleRemoverLimite(usuarioId, resultado) {
+  const { categoria } = resultado;
+
+  if (!categoria) {
+    return '❌ Qual categoria você quer remover o limite?';
+  }
+
+  const removido = await db.removerLimite(usuarioId, categoria);
+  if (!removido) {
+    return `❌ Não encontrei limite ativo para a categoria "${categoria}".`;
+  }
+
+  return `✅ Limite de *${categoria}* removido com sucesso!`;
 }
 
 module.exports = { handleMessage, handleImageMessage, mensagemBoasVindas };

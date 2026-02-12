@@ -106,6 +106,22 @@ async function initTables() {
       ON usuarios(usuario_id);
   `);
 
+  // Tabela de limites de gastos por categoria
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS limites_categoria (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      categoria TEXT NOT NULL,
+      valor_limite NUMERIC(12,2) NOT NULL,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(usuario_id, categoria)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_limites_usuario
+      ON limites_categoria(usuario_id, ativo);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -510,6 +526,85 @@ async function listarCategorias() {
   return result.rows.map(r => r.nome);
 }
 
+// Definir limite de gastos para uma categoria
+async function definirLimite(usuarioId, categoria, valorLimite) {
+  const result = await pool.query(
+    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (usuario_id, categoria)
+     DO UPDATE SET valor_limite = $3, ativo = TRUE
+     RETURNING id`,
+    [usuarioId, categoria, valorLimite]
+  );
+  return result.rows[0].id;
+}
+
+// Listar limites ativos do usuário
+async function listarLimites(usuarioId) {
+  const result = await pool.query(
+    `SELECT categoria, valor_limite::float
+     FROM limites_categoria
+     WHERE usuario_id = $1 AND ativo = TRUE
+     ORDER BY categoria`,
+    [usuarioId]
+  );
+  return result.rows;
+}
+
+// Remover limite de uma categoria
+async function removerLimite(usuarioId, categoria) {
+  const result = await pool.query(
+    `UPDATE limites_categoria SET ativo = FALSE
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE
+     RETURNING id`,
+    [usuarioId, categoria]
+  );
+  return result.rows[0] || null;
+}
+
+// Verificar limite e gastos de uma categoria no mês atual
+async function verificarLimite(usuarioId, categoria) {
+  const agora = new Date();
+  const mes = String(agora.getMonth() + 1).padStart(2, '0');
+  const ano = agora.getFullYear();
+  const inicioMes = `${ano}-${mes}-01`;
+  const fimMes = `${ano}-${mes}-31`;
+
+  // Buscar limite
+  const limiteResult = await pool.query(
+    `SELECT valor_limite::float FROM limites_categoria
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE`,
+    [usuarioId, categoria]
+  );
+
+  if (limiteResult.rows.length === 0) return null;
+
+  const limite = limiteResult.rows[0].valor_limite;
+
+  // Calcular gastos do mês
+  const gastosResult = await pool.query(
+    `SELECT COALESCE(SUM(valor), 0)::float as total
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND categoria = $2
+       AND tipo = 'despesa'
+       AND data >= $3 AND data <= $4`,
+    [usuarioId, categoria, inicioMes, fimMes]
+  );
+
+  const gastos = gastosResult.rows[0].total;
+  const restante = limite - gastos;
+  const percentual = limite > 0 ? (gastos / limite) * 100 : 0;
+
+  return {
+    categoria,
+    limite,
+    gastos,
+    restante,
+    percentual: Math.round(percentual)
+  };
+}
+
 module.exports = {
   pool,
   initTables,
@@ -539,4 +634,8 @@ module.exports = {
   cancelarLembreteRecorrente,
   verificarUsuarioNovo,
   registrarUsuario,
+  definirLimite,
+  listarLimites,
+  removerLimite,
+  verificarLimite,
 };
