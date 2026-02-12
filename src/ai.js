@@ -76,8 +76,17 @@ REGRAS PARA TRANSAÇÃO:
 - "valor": número positivo (ex: 50.90)
 - "descricao": curta e clara
 - "categoria": uma das categorias listadas. Se não tiver certeza, use "Outros"
-- "data": null para hoje, ou "YYYY-MM-DD" se o usuário mencionar data
-- Calcule a data correta para "ontem", "anteontem", "semana passada", etc
+- "data": calcule corretamente baseado em {{DATA_HOJE}}:
+  - null = hoje (quando não mencionar data)
+  - "ontem" = dia anterior
+  - "anteontem" = 2 dias atrás
+  - "semana passada" = 7 dias atrás
+  - "dia X", "no dia X", "dia X deste mês" = dia X do mês atual se for futuro, ou próximo mês se já passou
+    * Exemplos: hoje é 12/02/2026:
+      - "dia 20" = 2026-02-20 (20 de fevereiro, ainda não chegou)
+      - "dia 5" = 2026-03-05 (5 de março, pois já passou no mês atual)
+  - "dia X do próximo mês", "mês que vem dia X" = dia X do próximo mês
+  - Sempre retorne no formato "YYYY-MM-DD"
 - "status": determina se a transação já foi efetivada ou é futura/planejada
   - "pago": quando o dinheiro JÁ saiu ou JÁ entrou (padrão)
   - "pendente": quando é uma conta A PAGAR ou valor A RECEBER no futuro
