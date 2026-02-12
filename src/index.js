@@ -150,6 +150,12 @@ async function start() {
     console.log('⚠️  OPENAI_API_KEY não configurada - IA e transcrição de áudio desabilitadas.');
   }
 
+  if (process.env.BRAVE_SEARCH_API_KEY) {
+    console.log('🔍 Pesquisa ativa (Brave Search) - busca na internet habilitada.');
+  } else {
+    console.log('⚠️  BRAVE_SEARCH_API_KEY não configurada - pesquisa na internet desabilitada.');
+  }
+
   client.initialize();
 }
 

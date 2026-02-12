@@ -805,6 +805,10 @@ async function handlePesquisa(resultado) {
     return 'Não entendi o que você quer que eu pesquise. Tenta reformular? 🤔';
   }
 
+  if (!process.env.BRAVE_SEARCH_API_KEY) {
+    return '🔍 A pesquisa na internet está desabilitada no momento.\n\n_O administrador precisa configurar a BRAVE_SEARCH_API_KEY._';
+  }
+
   console.log(`[PESQUISA] Buscando: "${query}"`);
   const resultados = await pesquisarWeb(query);
 
