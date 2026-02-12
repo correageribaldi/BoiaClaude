@@ -21,24 +21,25 @@ function gerarMensagem(rodada, transacoes) {
     const t = transacoes[0];
     const acao = t.tipo === 'despesa' ? 'pagar' : 'receber';
     const artigo = t.tipo === 'despesa' ? 'a' : 'o';
+    const acaoPassado = t.tipo === 'despesa' ? 'pagou' : 'recebeu';
 
     if (rodada === 1) {
-      return `Bom dia! Passando pra lembrar que hoje a gente tem que ${acao} ${artigo} *${t.descricao}* no valor de *${fmt.formatarMoeda(t.valor)}*.\n\nSe já resolveu, me confirma aqui que eu dou baixa!\n\n_Envie: *pagar #${t.id}*_`;
+      return `Bom dia! Passando pra lembrar que hoje a gente tem que ${acao} ${artigo} *${t.descricao}* no valor de *${fmt.formatarMoeda(t.valor)}*.\n\nSe já resolveu, me confirma aqui que eu dou baixa!\n\n_Envie: *${acao} #${t.id}*_`;
     }
     if (rodada === 2) {
-      return `E aí, deve ter sido corrido a manhã né... mas não deixa de ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}) hein!\n\nSe já pagou, só me confirma aqui.\n\n_Envie: *pagar #${t.id}*_`;
+      return `E aí, deve ter sido corrido a manhã né... mas não deixa de ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}) hein!\n\nSe já ${acaoPassado}, só me confirma aqui.\n\n_Envie: *${acao} #${t.id}*_`;
     }
-    return `Não querendo ser chato... kkkk mas temos que ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}). Olha a multa depois por atraso!\n\nSe já resolveu durante o dia, me avisa!\n\n_Envie: *pagar #${t.id}*_`;
+    return `Não querendo ser chato... kkkk mas temos que ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}). Olha a multa depois por atraso!\n\nSe já resolveu durante o dia, me avisa!\n\n_Envie: *${acao} #${t.id}*_`;
   }
 
   // Múltiplas contas
   if (rodada === 1) {
-    return `Bom dia! Passando pra lembrar que hoje temos *${qtd} contas* pra resolver:\n${detalhes}\n\nSe já pagou alguma, me confirma aqui que eu dou baixa!\n\n_Envie: *pagar #ID* para cada uma_`;
+    return `Bom dia! Passando pra lembrar que hoje temos *${qtd} contas* pra resolver:\n${detalhes}\n\nSe já pagou/recebeu alguma, me confirma aqui que eu dou baixa!\n\n_Envie: *pagar #ID* ou *receber #ID* para cada uma_`;
   }
   if (rodada === 2) {
-    return `E aí, a manhã foi corrida né... mas não esquece que ainda temos *${qtd} contas* pendentes:\n${detalhes}\n\nQualquer uma que já tenha pago, me avisa!\n\n_Envie: *pagar #ID* para cada uma_`;
+    return `E aí, a manhã foi corrida né... mas não esquece que ainda temos *${qtd} contas* pendentes:\n${detalhes}\n\nQualquer uma que já tenha pago/recebido, me avisa!\n\n_Envie: *pagar #ID* ou *receber #ID* para cada uma_`;
   }
-  return `Não querendo ser chato... kkkk mas ainda temos *${qtd} contas* pendentes pra hoje:\n${detalhes}\n\nOlha a multa por atraso! Se já resolveu alguma durante o dia, me avisa!\n\n_Envie: *pagar #ID* para cada uma_`;
+  return `Não querendo ser chato... kkkk mas ainda temos *${qtd} contas* pendentes pra hoje:\n${detalhes}\n\nOlha a multa por atraso! Se já resolveu alguma durante o dia, me avisa!\n\n_Envie: *pagar #ID* ou *receber #ID* para cada uma_`;
 }
 
 // Agrupa transações por usuário

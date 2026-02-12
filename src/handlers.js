@@ -224,8 +224,8 @@ async function handleMessage(usuarioId, texto) {
     return fmt.formatarPendentes(pendentes);
   }
 
-  // Comando: pagar / liquidar
-  if (lower.startsWith('pagar ') || lower.startsWith('liquidar ')) {
+  // Comando: pagar / liquidar / receber / recebi
+  if (lower.startsWith('pagar ') || lower.startsWith('liquidar ') || lower.startsWith('receber ') || lower.startsWith('recebi ')) {
     return await handleLiquidar(usuarioId, msg);
   }
 
@@ -392,7 +392,9 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
     `🆔 ID: #${result.lastInsertRowid}`;
 
   if (status === 'pendente') {
-    msg += `\n\n_Quando pagar, envie: *pagar #${result.lastInsertRowid}*_`;
+    const acao = tipo === 'receita' ? 'receber' : 'pagar';
+    const quando = tipo === 'receita' ? 'Quando receber' : 'Quando pagar';
+    msg += `\n\n_${quando}, envie: *${acao} #${result.lastInsertRowid}*_`;
   }
 
   return msg;
@@ -404,7 +406,7 @@ async function handleLiquidar(usuarioId, msg) {
   const id = parseInt(idStr);
 
   if (!id || isNaN(id)) {
-    return `❌ Informe o ID do lançamento.\n\nExemplo: pagar #5`;
+    return `❌ Informe o ID do lançamento.\n\nExemplo: pagar #5 ou receber #5`;
   }
 
   const transacao = await db.liquidarTransacao(usuarioId, id);
@@ -520,7 +522,9 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
       `🆔 ID: #${result.lastInsertRowid}`;
 
     if (statusFinal === 'pendente') {
-      msg += `\n\n_Quando pagar, envie: *pagar #${result.lastInsertRowid}*_`;
+      const acao = tipo === 'receita' ? 'receber' : 'pagar';
+      const quando = tipo === 'receita' ? 'Quando receber' : 'Quando pagar';
+      msg += `\n\n_${quando}, envie: *${acao} #${result.lastInsertRowid}*_`;
     }
 
     return msg;
