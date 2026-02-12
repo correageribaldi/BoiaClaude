@@ -42,10 +42,13 @@ TIPOS DE AÇÃO:
 7. CONVERSA CASUAL (obrigado, valeu, legal, beleza, tá bom, haha, falou, tmj, blz, etc):
 {"acao": "conversa", "resposta": "resposta curta, humana e natural que faz sentido no contexto. Nunca redirecione para comandos financeiros aqui. Seja como um amigo respondendo no WhatsApp."}
 
-8. ASSISTENTE DO DIA A DIA (perguntas rápidas e práticas do cotidiano):
+8. ASSISTENTE DO DIA A DIA (perguntas rápidas e práticas do cotidiano que você SABE responder sem pesquisar):
 {"acao": "assistente", "resposta": "resposta CURTA e DIRETA, máximo 3-4 linhas. Seja prático e útil."}
 
-9. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
+9. PESQUISA NA INTERNET (quando o usuário pede algo que PRECISA de busca online: restaurantes, lojas, serviços, preços atuais, eventos, endereços, telefones, horários de funcionamento, notícias recentes, etc):
+{"acao": "pesquisa", "query": "termo de busca otimizado para Google/DuckDuckGo em português", "pergunta": "o que o usuário quer saber, em poucas palavras"}
+
+10. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
 
 REGRAS GERAIS:
@@ -156,6 +159,20 @@ REGRAS PARA ASSISTENTE DO DIA A DIA:
 - A resposta DEVE ser CURTA (máximo 3-4 linhas), DIRETA e PRÁTICA
 - Use emojis com moderação
 - Responda como um amigo que sabe das coisas, não como uma enciclopédia
+
+REGRAS PARA PESQUISA:
+- Use quando o usuário perguntar algo que PRECISA de informação atualizada da internet
+- Exemplos que DEVEM virar pesquisa:
+  - "restaurantes em Canoas" → query: "melhores restaurantes em Canoas RS"
+  - "cafés perto de Porto Alegre" → query: "melhores cafés em Porto Alegre RS"
+  - "academia em Canoas" → query: "academias em Canoas RS avaliações"
+  - "preço do iPhone 15" → query: "preço iPhone 15 Brasil 2025"
+  - "horário da farmácia X" → query: "farmácia X horário funcionamento"
+  - "onde comprar pneu barato em Canoas" → query: "loja pneu barato Canoas RS"
+- A "query" deve ser OTIMIZADA para buscador (palavras-chave, sem perguntas)
+- Se o usuário mencionar uma cidade, inclua a cidade e o estado na query
+- Se NÃO mencionar cidade, adicione "Brasil" na query para contextualizar
+- "pergunta" é um resumo curto do que o usuário quer (para usar na resposta formatada)
 
 REGRAS PARA BLOQUEIO (acao: "nenhuma"):
 - Use "nenhuma" APENAS para pedidos que ABUSAM do assistente ou fogem totalmente do papel:
@@ -292,4 +309,45 @@ async function analisarImagem(base64Data, mimetype) {
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem };
+async function formatarResultadosPesquisa(pergunta, resultados) {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  try {
+    const resultadosTexto = resultados.map((r, i) =>
+      `${i + 1}. ${r.titulo}\n   ${r.descricao}\n   URL: ${r.url}`
+    ).join('\n\n');
+
+    const prompt = `Você é o Cronos, assistente pessoal no WhatsApp. O usuário perguntou: "${pergunta}"
+
+Aqui estão os resultados da pesquisa na internet:
+
+${resultadosTexto}
+
+Formate uma resposta CURTA e ÚTIL para WhatsApp com as melhores opções encontradas.
+REGRAS:
+- Máximo 4-5 opções, as mais relevantes
+- Para cada opção coloque: nome, descrição curta (1 linha) e o link
+- Use emojis para deixar visual
+- Seja direto e prático como um amigo
+- Responda em português brasileiro
+- NÃO retorne JSON, retorne texto puro formatado para WhatsApp (use *negrito* e _itálico_)
+- Se os resultados não forem bons, diga que não encontrou muita coisa e sugira reformular`;
+
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Resultados para: ${pergunta}` },
+      ],
+      temperature: 0.5,
+      max_tokens: 600,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    console.error('[AI] Erro ao formatar resultados de pesquisa:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa };

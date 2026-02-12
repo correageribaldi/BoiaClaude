@@ -1,6 +1,7 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa } = require('./ai');
+const { pesquisarWeb } = require('./search');
 
 // Estado temporário para confirmações pendentes (expira em 5 min)
 const confirmacoesPendentes = new Map();
@@ -103,6 +104,11 @@ Mas olha tudo que eu posso fazer por você:
 • Fazer contas (_"quanto é 8000 + 300?"_)
 • Conversões (_"quantos km são 10 milhas?"_)
 • Dúvidas rápidas do dia a dia
+
+🔍 *Pesquisa na internet*
+• Restaurantes, cafés, lojas (_"restaurantes em Canoas"_)
+• Preços e produtos (_"preço do iPhone 15"_)
+• Serviços e horários (_"academia em Porto Alegre"_)
 
 É só mandar uma mensagem e eu resolvo! 💪`;
 }
@@ -450,6 +456,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return resultado.resposta;
   }
 
+  // Pesquisa na internet
+  if (resultado.acao === 'pesquisa') {
+    return await handlePesquisa(resultado);
+  }
+
   // Mensagem fora do escopo - mostra o que o bot sabe fazer
   if (resultado.acao === 'nenhuma') {
     return foraDoEscopoMsg();
@@ -785,6 +796,35 @@ async function handleConsulta(usuarioId, consulta) {
 
   // sem rodapé de IA
   return msg;
+}
+
+async function handlePesquisa(resultado) {
+  const { query, pergunta } = resultado;
+
+  if (!query) {
+    return 'Não entendi o que você quer que eu pesquise. Tenta reformular? 🤔';
+  }
+
+  console.log(`[PESQUISA] Buscando: "${query}"`);
+  const resultados = await pesquisarWeb(query);
+
+  if (!resultados || resultados.length === 0) {
+    return `Não encontrei resultados pra "${pergunta || query}" 😕\n\nTenta ser mais específico, tipo incluir a cidade ou o nome do lugar.`;
+  }
+
+  console.log(`[PESQUISA] ${resultados.length} resultados encontrados, formatando...`);
+  const respostaFormatada = await formatarResultadosPesquisa(pergunta || query, resultados);
+
+  if (!respostaFormatada) {
+    // Fallback: formata manualmente se a IA falhar
+    let msg = `🔍 *${pergunta || query}*\n\nEncontrei isso pra você:\n\n`;
+    for (const r of resultados.slice(0, 4)) {
+      msg += `📌 *${r.titulo}*\n${r.descricao}\n🔗 ${r.url}\n\n`;
+    }
+    return msg;
+  }
+
+  return respostaFormatada;
 }
 
 module.exports = { handleMessage, handleImageMessage, mensagemBoasVindas };
