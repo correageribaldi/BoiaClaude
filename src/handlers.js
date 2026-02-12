@@ -448,9 +448,12 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return fallbackMsg || foraDoEscopoMsg();
   }
 
-  // Saudação - resposta amigável da IA
+  // Saudação - usar mensagem de boas-vindas personalizada do Cronos
   if (resultado.acao === 'saudacao') {
-    return resultado.resposta;
+    // Buscar nome do usuário no banco para personalizar a mensagem
+    const usuario = await db.buscarUsuario(usuarioId);
+    const nome = usuario?.nome || null;
+    return mensagemBoasVindas(nome);
   }
 
   // Lembrete único

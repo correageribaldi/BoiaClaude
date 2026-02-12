@@ -521,6 +521,15 @@ async function registrarUsuario(usuarioId, nome) {
   );
 }
 
+// Buscar dados do usuário
+async function buscarUsuario(usuarioId) {
+  const result = await pool.query(
+    'SELECT usuario_id, nome, primeiro_contato FROM usuarios WHERE usuario_id = $1',
+    [usuarioId]
+  );
+  return result.rows[0] || null;
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -649,6 +658,7 @@ module.exports = {
   cancelarLembreteRecorrente,
   verificarUsuarioNovo,
   registrarUsuario,
+  buscarUsuario,
   definirLimite,
   listarLimites,
   removerLimite,

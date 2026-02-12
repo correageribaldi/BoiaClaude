@@ -58,7 +58,7 @@ client.on('message', async (msg) => {
 
   const usuarioId = msg.from;
 
-  // Verificar se é o primeiro contato do usuário
+  // Verificar se é o primeiro contato do usuário e registrar
   try {
     const ehNovo = await db.verificarUsuarioNovo(usuarioId);
     if (ehNovo) {
@@ -70,9 +70,9 @@ client.on('message', async (msg) => {
       } catch (_) {}
 
       await db.registrarUsuario(usuarioId, nome);
-      await msg.reply(mensagemBoasVindas(nome));
-      console.log(`[NOVO USUÁRIO] ${usuarioId} (${nome || 'sem nome'}) recebeu boas-vindas.`);
-      return;
+      console.log(`[NOVO USUÁRIO] ${usuarioId} (${nome || 'sem nome'}) registrado. Processando primeira mensagem...`);
+      // Não envia boas-vindas aqui - deixa o handleMessage processar a mensagem do usuário
+      // Se o usuário disser "oi", "olá", etc, a IA responderá com saudação
     }
   } catch (error) {
     console.error('[USUARIO] Erro ao verificar primeiro contato:', error.message);
