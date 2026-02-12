@@ -99,6 +99,11 @@ Mas olha tudo que eu posso fazer por você:
 • Ver lista de lançamentos
 • Ver saldo e pendentes
 
+🧠 *Assistente rápido*
+• Fazer contas (_"quanto é 8000 + 300?"_)
+• Conversões (_"quantos km são 10 milhas?"_)
+• Dúvidas rápidas do dia a dia
+
 É só mandar uma mensagem e eu resolvo! 💪`;
 }
 
@@ -437,6 +442,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Conversa casual - resposta humana e natural
   if (resultado.acao === 'conversa') {
+    return resultado.resposta;
+  }
+
+  // Assistente do dia a dia - respostas rápidas e práticas
+  if (resultado.acao === 'assistente') {
     return resultado.resposta;
   }
 
