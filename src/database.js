@@ -93,6 +93,19 @@ async function initTables() {
       ON lembretes_recorrentes(ativo, horario);
   `);
 
+  // Tabela de usuários (controle de primeiro contato e nome)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL UNIQUE,
+      nome TEXT,
+      primeiro_contato TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usuarios_usuario_id
+      ON usuarios(usuario_id);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -473,6 +486,25 @@ async function cancelarLembreteRecorrente(usuarioId, lembreteId) {
   return result.rows[0] || null;
 }
 
+// Verificar se é o primeiro contato do usuário
+async function verificarUsuarioNovo(usuarioId) {
+  const result = await pool.query(
+    'SELECT id FROM usuarios WHERE usuario_id = $1',
+    [usuarioId]
+  );
+  return result.rows.length === 0;
+}
+
+// Registrar novo usuário
+async function registrarUsuario(usuarioId, nome) {
+  await pool.query(
+    `INSERT INTO usuarios (usuario_id, nome)
+     VALUES ($1, $2)
+     ON CONFLICT (usuario_id) DO UPDATE SET nome = $2`,
+    [usuarioId, nome]
+  );
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -505,4 +537,6 @@ module.exports = {
   desativarRecorrentesExpirados,
   listarLembretesRecorrentes,
   cancelarLembreteRecorrente,
+  verificarUsuarioNovo,
+  registrarUsuario,
 };

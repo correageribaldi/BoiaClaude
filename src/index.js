@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage } = require('./handlers');
+const { handleMessage, handleImageMessage, mensagemBoasVindas } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
@@ -57,6 +57,27 @@ client.on('message', async (msg) => {
   if (msg.from === 'status@broadcast') return;
 
   const usuarioId = msg.from;
+
+  // Verificar se é o primeiro contato do usuário
+  try {
+    const ehNovo = await db.verificarUsuarioNovo(usuarioId);
+    if (ehNovo) {
+      // Obter nome do contato no WhatsApp
+      let nome = null;
+      try {
+        const contact = await msg.getContact();
+        nome = contact.pushname || contact.name || null;
+      } catch (_) {}
+
+      await db.registrarUsuario(usuarioId, nome);
+      await msg.reply(mensagemBoasVindas(nome));
+      console.log(`[NOVO USUÁRIO] ${usuarioId} (${nome || 'sem nome'}) recebeu boas-vindas.`);
+      return;
+    }
+  } catch (error) {
+    console.error('[USUARIO] Erro ao verificar primeiro contato:', error.message);
+  }
+
   let texto = null;
 
   // Processar mensagens de áudio/voz

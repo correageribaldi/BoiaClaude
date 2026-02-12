@@ -49,6 +49,35 @@ function parseData(str) {
   return null;
 }
 
+function mensagemBoasVindas(nome) {
+  const nomeExibir = nome || 'amigo(a)';
+  return `Fala ${nomeExibir}, aqui é o Cronos, teu Assistente Pessoal. 👋😄
+
+A partir de agora eu vou te ajudar a organizar a vida, otimizar teu tempo e gerenciar teu dinheiro do jeito certo. E sim: eu também vou te lembrar de tudo que você me pedir (sem dó 😂).
+
+Pra ficar bem fácil, olha o que eu consigo fazer por aqui:
+
+✅ *Finanças (bem prático)*
+• Registrar receitas e despesas
+• Organizar por categoria (mercado, gasolina, contas, lazer, etc.)
+• Montar um resumo do mês e te mostrar pra onde o dinheiro tá indo
+• Você pode mandar por texto, áudio, ou até foto de boleto/cupom/nota que eu registro pra você
+
+✅ *Tarefas e rotina*
+• Criar tarefas e compromissos
+• Definir horários e recorrência (todo dia, toda semana, datas específicas)
+• Te lembrar do jeito certo pra não ter desculpa… tipo "academia 10:00" — e eu vou cobrar 😅
+
+✅ *Organização do dia a dia*
+• Checklists, prioridades, lembretes rápidos
+• "Me ajuda a planejar meu dia" e eu te devolvo um plano simples e direto
+
+Agora me diz como você quer começar:
+*1.* Colocar teu financeiro em dia (me fala tua renda e os gastos fixos principais)
+*2.* Criar teus primeiros lembretes/tarefas (tipo remédio, academia, contas)
+*3.* Ver tudo que eu posso fazer (eu te mando a lista completa)`;
+}
+
 function ajudaMsg() {
   return `🤖 *Cronos Assistente Pessoal*
 
@@ -380,6 +409,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   // Consulta - buscar no banco e formatar resultado
   if (resultado.acao === 'consulta') {
     return await handleConsulta(usuarioId, resultado);
+  }
+
+  // Conversa casual - resposta humana e natural
+  if (resultado.acao === 'conversa') {
+    return resultado.resposta;
   }
 
   // Mensagem não financeira - resposta gentil da IA
@@ -719,4 +753,4 @@ async function handleConsulta(usuarioId, consulta) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage };
+module.exports = { handleMessage, handleImageMessage, mensagemBoasVindas };
