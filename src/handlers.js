@@ -705,8 +705,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
 async function handleMensagemIA(usuarioId, texto) {
   // Detectar reset ANTES da IA interpretar (para funcionar em áudio também)
-  const lower = texto.toLowerCase().trim();
-  if (lower === 'resetar' || lower === 'começar do zero' || lower === 'limpar tudo' || lower === 'zerar dados') {
+  const lower = texto.toLowerCase().trim().replace(/[.,!?]+$/g, '');
+  if (lower === 'resetar' || lower.includes('começar do zero') || lower.includes('comecar do zero') || lower === 'limpar tudo' || lower === 'zerar dados') {
     await db.limparDadosUsuario(usuarioId);
     return mensagemBoasVindas();
   }
