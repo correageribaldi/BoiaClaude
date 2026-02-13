@@ -63,7 +63,7 @@ TIPOS DE AÇÃO:
 14. LISTAR RECORRENTES (meus lembretes recorrentes, minhas atividades recorrentes, recorrências ativas, o que tenho de recorrente, listar recorrentes):
 {"acao": "listar_recorrentes"}
 
-15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda):
+15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
 {"acao": "agenda", "periodo": "hoje|amanha|semana|mes|YYYY-MM-DD"}
 
 16. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
@@ -238,6 +238,10 @@ REGRAS PARA AGENDA:
   - "minha agenda do mês" → periodo: "mes"
   - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD" (calcule a data correta)
   - "o que tenho sexta" → periodo: "YYYY-MM-DD" (calcule a próxima sexta)
+- Sinônimos de agenda: "compromissos", "programação", "atividades", "tarefas do dia", "o que tenho"
+  - "liste meus compromissos para esta semana" → periodo: "semana"
+  - "quais minhas atividades de amanhã" → periodo: "amanha"
+  - "minha programação do mês" → periodo: "mes"
 - NÃO confunda com CONSULTA: consulta é para perguntas financeiras específicas ("quanto gastei com comida")
 - AGENDA é para visão geral de tudo (finanças + lembretes) de um período
 
