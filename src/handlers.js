@@ -1,11 +1,35 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro } = require('./ai');
 const { pesquisarWeb } = require('./search');
 const charts = require('./charts');
 
 // Estado temporário para confirmações pendentes (expira em 5 min)
 const confirmacoesPendentes = new Map();
+
+// Estado do fluxo Ponto Zero (expira em 30 min)
+const pontoZeroEstados = new Map();
+
+function salvarPontoZero(usuarioId, dados) {
+  pontoZeroEstados.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 30 * 60 * 1000,
+  });
+}
+
+function obterPontoZero(usuarioId) {
+  const dados = pontoZeroEstados.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    pontoZeroEstados.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparPontoZero(usuarioId) {
+  pontoZeroEstados.delete(usuarioId);
+}
 
 function salvarConfirmacao(usuarioId, dados) {
   confirmacoesPendentes.set(usuarioId, {
@@ -75,9 +99,11 @@ Pra ficar bem fácil, olha o que eu consigo fazer por aqui:
 • "Me ajuda a planejar meu dia" e eu te devolvo um plano simples e direto
 
 Agora me diz como você quer começar:
-*1.* Colocar teu financeiro em dia (me fala tua renda e os gastos fixos principais)
+*1.* 🎯 *Ponto Zero* — Em 2 min eu organizo teu financeiro (saldo, contas a pagar/receber e gastos fixos)
 *2.* Criar teus primeiros lembretes/tarefas (tipo remédio, academia, contas)
-*3.* Ver tudo que eu posso fazer (eu te mando a lista completa)`;
+*3.* Ver tudo que eu posso fazer (eu te mando a lista completa)
+
+_Recomendo começar pelo *1* pra eu ter a visão completa das tuas finanças!_`;
 }
 
 function foraDoEscopoMsg(nome) {
@@ -181,6 +207,17 @@ async function handleMessage(usuarioId, texto) {
   const confirmacao = obterConfirmacao(usuarioId);
   if (confirmacao) {
     return await handleConfirmacaoImagem(usuarioId, lower, confirmacao);
+  }
+
+  // Verificar se está no fluxo Ponto Zero
+  const pontoZero = obterPontoZero(usuarioId);
+  if (pontoZero) {
+    return await handlePontoZero(usuarioId, msg, pontoZero);
+  }
+
+  // Comando: ponto zero (texto direto)
+  if (lower === 'ponto zero' || lower === '1') {
+    return await iniciarPontoZero(usuarioId);
   }
 
   // Comando: ajuda / menu / help
@@ -479,6 +516,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     if (fallbackMsg) return fallbackMsg;
     const usuario = await db.buscarUsuario(usuarioId);
     return foraDoEscopoMsg(usuario?.nome || null);
+  }
+
+  // Ponto Zero - organizar finanças do zero
+  if (resultado.acao === 'ponto_zero') {
+    return await iniciarPontoZero(usuarioId);
   }
 
   // Saudação - verificar se é usuário novo ou existente
@@ -1215,6 +1257,227 @@ async function handleAgenda(usuarioId, periodo) {
     const totalPendente = pendentes.reduce((acc, t) => acc + t.valor, 0);
     msg += `⚠️ _${pendentes.length} lançamento${pendentes.length > 1 ? 's' : ''} pendente${pendentes.length > 1 ? 's' : ''} (${fmt.formatarMoeda(totalPendente)})_`;
   }
+
+  return msg;
+}
+
+// ==================== PONTO ZERO ====================
+
+async function iniciarPontoZero(usuarioId) {
+  salvarPontoZero(usuarioId, {
+    etapa: 'saldo',
+    saldoInicial: 0,
+    receitas: [],
+    despesas: [],
+    recorrentes: [],
+  });
+
+  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm 2-3 min eu monto teu *"Ponto Zero"* e deixo tuas finanças organizadas.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
+}
+
+async function handlePontoZero(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+
+  // Cancelar a qualquer momento
+  if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
+    limparPontoZero(usuarioId);
+    return '❌ Ponto Zero cancelado. Sem problemas! Quando quiser recomeçar é só me falar *"ponto zero"*.';
+  }
+
+  const item = await interpretarItemFinanceiro(texto);
+
+  switch (estado.etapa) {
+    case 'saldo': {
+      if (item.tipo !== 'item' || !item.valor) {
+        return 'Não consegui entender o valor 😅\n\nMe diz só o valor aproximado que tu tem disponível hoje.\n_Ex: "R$ 1.850" ou "uns 2 mil"_';
+      }
+      estado.saldoInicial = item.valor;
+      estado.etapa = 'receitas';
+      salvarPontoZero(usuarioId, estado);
+      return `Perfeito ✅ Saldo atual: *${fmt.formatarMoeda(item.valor)}*\n\nAté o fim do mês, tu tem algo pra *receber*? (salário, freela, pix esperado)\n\n_Se não tem nada pra receber, manda "não"._`;
+    }
+
+    case 'receitas': {
+      if (item.tipo === 'nao') {
+        estado.etapa = 'despesas';
+        salvarPontoZero(usuarioId, estado);
+        return 'Beleza! E *contas pra pagar* até o fim do mês? Me diz as principais, uma por vez.\n\n_Ex: "Internet dia 18, R$ 120"_\n_Se não tem nenhuma, manda "não"._';
+      }
+      if (item.tipo === 'item' && item.valor) {
+        estado.receitas.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
+        salvarPontoZero(usuarioId, estado);
+        return `Anotado ✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}\n\nÉ só isso de recebimento ou tem mais alguma coisa pra entrar?`;
+      }
+      return 'Não entendi 😅 Me diz o que tu vai receber, o valor e o dia.\n_Ex: "Salário dia 28, R$ 3.000"_\n_Ou manda "não" se não tem nada pra receber._';
+    }
+
+    case 'despesas': {
+      if (item.tipo === 'nao') {
+        estado.etapa = 'recorrentes';
+        salvarPontoZero(usuarioId, estado);
+        return 'Beleza! Agora me diz aquelas *contas que tu paga todo mês* (mesmo que seja pro próximo mês).\n_Ex: aluguel, internet, academia, escola..._\n\n_Se não tem nenhuma fixa, manda "não"._';
+      }
+      if (item.tipo === 'item' && item.valor) {
+        estado.despesas.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
+        salvarPontoZero(usuarioId, estado);
+        return `Anotado ✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}\n\nTem mais alguma despesa pendente ou por enquanto fechou?`;
+      }
+      return 'Não entendi 😅 Me diz a conta, o valor e o dia de vencimento.\n_Ex: "Cartão dia 25, R$ 980"_\n_Ou manda "não" se não tem mais._';
+    }
+
+    case 'recorrentes': {
+      if (item.tipo === 'nao') {
+        estado.etapa = 'painel';
+        salvarPontoZero(usuarioId, estado);
+        return 'Fechou! ✅\n\nQuer ver teu *painel financeiro* agora? Saldo, pendências e previsão até o fim do mês. 📊\n\n_Manda "sim" pra ver ou "cancelar" pra sair._';
+      }
+      if (item.tipo === 'item' && item.valor) {
+        estado.recorrentes.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
+        salvarPontoZero(usuarioId, estado);
+        return `Anotado ✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}/mês${item.dia ? ` (dia ${item.dia})` : ''}\n\nTem mais alguma conta mensal ou terminou por aqui?`;
+      }
+      return 'Não entendi 😅 Me diz a conta fixa, o valor e o dia.\n_Ex: "Aluguel dia 5, R$ 1.500"_\n_Ou manda "não" se terminou._';
+    }
+
+    case 'painel': {
+      if (item.tipo === 'sim') {
+        return await finalizarPontoZero(usuarioId, estado);
+      }
+      if (item.tipo === 'nao') {
+        // Salvar dados sem mostrar painel
+        await salvarDadosPontoZero(usuarioId, estado);
+        limparPontoZero(usuarioId);
+        return '✅ Tudo registrado! Teus lançamentos já estão no sistema.\n\nQuando quiser ver o resumo é só pedir: *"resumo"* ou *"agenda"* 💪';
+      }
+      return 'Manda *"sim"* pra ver o painel ou *"não"* pra só salvar os dados.';
+    }
+
+    default:
+      limparPontoZero(usuarioId);
+      return 'Algo deu errado no fluxo 😅 Me manda *"ponto zero"* pra começar de novo.';
+  }
+}
+
+function calcularDataPendente(dia) {
+  const hoje = new Date();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth();
+  const diaHoje = hoje.getDate();
+
+  let data;
+  if (dia && dia > 0) {
+    if (dia >= diaHoje) {
+      // Ainda não passou neste mês
+      data = new Date(ano, mes, dia);
+    } else {
+      // Já passou, coloca pro próximo mês
+      data = new Date(ano, mes + 1, dia);
+    }
+  } else {
+    // Sem dia, usa fim do mês
+    const ultimoDia = new Date(ano, mes + 1, 0).getDate();
+    data = new Date(ano, mes, ultimoDia);
+  }
+
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}`;
+}
+
+async function salvarDadosPontoZero(usuarioId, estado) {
+  // Salvar receitas como receitas pendentes
+  for (const r of estado.receitas) {
+    const dataStr = calcularDataPendente(r.dia);
+    await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria, dataStr, 'pendente');
+  }
+
+  // Salvar despesas como despesas pendentes
+  for (const d of estado.despesas) {
+    const dataStr = calcularDataPendente(d.dia);
+    await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria, dataStr, 'pendente');
+  }
+
+  // Salvar recorrentes como despesas pendentes + criar lembrete recorrente
+  for (const r of estado.recorrentes) {
+    const dataStr = calcularDataPendente(r.dia);
+    await db.adicionarTransacao(usuarioId, 'despesa', r.valor, r.descricao, r.categoria, dataStr, 'pendente');
+
+    // Criar lembrete recorrente mensal
+    const horario = '09:00';
+    await db.criarLembreteRecorrente(
+      usuarioId,
+      `💸 Pagar: ${r.descricao} - ${fmt.formatarMoeda(r.valor)}`,
+      horario,
+      'mensal',
+      null,
+      r.dia || 1,
+      null
+    );
+  }
+}
+
+async function finalizarPontoZero(usuarioId, estado) {
+  // Salvar tudo no banco
+  await salvarDadosPontoZero(usuarioId, estado);
+  limparPontoZero(usuarioId);
+
+  // Calcular projeção
+  const totalReceitas = estado.receitas.reduce((acc, r) => acc + r.valor, 0);
+  const totalDespesas = estado.despesas.reduce((acc, d) => acc + d.valor, 0);
+  const totalRecorrentes = estado.recorrentes.reduce((acc, r) => acc + r.valor, 0);
+  const previsaoFimMes = estado.saldoInicial + totalReceitas - totalDespesas - totalRecorrentes;
+
+  // Montar painel
+  const hoje = new Date();
+  const nomesMes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const mesAtual = nomesMes[hoje.getMonth()];
+  const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
+
+  let msg = `📊 *TEU PONTO ZERO - ${mesAtual.toUpperCase()}*\n\n`;
+
+  // Saldo atual
+  msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n\n`;
+
+  // Receitas esperadas
+  if (estado.receitas.length > 0) {
+    msg += `📈 *A receber (+${fmt.formatarMoeda(totalReceitas)}):*\n`;
+    for (const r of estado.receitas) {
+      msg += `  🟢 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Despesas pendentes
+  if (estado.despesas.length > 0) {
+    msg += `📉 *A pagar (-${fmt.formatarMoeda(totalDespesas)}):*\n`;
+    for (const d of estado.despesas) {
+      msg += `  🔴 ${d.descricao} - ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Gastos fixos
+  if (estado.recorrentes.length > 0) {
+    msg += `🔄 *Gastos fixos mensais (-${fmt.formatarMoeda(totalRecorrentes)}):*\n`;
+    for (const r of estado.recorrentes) {
+      msg += `  🔴 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}/mês${r.dia ? ` (dia ${r.dia})` : ''}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Linha separadora
+  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+
+  // Previsão
+  const emoji = previsaoFimMes >= 0 ? '✅' : '🚨';
+  msg += `${emoji} *Previsão até ${ultimoDia}/${String(hoje.getMonth() + 1).padStart(2, '0')}:* ${fmt.formatarMoeda(previsaoFimMes)}\n\n`;
+
+  if (previsaoFimMes >= 0) {
+    msg += `Sobram *${fmt.formatarMoeda(previsaoFimMes)}* até o fim do mês! 💪\n`;
+  } else {
+    msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsaoFimMes))}* pra fechar o mês.\n`;
+  }
+
+  msg += `\n_Tudo registrado! Agora é só ir usando o Cronos no dia a dia._ 🚀\n`;
+  msg += `_Dica: peça "resumo" ou "agenda" quando quiser acompanhar._`;
 
   return msg;
 }

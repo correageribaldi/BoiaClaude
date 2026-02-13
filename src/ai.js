@@ -66,7 +66,10 @@ TIPOS DE AÇÃO:
 15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
 {"acao": "agenda", "periodo": "hoje|amanha|semana|mes|YYYY-MM-DD"}
 
-16. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
+16. PONTO ZERO / ORGANIZAR FINANÇAS (quero organizar minhas finanças, colocar financeiro em dia, ponto zero, quero começar, opção 1, me ajuda com as finanças):
+{"acao": "ponto_zero"}
+
+17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
 
 REGRAS GERAIS:
@@ -434,4 +437,62 @@ Rodízio de pizzas R$ 45. Ambiente familiar, aceita reservas.
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa };
+async function interpretarItemFinanceiro(texto) {
+  if (!process.env.OPENAI_API_KEY) return { tipo: 'erro' };
+
+  try {
+    const categorias = (await db.listarCategorias()).join(', ');
+
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Interprete a resposta do usuário durante um cadastro financeiro rápido.
+Retorne APENAS um JSON válido:
+
+Se for um ITEM FINANCEIRO (valor, receita, despesa, conta):
+{"tipo": "item", "valor": 0.00, "descricao": "descrição curta", "dia": null, "categoria": "..."}
+- "valor": número positivo (ex: 3000.00)
+- "descricao": nome curto do item (ex: "Salário", "Internet", "Aluguel")
+- "dia": dia do mês 1-31 se mencionado, null se não mencionado
+- "categoria": uma das categorias disponíveis: ${categorias}. Se não tiver certeza, use "Outros"
+
+Se for CONFIRMAÇÃO positiva (sim, bora, vamos, ok, pode ser, quero):
+{"tipo": "sim"}
+
+Se for ENCERRAMENTO (não, só isso, terminei, por enquanto, fechou, é isso, não tem mais, acabou):
+{"tipo": "nao"}
+
+Se não entender ou for mensagem ambígua:
+{"tipo": "erro"}
+
+Exemplos:
+- "Salário dia 28, R$ 3.000" → {"tipo": "item", "valor": 3000, "descricao": "Salário", "dia": 28, "categoria": "Salário"}
+- "Internet dia 18, R$ 120" → {"tipo": "item", "valor": 120, "descricao": "Internet", "dia": 18, "categoria": "Moradia"}
+- "Cartão dia 25, R$ 980" → {"tipo": "item", "valor": 980, "descricao": "Cartão de crédito", "dia": 25, "categoria": "Outros"}
+- "Aluguel dia 5, R$ 1.500" → {"tipo": "item", "valor": 1500, "descricao": "Aluguel", "dia": 5, "categoria": "Moradia"}
+- "Acho que tenho uns R$ 1.850" → {"tipo": "item", "valor": 1850, "descricao": "Saldo atual", "dia": null, "categoria": null}
+- "2 mil e quinhentos" → {"tipo": "item", "valor": 2500, "descricao": "Saldo atual", "dia": null, "categoria": null}
+- "Bora!" → {"tipo": "sim"}
+- "Só isso" → {"tipo": "nao"}
+- "Terminei" → {"tipo": "nao"}`
+        },
+        { role: 'user', content: texto },
+      ],
+      temperature: 0.2,
+      max_tokens: 150,
+    });
+
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) return { tipo: 'erro' };
+
+    const jsonStr = content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    return JSON.parse(jsonStr);
+  } catch (err) {
+    console.error('[AI] Erro ao interpretar item financeiro:', err.message);
+    return { tipo: 'erro' };
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro };
