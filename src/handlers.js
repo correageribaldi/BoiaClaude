@@ -204,7 +204,32 @@ async function handleMessage(usuarioId, texto) {
     return await handleResumo(usuarioId, msg);
   }
 
-  // Comando: lista
+  // Comando: lembretes (ANTES de "lista" para não confundir)
+  if (lower === 'lembretes' || lower === 'meus lembretes' || lower.includes('listar lembrete') || lower.includes('lista lembrete') || lower.includes('meus lembretes')) {
+    // Se menciona "recorrente", listar só os recorrentes
+    if (lower.includes('recorrente')) {
+      return await handleListarRecorrentes(usuarioId);
+    }
+    // Caso contrário, listar todos os lembretes (únicos + recorrentes)
+    return await handleListarTodosLembretes(usuarioId);
+  }
+
+  // Comando: recorrentes
+  if (lower === 'recorrentes' || lower === 'lembretes recorrentes' || lower.includes('listar recorrente') || lower.includes('lista recorrente') || lower.includes('atividades recorrentes')) {
+    return await handleListarRecorrentes(usuarioId);
+  }
+
+  // Comando: cancelar lembrete #ID
+  if (lower.startsWith('cancelar lembrete ')) {
+    return await handleCancelarLembrete(usuarioId, msg);
+  }
+
+  // Comando: cancelar recorrente #ID
+  if (lower.startsWith('cancelar recorrente ') || lower.startsWith('parar lembrete ')) {
+    return await handleCancelarRecorrente(usuarioId, msg);
+  }
+
+  // Comando: lista (transações financeiras - despesas/receitas)
   if (lower.startsWith('lista')) {
     return await handleLista(usuarioId, msg);
   }
@@ -229,26 +254,6 @@ async function handleMessage(usuarioId, texto) {
   // Comando: pagar / liquidar / receber / recebi
   if (lower.startsWith('pagar ') || lower.startsWith('liquidar ') || lower.startsWith('receber ') || lower.startsWith('recebi ')) {
     return await handleLiquidar(usuarioId, msg);
-  }
-
-  // Comando: meus lembretes
-  if (lower === 'lembretes' || lower === 'meus lembretes') {
-    return await handleListarLembretes(usuarioId);
-  }
-
-  // Comando: cancelar lembrete #ID
-  if (lower.startsWith('cancelar lembrete ')) {
-    return await handleCancelarLembrete(usuarioId, msg);
-  }
-
-  // Comando: cancelar recorrente #ID
-  if (lower.startsWith('cancelar recorrente ') || lower.startsWith('parar lembrete ')) {
-    return await handleCancelarRecorrente(usuarioId, msg);
-  }
-
-  // Comando: recorrentes
-  if (lower === 'recorrentes' || lower === 'lembretes recorrentes') {
-    return await handleListarRecorrentes(usuarioId);
   }
 
   // IA interpreta tudo: saudações, transações, consultas, etc. (incluindo reset)
@@ -490,6 +495,16 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   // Lembrete recorrente
   if (resultado.acao === 'lembrete_recorrente') {
     return await handleLembreteRecorrente(usuarioId, resultado);
+  }
+
+  // Listar lembretes (únicos + recorrentes)
+  if (resultado.acao === 'listar_lembretes') {
+    return await handleListarTodosLembretes(usuarioId);
+  }
+
+  // Listar apenas recorrentes
+  if (resultado.acao === 'listar_recorrentes') {
+    return await handleListarRecorrentes(usuarioId);
   }
 
   // Consulta - buscar no banco e formatar resultado
@@ -760,6 +775,45 @@ async function handleListarLembretes(usuarioId) {
     msg += `🔔 *#${l.id}* - ${l.mensagem}\n   📅 ${l.horario}\n\n`;
   }
   msg += '_Para cancelar: *cancelar lembrete #ID*_';
+  return msg;
+}
+
+async function handleListarTodosLembretes(usuarioId) {
+  const [lembretes, recorrentes] = await Promise.all([
+    db.listarLembretesGerais(usuarioId),
+    db.listarLembretesRecorrentes(usuarioId),
+  ]);
+
+  if (lembretes.length === 0 && recorrentes.length === 0) {
+    return '⏰ Você não tem nenhum lembrete ativo no momento.\n\n_Dica: me fala algo como "me lembre daqui 30 min de pegar o Noah" ou "todo dia às 8h me lembra de tomar o remédio"_';
+  }
+
+  let msg = '';
+
+  // Lembretes únicos (agendados)
+  if (lembretes.length > 0) {
+    msg += '⏰ *Lembretes agendados:*\n\n';
+    for (const l of lembretes) {
+      msg += `🔔 *#${l.id}* - ${l.mensagem}\n   📅 ${l.horario}\n\n`;
+    }
+    msg += '_Para cancelar: *cancelar lembrete #ID*_\n\n';
+  }
+
+  // Lembretes recorrentes
+  if (recorrentes.length > 0) {
+    msg += '🔄 *Lembretes recorrentes:*\n\n';
+    for (const l of recorrentes) {
+      let freq;
+      if (l.frequencia === 'diario') freq = 'Todo dia';
+      else if (l.frequencia === 'semanal') freq = `${DIAS_SEMANA[l.dia_semana]}`;
+      else freq = `Dia ${l.dia_mes}/mês`;
+
+      const fim = l.data_fim ? ` (até ${l.data_fim})` : ' (♾️)';
+      msg += `🔔 *#R${l.id}* - ${l.mensagem}\n   📅 ${freq} às ${l.horario}${fim}\n\n`;
+    }
+    msg += '_Para cancelar: *cancelar recorrente #ID*_';
+  }
+
   return msg;
 }
 
