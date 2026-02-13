@@ -507,4 +507,67 @@ Outros exemplos:
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro };
+async function categorizarExtrato(descricoes) {
+  if (!process.env.OPENAI_API_KEY) return {};
+
+  try {
+    const categorias = (await db.listarCategorias()).join(', ');
+
+    const lista = descricoes.map((d, i) => `${i + 1}. ${d}`).join('\n');
+
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Você recebe descrições de transações de um extrato bancário brasileiro.
+Para CADA descrição, retorne:
+- "categoria": uma das categorias disponíveis: ${categorias}. Se não tiver certeza, use "Outros"
+- "descricao": nome CURTO e limpo (máximo 30 caracteres), removendo prefixos como "Compra no débito -", "Transferência enviada/recebida pelo Pix -", CPFs, agências, contas bancárias
+
+Retorne APENAS um JSON válido:
+{"resultados": {"descrição original 1": {"categoria": "...", "descricao": "..."}, "descrição original 2": {"categoria": "...", "descricao": "..."}, ...}}
+
+REGRAS DE CATEGORIZAÇÃO:
+- Supermercado/mercado/mercearia → "Alimentação"
+- Posto de gasolina/combustível → "Transporte"
+- Uber/99/táxi → "Transporte"
+- Restaurante/lanchonete/fast food → "Alimentação"
+- Farmácia/drogaria → "Saúde"
+- Conta de luz/água/gás/internet/telefone → "Moradia"
+- Aplicação/resgate de investimento → "Investimentos" ou "Outros"
+- Transferência Pix → tente identificar pelo nome do destinatário, se não souber use "Outros"
+- Aluguel/condomínio → "Moradia"
+- Academia/esporte → "Saúde"
+- Shopping/roupa/calçado → "Compras"
+- Bar/boliche/cinema/lazer → "Lazer"
+
+REGRAS DE DESCRIÇÃO CURTA:
+- "Compra no débito - ANGELONI SUPER LOJA 05" → "Angeloni Supermercado"
+- "Compra no débito - PostoMariluLtda" → "Posto Marilu"
+- "Transferência enviada pelo Pix - NEUSA CRISTINA HUBNER DA COSTA - ..." → "Pix p/ Neusa Cristina"
+- "Transferência recebida pelo Pix - BARBARA BIANCA CORREA PAZ - ..." → "Pix de Barbara Correa"
+- "Transferência Recebida - Ketlen Coelho de Carvalho - ..." → "Pix de Ketlen Coelho"
+- "Aplicação RDB" → "Aplicação RDB"
+- "Resgate RDB" → "Resgate RDB"
+- "INGLESES GAS E AGUA" → "Gás e Água"`
+        },
+        { role: 'user', content: lista },
+      ],
+      temperature: 0.2,
+      max_tokens: 2000,
+    });
+
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) return {};
+
+    const jsonStr = content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(jsonStr);
+    return parsed.resultados || {};
+  } catch (err) {
+    console.error('[AI] Erro ao categorizar extrato:', err.message);
+    return {};
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato };

@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato } = require('./ai');
 const { pesquisarWeb } = require('./search');
 const charts = require('./charts');
 
@@ -1537,4 +1537,125 @@ async function finalizarPontoZero(usuarioId, estado) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage, mensagemBoasVindas };
+// ==================== IMPORTAR EXTRATO CSV ====================
+
+function parseCSV(csvContent) {
+  // Remove BOM e normaliza line endings
+  const content = csvContent.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = content.split('\n').filter(l => l.trim());
+
+  if (lines.length < 2) return [];
+
+  const transacoes = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    // Formato Nubank: Data,Valor,Identificador,Descrição
+    // Descrição pode conter vírgulas, então split nos primeiros 3 separadores
+    const p1 = line.indexOf(',');
+    const p2 = line.indexOf(',', p1 + 1);
+    const p3 = line.indexOf(',', p2 + 1);
+
+    if (p1 === -1 || p2 === -1 || p3 === -1) continue;
+
+    const data = line.substring(0, p1).trim();
+    const valorStr = line.substring(p1 + 1, p2).trim();
+    const descricao = line.substring(p3 + 1).trim();
+
+    const valor = parseFloat(valorStr);
+    if (isNaN(valor) || valor === 0) continue;
+
+    // Converter DD/MM/YYYY para YYYY-MM-DD
+    const partes = data.split('/');
+    if (partes.length < 3) continue;
+    const [dia, mes, ano] = partes;
+    const dataFormatada = `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+
+    transacoes.push({
+      data: dataFormatada,
+      valor: Math.abs(valor),
+      tipo: valor > 0 ? 'receita' : 'despesa',
+      descricaoOriginal: descricao,
+      descricao: descricao, // será substituída pela AI
+      categoria: 'Outros',  // será substituída pela AI
+    });
+  }
+
+  return transacoes;
+}
+
+async function handleCSVImport(usuarioId, csvContent) {
+  const transacoes = parseCSV(csvContent);
+
+  if (transacoes.length === 0) {
+    return '❌ Não encontrei transações no arquivo CSV.\n\nCertifica que é um extrato no formato: Data,Valor,Identificador,Descrição';
+  }
+
+  // Pegar descrições únicas para categorizar em batch
+  const descUnicas = [...new Set(transacoes.map(t => t.descricaoOriginal))];
+
+  console.log(`[CSV] ${transacoes.length} transações encontradas, ${descUnicas.length} descrições únicas. Categorizando...`);
+
+  // Categorizar via AI
+  const categoriaMap = await categorizarExtrato(descUnicas);
+
+  // Aplicar categorias e descrições limpas
+  for (const t of transacoes) {
+    const info = categoriaMap[t.descricaoOriginal];
+    if (info) {
+      t.categoria = info.categoria || 'Outros';
+      t.descricao = info.descricao || t.descricaoOriginal;
+    }
+  }
+
+  // Salvar todas as transações no banco
+  let salvos = 0;
+  for (const t of transacoes) {
+    try {
+      await db.adicionarTransacao(usuarioId, t.tipo, t.valor, t.descricao, t.categoria, t.data, 'pago');
+      salvos++;
+    } catch (err) {
+      console.error(`[CSV] Erro ao salvar transação: ${err.message}`);
+    }
+  }
+
+  // Calcular resumo
+  const receitas = transacoes.filter(t => t.tipo === 'receita');
+  const despesas = transacoes.filter(t => t.tipo === 'despesa');
+  const totalReceitas = receitas.reduce((acc, t) => acc + t.valor, 0);
+  const totalDespesas = despesas.reduce((acc, t) => acc + t.valor, 0);
+
+  // Período
+  const datas = transacoes.map(t => t.data).sort();
+  const dataInicio = datas[0];
+  const dataFim = datas[datas.length - 1];
+
+  let msg = `✅ *Extrato importado com sucesso!*\n\n`;
+  msg += `📅 Período: ${fmt.formatarData(dataInicio)} a ${fmt.formatarData(dataFim)}\n`;
+  msg += `📋 ${salvos} transações registradas\n\n`;
+  msg += `🟢 ${receitas.length} receitas: +${fmt.formatarMoeda(totalReceitas)}\n`;
+  msg += `🔴 ${despesas.length} despesas: -${fmt.formatarMoeda(totalDespesas)}\n`;
+  msg += `💰 Saldo do período: ${fmt.formatarMoeda(totalReceitas - totalDespesas)}\n\n`;
+
+  // Breakdown por categoria (despesas)
+  const catTotals = {};
+  for (const t of despesas) {
+    catTotals[t.categoria] = (catTotals[t.categoria] || 0) + t.valor;
+  }
+
+  if (Object.keys(catTotals).length > 0) {
+    msg += `📊 *Despesas por categoria:*\n`;
+    const sorted = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+    for (const [cat, total] of sorted) {
+      msg += `  📂 ${cat}: ${fmt.formatarMoeda(total)}\n`;
+    }
+  }
+
+  msg += `\n_Dica: peça *"resumo"* pra ver o panorama completo!_`;
+
+  return msg;
+}
+
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, mensagemBoasVindas };

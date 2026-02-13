@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, mensagemBoasVindas } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, mensagemBoasVindas } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
@@ -112,8 +112,29 @@ client.on('message', async (msg) => {
       await msg.reply('❌ Erro ao processar a imagem. Envie uma foto clara de um boleto ou nota fiscal.');
     }
     return;
+  } else if (msg.hasMedia && msg.type === 'document') {
+    // Processar documentos (extratos CSV)
+    try {
+      const media = await msg.downloadMedia();
+      if (media && media.data) {
+        const filename = (media.filename || msg.body || '').toLowerCase();
+        if (filename.endsWith('.csv')) {
+          console.log(`[CSV] Recebido arquivo CSV de ${usuarioId}: ${media.filename || 'sem nome'}`);
+          await msg.reply('📄 Recebi teu extrato! Analisando e categorizando as transações... ⏳');
+          const csvContent = Buffer.from(media.data, 'base64').toString('utf-8');
+          const resposta = await handleCSVImport(usuarioId, csvContent);
+          await msg.reply(resposta);
+        } else {
+          await msg.reply('📄 Por enquanto aceito apenas arquivos *CSV* de extratos bancários.\n\n_Exporta o extrato do teu banco em formato CSV e me manda aqui!_');
+        }
+      }
+    } catch (error) {
+      console.error('[CSV] Erro ao processar documento:', error.message);
+      await msg.reply('❌ Erro ao processar o arquivo. Tenta mandar novamente ou verifica se é um CSV válido.');
+    }
+    return;
   } else if (msg.hasMedia) {
-    // Ignorar outros tipos de mídia (vídeos, documentos, stickers, etc.)
+    // Ignorar outros tipos de mídia (vídeos, stickers, etc.)
     return;
   } else {
     texto = msg.body;
