@@ -1301,7 +1301,16 @@ async function handlePontoZero(usuarioId, texto, estado) {
       if (item.tipo === 'nao') {
         estado.etapa = 'despesas';
         salvarPontoZero(usuarioId, estado);
-        return 'Beleza! E *contas pra pagar* até o fim do mês? Me diz as principais, uma por vez.\n\n_Ex: "Internet dia 18, R$ 120"_\n_Se não tem nenhuma, manda "não"._';
+        return 'Beleza! E *contas pra pagar* até o fim do mês? Me diz as principais (pode mandar várias de uma vez!).\n\n_Ex: "Internet dia 18, R$ 120 e cartão dia 25, R$ 980"_\n_Se não tem nenhuma, manda "não"._';
+      }
+      if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
+        let msg = '';
+        for (const it of item.itens) {
+          estado.receitas.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
+          msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
+        }
+        salvarPontoZero(usuarioId, estado);
+        return `Anotado! ${item.itens.length} receitas registradas:\n\n${msg}\nTem mais alguma coisa pra receber ou fechou?`;
       }
       if (item.tipo === 'item' && item.valor) {
         estado.receitas.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
@@ -1315,7 +1324,16 @@ async function handlePontoZero(usuarioId, texto, estado) {
       if (item.tipo === 'nao') {
         estado.etapa = 'recorrentes';
         salvarPontoZero(usuarioId, estado);
-        return 'Beleza! Agora me diz aquelas *contas que tu paga todo mês* (mesmo que seja pro próximo mês).\n_Ex: aluguel, internet, academia, escola..._\n\n_Se não tem nenhuma fixa, manda "não"._';
+        return 'Beleza! Agora me diz aquelas *contas que tu paga todo mês* (mesmo que seja pro próximo mês). Pode mandar várias de uma vez!\n_Ex: "aluguel dia 5 R$ 1500, internet dia 10 R$ 120 e academia dia 1 R$ 100"_\n\n_Se não tem nenhuma fixa, manda "não"._';
+      }
+      if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
+        let msg = '';
+        for (const it of item.itens) {
+          estado.despesas.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
+          msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
+        }
+        salvarPontoZero(usuarioId, estado);
+        return `Anotado! ${item.itens.length} despesas registradas:\n\n${msg}\nTem mais alguma despesa pendente ou por enquanto fechou?`;
       }
       if (item.tipo === 'item' && item.valor) {
         estado.despesas.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
@@ -1330,6 +1348,15 @@ async function handlePontoZero(usuarioId, texto, estado) {
         estado.etapa = 'painel';
         salvarPontoZero(usuarioId, estado);
         return 'Fechou! ✅\n\nQuer ver teu *painel financeiro* agora? Saldo, pendências e previsão até o fim do mês. 📊\n\n_Manda "sim" pra ver ou "cancelar" pra sair._';
+      }
+      if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
+        let msg = '';
+        for (const it of item.itens) {
+          estado.recorrentes.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
+          msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}/mês${it.dia ? ` (dia ${it.dia})` : ''}\n`;
+        }
+        salvarPontoZero(usuarioId, estado);
+        return `Anotado! ${item.itens.length} contas fixas registradas:\n\n${msg}\nTem mais alguma conta mensal ou terminou por aqui?`;
       }
       if (item.tipo === 'item' && item.valor) {
         estado.recorrentes.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });

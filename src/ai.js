@@ -451,8 +451,13 @@ async function interpretarItemFinanceiro(texto) {
           content: `Interprete a resposta do usuário durante um cadastro financeiro rápido.
 Retorne APENAS um JSON válido:
 
-Se for um ITEM FINANCEIRO (valor, receita, despesa, conta):
+Se for UM ÚNICO ITEM FINANCEIRO (valor, receita, despesa, conta):
 {"tipo": "item", "valor": 0.00, "descricao": "descrição curta", "dia": null, "categoria": "..."}
+
+Se forem MÚLTIPLOS ITENS FINANCEIROS na mesma mensagem (2 ou mais itens):
+{"tipo": "itens", "itens": [{"valor": 0.00, "descricao": "...", "dia": null, "categoria": "..."}, ...]}
+
+Regras dos itens:
 - "valor": número positivo (ex: 3000.00)
 - "descricao": nome curto do item (ex: "Salário", "Internet", "Aluguel")
 - "dia": dia do mês 1-31 se mencionado, null se não mencionado
@@ -467,13 +472,18 @@ Se for ENCERRAMENTO (não, só isso, terminei, por enquanto, fechou, é isso, n�
 Se não entender ou for mensagem ambígua:
 {"tipo": "erro"}
 
-Exemplos:
+Exemplos com UM item:
 - "Salário dia 28, R$ 3.000" → {"tipo": "item", "valor": 3000, "descricao": "Salário", "dia": 28, "categoria": "Salário"}
 - "Internet dia 18, R$ 120" → {"tipo": "item", "valor": 120, "descricao": "Internet", "dia": 18, "categoria": "Moradia"}
-- "Cartão dia 25, R$ 980" → {"tipo": "item", "valor": 980, "descricao": "Cartão de crédito", "dia": 25, "categoria": "Outros"}
-- "Aluguel dia 5, R$ 1.500" → {"tipo": "item", "valor": 1500, "descricao": "Aluguel", "dia": 5, "categoria": "Moradia"}
 - "Acho que tenho uns R$ 1.850" → {"tipo": "item", "valor": 1850, "descricao": "Saldo atual", "dia": null, "categoria": null}
 - "2 mil e quinhentos" → {"tipo": "item", "valor": 2500, "descricao": "Saldo atual", "dia": null, "categoria": null}
+
+Exemplos com MÚLTIPLOS itens:
+- "Internet dia 18, R$ 120 e cartão dia 25, R$ 980" → {"tipo": "itens", "itens": [{"valor": 120, "descricao": "Internet", "dia": 18, "categoria": "Moradia"}, {"valor": 980, "descricao": "Cartão de crédito", "dia": 25, "categoria": "Outros"}]}
+- "Salário 3000 dia 5 e freela 1500 dia 20" → {"tipo": "itens", "itens": [{"valor": 3000, "descricao": "Salário", "dia": 5, "categoria": "Salário"}, {"valor": 1500, "descricao": "Freelance", "dia": 20, "categoria": "Salário"}]}
+- "Aluguel dia 5 R$ 1500, internet dia 10 R$ 120 e academia dia 1 R$ 100" → {"tipo": "itens", "itens": [{"valor": 1500, "descricao": "Aluguel", "dia": 5, "categoria": "Moradia"}, {"valor": 120, "descricao": "Internet", "dia": 10, "categoria": "Moradia"}, {"valor": 100, "descricao": "Academia", "dia": 1, "categoria": "Saúde"}]}
+
+Outros exemplos:
 - "Bora!" → {"tipo": "sim"}
 - "Só isso" → {"tipo": "nao"}
 - "Terminei" → {"tipo": "nao"}`
@@ -481,7 +491,7 @@ Exemplos:
         { role: 'user', content: texto },
       ],
       temperature: 0.2,
-      max_tokens: 150,
+      max_tokens: 500,
     });
 
     const content = response.choices[0]?.message?.content?.trim();
