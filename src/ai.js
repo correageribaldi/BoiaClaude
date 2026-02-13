@@ -66,8 +66,10 @@ TIPOS DE AÇÃO:
 15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
 {"acao": "agenda", "periodo": "hoje|amanha|semana|mes|YYYY-MM-DD"}
 
-16. PONTO ZERO / ORGANIZAR FINANÇAS (quero organizar minhas finanças, colocar financeiro em dia, ponto zero, quero começar, opção 1, me ajuda com as finanças):
-{"acao": "ponto_zero"}
+16. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, opção 1, quero começar a organizar):
+{"acao": "financas_em_dia"}
+
+IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "limpar tudo" — esses são comandos de RESET que apagam tudo. "Finanças em dia" é para ORGANIZAR as finanças, não apagar.
 
 17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}

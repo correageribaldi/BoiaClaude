@@ -7,7 +7,7 @@ const charts = require('./charts');
 // Estado temporário para confirmações pendentes (expira em 5 min)
 const confirmacoesPendentes = new Map();
 
-// Estado do fluxo Ponto Zero (expira em 30 min)
+// Estado do fluxo Finanças em Dia (expira em 30 min)
 const pontoZeroEstados = new Map();
 
 function salvarPontoZero(usuarioId, dados) {
@@ -99,7 +99,7 @@ Pra ficar bem fácil, olha o que eu consigo fazer por aqui:
 • "Me ajuda a planejar meu dia" e eu te devolvo um plano simples e direto
 
 Agora me diz como você quer começar:
-*1.* 🎯 *Ponto Zero* — Em 2 min eu organizo teu financeiro (saldo, contas a pagar/receber e gastos fixos)
+*1.* 🎯 *Finanças em Dia* — Em 2 min eu organizo teu financeiro (saldo, contas a pagar/receber e gastos fixos)
 *2.* Criar teus primeiros lembretes/tarefas (tipo remédio, academia, contas)
 *3.* Ver tudo que eu posso fazer (eu te mando a lista completa)
 
@@ -209,14 +209,14 @@ async function handleMessage(usuarioId, texto) {
     return await handleConfirmacaoImagem(usuarioId, lower, confirmacao);
   }
 
-  // Verificar se está no fluxo Ponto Zero
+  // Verificar se está no fluxo Finanças em Dia
   const pontoZero = obterPontoZero(usuarioId);
   if (pontoZero) {
     return await handlePontoZero(usuarioId, msg, pontoZero);
   }
 
-  // Comando: ponto zero (texto direto)
-  if (lower === 'ponto zero' || lower === '1') {
+  // Comando: finanças em dia (texto direto)
+  if (lower === 'finanças em dia' || lower === 'financas em dia' || lower === '1') {
     return await iniciarPontoZero(usuarioId);
   }
 
@@ -518,8 +518,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return foraDoEscopoMsg(usuario?.nome || null);
   }
 
-  // Ponto Zero - organizar finanças do zero
-  if (resultado.acao === 'ponto_zero') {
+  // Finanças em Dia - organizar finanças
+  if (resultado.acao === 'financas_em_dia') {
     return await iniciarPontoZero(usuarioId);
   }
 
@@ -1261,7 +1261,7 @@ async function handleAgenda(usuarioId, periodo) {
   return msg;
 }
 
-// ==================== PONTO ZERO ====================
+// ==================== FINANÇAS EM DIA ====================
 
 async function iniciarPontoZero(usuarioId) {
   salvarPontoZero(usuarioId, {
@@ -1272,7 +1272,7 @@ async function iniciarPontoZero(usuarioId) {
     recorrentes: [],
   });
 
-  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm 2-3 min eu monto teu *"Ponto Zero"* e deixo tuas finanças organizadas.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
+  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm 2-3 min eu organizo teu financeiro e deixo tuas finanças em dia.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
 }
 
 async function handlePontoZero(usuarioId, texto, estado) {
@@ -1281,7 +1281,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
   // Cancelar a qualquer momento
   if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
     limparPontoZero(usuarioId);
-    return '❌ Ponto Zero cancelado. Sem problemas! Quando quiser recomeçar é só me falar *"ponto zero"*.';
+    return '❌ Cancelado. Sem problemas! Quando quiser recomeçar é só me falar *"finanças em dia"*.';
   }
 
   const item = await interpretarItemFinanceiro(texto);
@@ -1381,7 +1381,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     default:
       limparPontoZero(usuarioId);
-      return 'Algo deu errado no fluxo 😅 Me manda *"ponto zero"* pra começar de novo.';
+      return 'Algo deu errado no fluxo 😅 Me manda *"finanças em dia"* pra começar de novo.';
   }
 }
 
@@ -1470,7 +1470,7 @@ async function finalizarPontoZero(usuarioId, estado) {
   const totalRecorrentesFuturos = recorrentesFuturos.reduce((acc, r) => acc + r.valor, 0);
   const previsaoFimMes = estado.saldoInicial + totalReceitasFuturas - totalDespesasFuturas - totalRecorrentesFuturos;
 
-  let msg = `📊 *TEU PONTO ZERO - ${mesAtual.toUpperCase()}*\n\n`;
+  let msg = `📊 *FINANÇAS EM DIA - ${mesAtual.toUpperCase()}*\n\n`;
 
   // Saldo atual
   msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n\n`;
