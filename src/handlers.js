@@ -204,6 +204,20 @@ async function handleMessage(usuarioId, texto) {
     return await handleResumo(usuarioId, msg);
   }
 
+  // Comando: agenda
+  if (lower === 'agenda' || lower === 'agenda hoje' || lower === 'minha agenda') {
+    return await handleAgenda(usuarioId, 'hoje');
+  }
+  if (lower === 'agenda amanha' || lower === 'agenda amanhã') {
+    return await handleAgenda(usuarioId, 'amanha');
+  }
+  if (lower === 'agenda semana' || lower === 'agenda da semana') {
+    return await handleAgenda(usuarioId, 'semana');
+  }
+  if (lower === 'agenda mes' || lower === 'agenda do mes' || lower === 'agenda do mês') {
+    return await handleAgenda(usuarioId, 'mes');
+  }
+
   // Comando: lembretes (ANTES de "lista" para não confundir)
   if (lower === 'lembretes' || lower === 'meus lembretes' || lower.includes('listar lembrete') || lower.includes('lista lembrete') || lower.includes('meus lembretes')) {
     // Se menciona "recorrente", listar só os recorrentes
@@ -505,6 +519,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   // Listar apenas recorrentes
   if (resultado.acao === 'listar_recorrentes') {
     return await handleListarRecorrentes(usuarioId);
+  }
+
+  // Agenda - visão geral do dia/semana/mês
+  if (resultado.acao === 'agenda') {
+    return await handleAgenda(usuarioId, resultado.periodo || 'hoje');
   }
 
   // Consulta - buscar no banco e formatar resultado
@@ -1051,6 +1070,153 @@ async function handleRemoverLimite(usuarioId, resultado) {
   }
 
   return `✅ Limite de *${categoria}* removido com sucesso!`;
+}
+
+function calcularPeriodo(periodo) {
+  const hoje = new Date();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth();
+  const dia = hoje.getDate();
+  const dow = hoje.getDay(); // 0=dom, 1=seg...
+
+  let dataInicio, dataFim, titulo;
+
+  switch (periodo) {
+    case 'hoje':
+      dataInicio = new Date(ano, mes, dia);
+      dataFim = new Date(ano, mes, dia);
+      titulo = `hoje (${dataInicio.toLocaleDateString('pt-BR')})`;
+      break;
+    case 'amanha':
+      dataInicio = new Date(ano, mes, dia + 1);
+      dataFim = new Date(ano, mes, dia + 1);
+      titulo = `amanhã (${dataInicio.toLocaleDateString('pt-BR')})`;
+      break;
+    case 'semana': {
+      // Segunda a domingo da semana atual
+      const diffSeg = dow === 0 ? -6 : 1 - dow;
+      dataInicio = new Date(ano, mes, dia + diffSeg);
+      dataFim = new Date(dataInicio);
+      dataFim.setDate(dataFim.getDate() + 6);
+      titulo = `esta semana (${dataInicio.toLocaleDateString('pt-BR')} a ${dataFim.toLocaleDateString('pt-BR')})`;
+      break;
+    }
+    case 'mes': {
+      dataInicio = new Date(ano, mes, 1);
+      const ultimoDia = new Date(ano, mes + 1, 0).getDate();
+      dataFim = new Date(ano, mes, ultimoDia);
+      const nomesMes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+      titulo = `${nomesMes[mes]} de ${ano}`;
+      break;
+    }
+    default:
+      // Tenta interpretar como data específica YYYY-MM-DD
+      if (/^\d{4}-\d{2}-\d{2}$/.test(periodo)) {
+        const [a, m, d] = periodo.split('-').map(Number);
+        dataInicio = new Date(a, m - 1, d);
+        dataFim = new Date(a, m - 1, d);
+        titulo = `dia ${dataInicio.toLocaleDateString('pt-BR')}`;
+      } else {
+        dataInicio = new Date(ano, mes, dia);
+        dataFim = new Date(ano, mes, dia);
+        titulo = `hoje (${dataInicio.toLocaleDateString('pt-BR')})`;
+      }
+  }
+
+  // Formatar como YYYY-MM-DD para o banco
+  const fmtData = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { dataInicio: fmtData(dataInicio), dataFim: fmtData(dataFim), titulo, dataInicioObj: dataInicio, dataFimObj: dataFim };
+}
+
+function recorrenteDisparaNoPerodo(rec, dataInicioObj, dataFimObj) {
+  // Verifica se um lembrete recorrente dispara em algum dia do período
+  const d = new Date(dataInicioObj);
+  while (d <= dataFimObj) {
+    if (rec.frequencia === 'diario') return true;
+    if (rec.frequencia === 'semanal' && d.getDay() === rec.dia_semana) return true;
+    if (rec.frequencia === 'mensal' && d.getDate() === rec.dia_mes) return true;
+    d.setDate(d.getDate() + 1);
+  }
+  return false;
+}
+
+async function handleAgenda(usuarioId, periodo) {
+  const { dataInicio, dataFim, titulo, dataInicioObj, dataFimObj } = calcularPeriodo(periodo);
+
+  // Buscar tudo em paralelo
+  const [transacoes, lembretes, recorrentes] = await Promise.all([
+    db.consultarTransacoes(usuarioId, { dataInicio, dataFim, limite: 50 }),
+    db.buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim),
+    db.listarLembretesRecorrentes(usuarioId),
+  ]);
+
+  // Filtrar recorrentes que disparam no período
+  const recorrentesDoPeriodo = recorrentes.filter(r => recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj));
+
+  // Separar transações
+  const receitas = transacoes.filter(t => t.tipo === 'receita');
+  const despesas = transacoes.filter(t => t.tipo === 'despesa');
+  const pendentes = transacoes.filter(t => t.status === 'pendente');
+
+  const temAlgo = receitas.length > 0 || despesas.length > 0 || lembretes.length > 0 || recorrentesDoPeriodo.length > 0;
+
+  if (!temAlgo) {
+    return `📅 *Sua agenda para ${titulo}*\n\nVocê não tem nada agendado para esse período! 😎\n\n_Dica: registre despesas, receitas ou crie lembretes para organizar seu dia._`;
+  }
+
+  let msg = `📅 *Sua agenda para ${titulo}*\n\n`;
+
+  // Receitas do período
+  if (receitas.length > 0) {
+    const totalReceitas = receitas.reduce((acc, t) => acc + t.valor, 0);
+    msg += `💰 *Receitas (${fmt.formatarMoeda(totalReceitas)}):*\n`;
+    for (const t of receitas) {
+      const status = t.status === 'pendente' ? ' ⏳' : ' ✅';
+      msg += `  🟢 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_ (${t.categoria})${status}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Despesas do período
+  if (despesas.length > 0) {
+    const totalDespesas = despesas.reduce((acc, t) => acc + t.valor, 0);
+    msg += `💸 *Despesas (${fmt.formatarMoeda(totalDespesas)}):*\n`;
+    for (const t of despesas) {
+      const status = t.status === 'pendente' ? ' ⏳' : ' ✅';
+      msg += `  🔴 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_ (${t.categoria})${status}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Lembretes únicos do período
+  if (lembretes.length > 0) {
+    msg += `⏰ *Lembretes agendados:*\n`;
+    for (const l of lembretes) {
+      msg += `  🔔 ${l.hora} - ${l.mensagem}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Recorrentes que disparam no período
+  if (recorrentesDoPeriodo.length > 0) {
+    msg += `🔄 *Lembretes recorrentes:*\n`;
+    for (const r of recorrentesDoPeriodo) {
+      let freq;
+      if (r.frequencia === 'diario') freq = 'todo dia';
+      else if (r.frequencia === 'semanal') freq = `${DIAS_SEMANA[r.dia_semana]}`;
+      else freq = `dia ${r.dia_mes}/mês`;
+      msg += `  🔔 ${r.horario} - ${r.mensagem} _(${freq})_\n`;
+    }
+    msg += '\n';
+  }
+
+  // Resumo de pendentes
+  if (pendentes.length > 0) {
+    const totalPendente = pendentes.reduce((acc, t) => acc + t.valor, 0);
+    msg += `⚠️ _${pendentes.length} lançamento${pendentes.length > 1 ? 's' : ''} pendente${pendentes.length > 1 ? 's' : ''} (${fmt.formatarMoeda(totalPendente)})_`;
+  }
+
+  return msg;
 }
 
 module.exports = { handleMessage, handleImageMessage, mensagemBoasVindas };

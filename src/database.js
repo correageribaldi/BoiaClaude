@@ -585,6 +585,22 @@ async function removerLimite(usuarioId, categoria) {
   return result.rows[0] || null;
 }
 
+// Buscar lembretes gerais por período (para agenda)
+async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
+  const result = await pool.query(
+    `SELECT id, mensagem, TO_CHAR(dispara_em, 'DD/MM HH24:MI') as horario,
+            TO_CHAR(dispara_em, 'YYYY-MM-DD') as data_disparo,
+            TO_CHAR(dispara_em, 'HH24:MI') as hora
+     FROM lembretes_gerais
+     WHERE usuario_id = $1 AND enviado = FALSE
+       AND dispara_em >= $2::timestamp
+       AND dispara_em < ($3::date + interval '1 day')
+     ORDER BY dispara_em ASC`,
+    [usuarioId, dataInicio, dataFim]
+  );
+  return result.rows;
+}
+
 // Verificar limite e gastos de uma categoria no mês atual
 async function verificarLimite(usuarioId, categoria) {
   const agora = new Date();
@@ -667,4 +683,5 @@ module.exports = {
   removerLimite,
   verificarLimite,
   limparDadosUsuario,
+  buscarLembretesGeraisPorPeriodo,
 };

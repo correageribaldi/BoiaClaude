@@ -63,7 +63,10 @@ TIPOS DE AÇÃO:
 14. LISTAR RECORRENTES (meus lembretes recorrentes, minhas atividades recorrentes, recorrências ativas, o que tenho de recorrente, listar recorrentes):
 {"acao": "listar_recorrentes"}
 
-15. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
+15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda):
+{"acao": "agenda", "periodo": "hoje|amanha|semana|mes|YYYY-MM-DD"}
+
+16. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
 
 REGRAS GERAIS:
@@ -218,6 +221,25 @@ REGRAS PARA PESQUISA:
 - Se o usuário mencionar uma cidade, inclua a cidade e o estado na query
 - Se NÃO mencionar cidade, pesquise mesmo assim com "Brasil" ou contexto genérico
 - "pergunta" é um resumo curto do que o usuário quer
+
+REGRAS PARA AGENDA:
+- Use AGENDA quando o usuário quiser ver tudo que tem para um período (finanças + lembretes + recorrentes juntos)
+- "periodo" deve ser:
+  - "hoje" → para hoje
+  - "amanha" → para amanhã
+  - "semana" → para a semana atual (segunda a domingo)
+  - "mes" → para o mês inteiro
+  - "YYYY-MM-DD" → para um dia específico (calcule baseado em {{DATA_HOJE}})
+- Exemplos:
+  - "o que tenho pra hoje" → periodo: "hoje"
+  - "me organiza pro dia" → periodo: "hoje"
+  - "como tá minha agenda amanhã" → periodo: "amanha"
+  - "o que tenho essa semana" → periodo: "semana"
+  - "minha agenda do mês" → periodo: "mes"
+  - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD" (calcule a data correta)
+  - "o que tenho sexta" → periodo: "YYYY-MM-DD" (calcule a próxima sexta)
+- NÃO confunda com CONSULTA: consulta é para perguntas financeiras específicas ("quanto gastei com comida")
+- AGENDA é para visão geral de tudo (finanças + lembretes) de um período
 
 REGRAS PARA BLOQUEIO (acao: "nenhuma"):
 - Use "nenhuma" APENAS para pedidos que ABUSAM do assistente ou fogem totalmente do papel:
