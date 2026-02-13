@@ -1446,46 +1446,74 @@ async function finalizarPontoZero(usuarioId, estado) {
   await salvarDadosPontoZero(usuarioId, estado);
   limparPontoZero(usuarioId);
 
-  // Calcular projeção
-  const totalReceitas = estado.receitas.reduce((acc, r) => acc + r.valor, 0);
-  const totalDespesas = estado.despesas.reduce((acc, d) => acc + d.valor, 0);
-  const totalRecorrentes = estado.recorrentes.reduce((acc, r) => acc + r.valor, 0);
-  const previsaoFimMes = estado.saldoInicial + totalReceitas - totalDespesas - totalRecorrentes;
-
   // Montar painel
   const hoje = new Date();
+  const diaHoje = hoje.getDate();
   const nomesMes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const mesAtual = nomesMes[hoje.getMonth()];
   const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
+
+  // Separar itens futuros (ainda pendentes neste mês) dos passados (já incluídos no saldo)
+  // Se o dia já passou, o valor já está refletido no saldo informado pelo usuário
+  const ehFuturo = (item) => !item.dia || item.dia >= diaHoje;
+
+  const receitasFuturas = estado.receitas.filter(ehFuturo);
+  const receitasPassadas = estado.receitas.filter(r => !ehFuturo(r));
+  const despesasFuturas = estado.despesas.filter(ehFuturo);
+  const despesasPassadas = estado.despesas.filter(d => !ehFuturo(d));
+  const recorrentesFuturos = estado.recorrentes.filter(ehFuturo);
+  const recorrentesPassados = estado.recorrentes.filter(r => !ehFuturo(r));
+
+  // Projeção só com itens FUTUROS (do dia de hoje pra frente)
+  const totalReceitasFuturas = receitasFuturas.reduce((acc, r) => acc + r.valor, 0);
+  const totalDespesasFuturas = despesasFuturas.reduce((acc, d) => acc + d.valor, 0);
+  const totalRecorrentesFuturos = recorrentesFuturos.reduce((acc, r) => acc + r.valor, 0);
+  const previsaoFimMes = estado.saldoInicial + totalReceitasFuturas - totalDespesasFuturas - totalRecorrentesFuturos;
 
   let msg = `📊 *TEU PONTO ZERO - ${mesAtual.toUpperCase()}*\n\n`;
 
   // Saldo atual
   msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n\n`;
 
-  // Receitas esperadas
-  if (estado.receitas.length > 0) {
-    msg += `📈 *A receber (+${fmt.formatarMoeda(totalReceitas)}):*\n`;
-    for (const r of estado.receitas) {
+  // Receitas futuras (entram na projeção)
+  if (receitasFuturas.length > 0) {
+    msg += `📈 *A receber (+${fmt.formatarMoeda(totalReceitasFuturas)}):*\n`;
+    for (const r of receitasFuturas) {
       msg += `  🟢 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
     }
     msg += '\n';
   }
 
-  // Despesas pendentes
-  if (estado.despesas.length > 0) {
-    msg += `📉 *A pagar (-${fmt.formatarMoeda(totalDespesas)}):*\n`;
-    for (const d of estado.despesas) {
+  // Despesas futuras (entram na projeção)
+  if (despesasFuturas.length > 0) {
+    msg += `📉 *A pagar (-${fmt.formatarMoeda(totalDespesasFuturas)}):*\n`;
+    for (const d of despesasFuturas) {
       msg += `  🔴 ${d.descricao} - ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
     }
     msg += '\n';
   }
 
-  // Gastos fixos
-  if (estado.recorrentes.length > 0) {
-    msg += `🔄 *Gastos fixos mensais (-${fmt.formatarMoeda(totalRecorrentes)}):*\n`;
-    for (const r of estado.recorrentes) {
+  // Recorrentes futuros (entram na projeção)
+  if (recorrentesFuturos.length > 0) {
+    msg += `🔄 *Gastos fixos pendentes este mês (-${fmt.formatarMoeda(totalRecorrentesFuturos)}):*\n`;
+    for (const r of recorrentesFuturos) {
       msg += `  🔴 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}/mês${r.dia ? ` (dia ${r.dia})` : ''}\n`;
+    }
+    msg += '\n';
+  }
+
+  // Itens já pagos/recebidos (não entram na projeção, só informativo)
+  const totalPassados = receitasPassadas.length + despesasPassadas.length + recorrentesPassados.length;
+  if (totalPassados > 0) {
+    msg += `✅ *Já contabilizado no saldo (dia já passou):*\n`;
+    for (const r of receitasPassadas) {
+      msg += `  🟢 ${r.descricao} - ${fmt.formatarMoeda(r.valor)} (dia ${r.dia}) ✔️\n`;
+    }
+    for (const d of despesasPassadas) {
+      msg += `  🔴 ${d.descricao} - ${fmt.formatarMoeda(d.valor)} (dia ${d.dia}) ✔️\n`;
+    }
+    for (const r of recorrentesPassados) {
+      msg += `  🔴 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}/mês (dia ${r.dia}) ✔️\n`;
     }
     msg += '\n';
   }
