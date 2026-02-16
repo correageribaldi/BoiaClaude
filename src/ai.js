@@ -651,4 +651,44 @@ Use linguagem informal brasileira. Não use emojis. Não repita os números da a
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro };
+async function extrairHorario(texto) {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Extraia o horário que o usuário está informando e retorne APENAS um JSON: {"horario": "HH:MM"}
+Use formato 24h. Exemplos:
+- "as 14 horas" → {"horario": "14:00"}
+- "8 da manhã" → {"horario": "08:00"}
+- "meio dia" → {"horario": "12:00"}
+- "meia noite" → {"horario": "00:00"}
+- "3 da tarde" → {"horario": "15:00"}
+- "9 e meia" → {"horario": "09:30"}
+- "às 10" → {"horario": "10:00"}
+- "15:30" → {"horario": "15:30"}
+- "7h" → {"horario": "07:00"}
+- "20h30" → {"horario": "20:30"}
+Se não conseguir identificar um horário, retorne {"horario": null}`
+        },
+        { role: 'user', content: texto },
+      ],
+      temperature: 0.1,
+      max_tokens: 50,
+    });
+
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) return null;
+
+    const json = JSON.parse(content.replace(/```json?\n?/g, '').replace(/```/g, '').trim());
+    return json.horario || null;
+  } catch (err) {
+    console.error('[AI] Erro ao extrair horário:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario };

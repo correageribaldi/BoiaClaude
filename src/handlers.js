@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario } = require('./ai');
 const { pesquisarWeb, pesquisarLocal } = require('./search');
 const charts = require('./charts');
 
@@ -1372,24 +1372,19 @@ async function handleLembreteHorario(usuarioId, msg, pendente) {
     return '❌ Lembrete cancelado.';
   }
 
-  // Extrair horário da resposta (formatos: 14:00, 14h, 14h30, 9:30, 9h)
-  const match = texto.match(/(\d{1,2})[h:](\d{2})?/);
-  if (!match) {
-    return '❌ Não entendi o horário. Tente no formato:\n\n_08:00, 14:30, 9h, 15h30..._\n\n_Digite *cancelar* para desistir._';
+  // Usar IA para extrair o horário do texto natural
+  const horario = await extrairHorario(msg.trim());
+
+  if (!horario) {
+    return '❌ Não entendi o horário. Tente algo como:\n\n_"às 14 horas"_, _"8 da manhã"_, _"meio dia"_, _"15:30"_...\n\n_Digite *cancelar* para desistir._';
   }
 
-  const h = parseInt(match[1]);
-  const m = parseInt(match[2] || '0');
-
-  if (h < 0 || h > 23 || m < 0 || m > 59) {
-    return '❌ Horário inválido. Use um horário entre 00:00 e 23:59.';
-  }
-
+  const [h, m] = horario.split(':').map(Number);
   const [ano, mes, dia] = pendente.data.split('-').map(Number);
   const disparaEm = new Date(ano, mes - 1, dia, h, m, 0, 0);
 
   lembretesPendentes.delete(usuarioId);
-  return await criarEConfirmarLembrete(usuarioId, pendente.mensagem, disparaEm, 0, `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+  return await criarEConfirmarLembrete(usuarioId, pendente.mensagem, disparaEm, 0, horario);
 }
 
 async function criarEConfirmarLembrete(usuarioId, mensagem, disparaEm, minutos, horario) {
