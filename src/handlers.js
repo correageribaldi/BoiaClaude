@@ -1,6 +1,12 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO } = require('./ai');
+
+// Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
+function dateParaISO(d) {
+  const partes = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }).split('/');
+  return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
+}
 const { pesquisarWeb, pesquisarLocal } = require('./search');
 const charts = require('./charts');
 
@@ -1234,19 +1240,19 @@ async function handleDataPendenteResposta(usuarioId, texto, pendente) {
   if (!dataFinal) {
     const hoje = new Date();
     if (lower === 'hoje') {
-      dataFinal = hoje.toISOString().split('T')[0];
+      dataFinal = dateParaISO(hoje);
     } else if (lower === 'amanhã' || lower === 'amanha') {
       const amanha = new Date(hoje);
       amanha.setDate(amanha.getDate() + 1);
-      dataFinal = amanha.toISOString().split('T')[0];
+      dataFinal = dateParaISO(amanha);
     } else if (lower.includes('semana que vem') || lower.includes('proxima semana') || lower.includes('próxima semana')) {
       const prox = new Date(hoje);
       prox.setDate(prox.getDate() + 7);
-      dataFinal = prox.toISOString().split('T')[0];
+      dataFinal = dateParaISO(prox);
     } else if (lower.includes('mês que vem') || lower.includes('mes que vem') || lower.includes('próximo mês') || lower.includes('proximo mes')) {
       const prox = new Date(hoje);
       prox.setMonth(prox.getMonth() + 1);
-      dataFinal = prox.toISOString().split('T')[0];
+      dataFinal = dateParaISO(prox);
     }
   }
 
@@ -1506,7 +1512,7 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
   if (duracao_meses && duracao_meses > 0) {
     const fim = new Date();
     fim.setMonth(fim.getMonth() + duracao_meses);
-    dataFim = fim.toISOString().split('T')[0];
+    dataFim = dateParaISO(fim);
   }
 
   const id = await db.criarLembreteRecorrente(

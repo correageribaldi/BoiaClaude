@@ -4,6 +4,12 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+// Helper: data de hoje em YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
+function dataHojeBR() {
+  const partes = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }).split('/');
+  return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
+}
+
 function debugSharedLog(message) {
   if (process.env.DEBUG_SHARED_CONTACTS === '1') {
     console.log(`[SHARED] ${message}`);
@@ -253,7 +259,7 @@ async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, 
      VALUES ($1, $2, $3, $4, $5, $6, $7,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id, numero_usuario`,
-    [uid, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0], status || 'pago']
+    [uid, tipo, valor, descricao, categoria || 'Outros', data || dataHojeBR(), status || 'pago']
   );
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }

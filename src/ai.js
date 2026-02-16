@@ -12,6 +12,23 @@ function getOpenAI() {
   return openai;
 }
 
+const TIMEZONE = 'America/Sao_Paulo';
+
+// Retorna data de hoje com dia da semana no timezone correto
+function getDataHojeBR() {
+  const agora = new Date();
+  const diaSemana = agora.toLocaleDateString('pt-BR', { weekday: 'long', timeZone: TIMEZONE });
+  const data = agora.toLocaleDateString('pt-BR', { timeZone: TIMEZONE });
+  return `${diaSemana}, ${data}`;
+}
+
+// Retorna YYYY-MM-DD no timezone correto (evita bug do toISOString que usa UTC)
+function dataHojeBRISO() {
+  const agora = new Date();
+  const partes = agora.toLocaleDateString('pt-BR', { timeZone: TIMEZONE }).split('/');
+  return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
+}
+
 const SYSTEM_PROMPT = `Você é o Cronos, um assistente pessoal amigável e eficiente no WhatsApp.
 Você ajuda pessoas a controlar finanças, organizar a rotina e responder dúvidas rápidas do dia a dia.
 Retorne APENAS um JSON válido (sem markdown, sem texto extra).
@@ -299,8 +316,7 @@ async function interpretarMensagem(texto) {
 
   try {
     const categorias = (await db.listarCategorias()).join(', ');
-    const hoje = new Date();
-    const dataHoje = hoje.toLocaleDateString('pt-BR');
+    const dataHoje = getDataHojeBR();
 
     const prompt = SYSTEM_PROMPT
       .replace('{{CATEGORIAS}}', categorias)
@@ -381,12 +397,11 @@ async function analisarImagem(base64Data, mimetype) {
 
   try {
     const categorias = (await db.listarCategorias()).join(', ');
-    const hoje = new Date();
-    const dataHoje = hoje.toLocaleDateString('pt-BR');
+    const dataHoje = getDataHojeBR();
 
     const prompt = IMAGE_PROMPT
       .replace('{{CATEGORIAS}}', categorias)
-      .replace('{{DATA_HOJE}}', dataHoje);
+      .replaceAll('{{DATA_HOJE}}', dataHoje);
 
     const dataUrl = `data:${mimetype};base64,${base64Data}`;
 
@@ -691,4 +706,4 @@ Se não conseguir identificar um horário, retorne {"horario": null}`
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario };
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO };
