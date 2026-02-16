@@ -3,3 +3,6 @@ node_modules/
 .wwebjs_cache/
 *.db
 .env
+.claude/
+test-*.js
+nul
