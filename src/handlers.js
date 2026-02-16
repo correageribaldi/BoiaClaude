@@ -27,10 +27,14 @@ function resolverData(valor) {
   // Já é YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
 
-  const hoje = new Date();
+  // Obter "hoje" correto no timezone de São Paulo (evita bug UTC vs -03)
+  const hojeISO = dateParaISO(new Date());
+  const [anoH, mesH, diaH] = hojeISO.split('-').map(Number);
+  // Criar date ao meio-dia para evitar shift de timezone em qualquer operação
+  const hoje = new Date(anoH, mesH - 1, diaH, 12, 0, 0);
 
   // Referências relativas
-  if (v === 'hoje') return dateParaISO(hoje);
+  if (v === 'hoje') return hojeISO;
   if (v === 'amanha' || v === 'amanhã') {
     const d = new Date(hoje);
     d.setDate(d.getDate() + 1);
@@ -50,7 +54,7 @@ function resolverData(valor) {
   // Dia da semana → próxima ocorrência
   const diaSemanaAlvo = DIAS_SEMANA[v];
   if (diaSemanaAlvo !== undefined) {
-    const diaAtual = hoje.getDay();
+    const diaAtual = hoje.getDay(); // correto pois hoje está no dia certo de SP
     let diff = diaSemanaAlvo - diaAtual;
     if (diff <= 0) diff += 7; // sempre próxima ocorrência (nunca hoje)
     const d = new Date(hoje);
@@ -64,7 +68,7 @@ function resolverData(valor) {
     if (partes.length >= 2) {
       const dia = partes[0].padStart(2, '0');
       const mes = partes[1].padStart(2, '0');
-      const ano = partes[2] || new Date().getFullYear().toString();
+      const ano = partes[2] || anoH.toString();
       return `${ano}-${mes}-${dia}`;
     }
   }
