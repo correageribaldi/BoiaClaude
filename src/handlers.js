@@ -7,6 +7,70 @@ function dateParaISO(d) {
   const partes = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }).split('/');
   return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
 }
+
+// Mapa de nomes de dias da semana → número (0=dom, 1=seg, ..., 6=sab)
+const DIAS_SEMANA = {
+  domingo: 0, dom: 0,
+  segunda: 1, 'segunda-feira': 1, seg: 1,
+  terca: 2, terça: 2, 'terca-feira': 2, 'terça-feira': 2, ter: 2,
+  quarta: 3, 'quarta-feira': 3, qua: 3,
+  quinta: 4, 'quinta-feira': 4, qui: 4,
+  sexta: 5, 'sexta-feira': 5, sex: 5,
+  sabado: 6, sábado: 6, 'sab': 6, 'sáb': 6,
+};
+
+// Converte nome de dia da semana ou referência relativa em YYYY-MM-DD
+function resolverData(valor) {
+  if (!valor) return null;
+  const v = valor.toLowerCase().trim();
+
+  // Já é YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+
+  const hoje = new Date();
+
+  // Referências relativas
+  if (v === 'hoje') return dateParaISO(hoje);
+  if (v === 'amanha' || v === 'amanhã') {
+    const d = new Date(hoje);
+    d.setDate(d.getDate() + 1);
+    return dateParaISO(d);
+  }
+  if (v === 'ontem') {
+    const d = new Date(hoje);
+    d.setDate(d.getDate() - 1);
+    return dateParaISO(d);
+  }
+  if (v === 'anteontem') {
+    const d = new Date(hoje);
+    d.setDate(d.getDate() - 2);
+    return dateParaISO(d);
+  }
+
+  // Dia da semana → próxima ocorrência
+  const diaSemanaAlvo = DIAS_SEMANA[v];
+  if (diaSemanaAlvo !== undefined) {
+    const diaAtual = hoje.getDay();
+    let diff = diaSemanaAlvo - diaAtual;
+    if (diff <= 0) diff += 7; // sempre próxima ocorrência (nunca hoje)
+    const d = new Date(hoje);
+    d.setDate(d.getDate() + diff);
+    return dateParaISO(d);
+  }
+
+  // DD/MM/YYYY
+  if (v.includes('/')) {
+    const partes = v.split('/');
+    if (partes.length >= 2) {
+      const dia = partes[0].padStart(2, '0');
+      const mes = partes[1].padStart(2, '0');
+      const ano = partes[2] || new Date().getFullYear().toString();
+      return `${ano}-${mes}-${dia}`;
+    }
+  }
+
+  return null;
+}
 const { pesquisarWeb, pesquisarLocal } = require('./search');
 const charts = require('./charts');
 
@@ -1205,14 +1269,12 @@ async function handleDataPendenteResposta(usuarioId, texto, pendente) {
 
   let dataFinal = null;
 
-  // Se a IA retornou uma transação com data, usar a data dela
+  // Se a IA retornou uma transação com data, resolver (dia da semana, referência relativa, etc.)
   if (resultado && resultado.data) {
-    dataFinal = resultado.data;
-    if (dataFinal && dataFinal.includes('/')) {
-      dataFinal = parseData(dataFinal);
-    }
-    if (dataFinal && !/^\d{4}-\d{2}-\d{2}$/.test(dataFinal)) {
-      dataFinal = null;
+    dataFinal = resolverData(resultado.data);
+    // Fallback: tentar parse DD/MM/YYYY
+    if (!dataFinal && resultado.data.includes('/')) {
+      dataFinal = parseData(resultado.data);
     }
   }
 
@@ -1326,7 +1388,9 @@ async function handleImageMessage(usuarioId, base64Data, mimetype) {
 }
 
 async function handleLembrete(usuarioId, resultado) {
-  const { minutos, horario, mensagem, data } = resultado;
+  const { minutos, horario, mensagem } = resultado;
+  // Resolver data: converte nomes de dia da semana, referências relativas, etc. em YYYY-MM-DD
+  const dataResolvida = resolverData(resultado.data);
 
   if (!mensagem) {
     return '❌ Não entendi o que devo lembrar. Tente algo como:\n\n_"me lembre daqui 10 minutos de pegar o Noah"_\n_"lembra às 15:00 da reunião"_';
@@ -1339,9 +1403,9 @@ async function handleLembrete(usuarioId, resultado) {
     // Horário fixo (ex: "às 15:00")
     const [h, m] = horario.split(':').map(Number);
 
-    if (data) {
+    if (dataResolvida) {
       // Data específica com horário (ex: "sexta-feira às 15:00")
-      const [ano, mes, dia] = data.split('-').map(Number);
+      const [ano, mes, dia] = dataResolvida.split('-').map(Number);
       disparaEm = new Date(ano, mes - 1, dia, h, m, 0, 0);
     } else {
       disparaEm = new Date(agora);
@@ -1354,14 +1418,14 @@ async function handleLembrete(usuarioId, resultado) {
   } else if (minutos && minutos > 0) {
     // Daqui X minutos
     disparaEm = new Date(agora.getTime() + minutos * 60 * 1000);
-  } else if (data) {
+  } else if (dataResolvida) {
     // Tem data mas SEM horário → perguntar que horas
-    const [ano, mes, dia] = data.split('-').map(Number);
+    const [ano, mes, dia] = dataResolvida.split('-').map(Number);
     const dataObj = new Date(ano, mes - 1, dia);
-    const dataFormatada = dataObj.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+    const dataFormatada = dataObj.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' });
 
-    salvarLembretePendente(usuarioId, { mensagem, data });
-    return `🕐 *Que horas devo te lembrar disso?*\n\n📝 ${mensagem}\n📅 ${dataFormatada}\n\n_Exemplo: 08:00, 14:30, 9h..._`;
+    salvarLembretePendente(usuarioId, { mensagem, data: dataResolvida });
+    return `🕐 *Que horas devo te lembrar disso?*\n\n📝 ${mensagem}\n📅 ${dataFormatada}\n\n_Me diz o horário (ex: "às 14 horas", "8 da manhã"...)_`;
   } else {
     return '❌ Não entendi quando devo te lembrar. Tente algo como:\n\n_"me lembre daqui 30 minutos"_\n_"me avisa às 14:00"_\n_"me lembra sexta-feira às 10h"_';
   }
@@ -1807,18 +1871,20 @@ function calcularPeriodo(periodo) {
       titulo = `${nomesMes[mes]} de ${ano}`;
       break;
     }
-    default:
-      // Tenta interpretar como data específica YYYY-MM-DD
-      if (/^\d{4}-\d{2}-\d{2}$/.test(periodo)) {
-        const [a, m, d] = periodo.split('-').map(Number);
+    default: {
+      // Tentar resolver como dia da semana ou data
+      const dataResolvida = resolverData(periodo);
+      if (dataResolvida) {
+        const [a, m, d] = dataResolvida.split('-').map(Number);
         dataInicio = new Date(a, m - 1, d);
         dataFim = new Date(a, m - 1, d);
-        titulo = `dia ${dataInicio.toLocaleDateString('pt-BR')}`;
+        titulo = `${dataInicio.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' })}`;
       } else {
         dataInicio = new Date(ano, mes, dia);
         dataFim = new Date(ano, mes, dia);
         titulo = `hoje (${dataInicio.toLocaleDateString('pt-BR')})`;
       }
+    }
   }
 
   // Formatar como YYYY-MM-DD para o banco

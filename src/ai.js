@@ -14,29 +14,12 @@ function getOpenAI() {
 
 const TIMEZONE = 'America/Sao_Paulo';
 
-// Retorna data de hoje com dia da semana + calendário das próximas 2 semanas
+// Retorna data de hoje com dia da semana no timezone correto
 function getDataHojeBR() {
   const agora = new Date();
   const diaSemana = agora.toLocaleDateString('pt-BR', { weekday: 'long', timeZone: TIMEZONE });
   const data = agora.toLocaleDateString('pt-BR', { timeZone: TIMEZONE });
-
-  // Gerar calendário dos próximos 14 dias para a IA consultar (evita erros de cálculo)
-  const diasAbrev = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-  const calendario = [];
-  for (let i = 0; i <= 14; i++) {
-    const d = new Date(agora);
-    d.setDate(d.getDate() + i);
-    const dow = parseInt(d.toLocaleDateString('en-US', { weekday: 'numeric', timeZone: TIMEZONE })) || 0;
-    // toLocaleDateString with weekday:'numeric' is unreliable, use getDay adjusted for timezone
-    const diaParts = d.toLocaleDateString('pt-BR', { timeZone: TIMEZONE }).split('/');
-    const diaNum = diaParts[0];
-    const mesNum = diaParts[1];
-    const diaISO = `${diaParts[2]}-${mesNum.padStart(2, '0')}-${diaNum.padStart(2, '0')}`;
-    const diaSem = d.toLocaleDateString('pt-BR', { weekday: 'short', timeZone: TIMEZONE }).replace('.', '');
-    calendario.push(`${diaSem} ${diaNum}/${mesNum}=${diaISO}`);
-  }
-
-  return `${diaSemana}, ${data}\nCalendário (próximos 14 dias): ${calendario.join(', ')}`;
+  return `${diaSemana}, ${data}`;
 }
 
 // Retorna YYYY-MM-DD no timezone correto (evita bug do toISOString que usa UTC)
@@ -143,16 +126,14 @@ REGRAS PARA TRANSAÇÃO:
 - "valor": número positivo (ex: 50.90)
 - "descricao": curta e clara
 - "categoria": uma das categorias listadas. Se não tiver certeza, use "Outros"
-- "data": consulte o CALENDÁRIO fornecido acima para converter dias da semana em datas. NÃO CALCULE, apenas consulte.
+- "data": use o formato YYYY-MM-DD. Para dias da semana, retorne o NOME do dia em vez de calcular a data (ex: "sabado", "segunda"). O sistema vai converter.
   - null = hoje (quando não mencionar data)
-  - "ontem" = dia anterior ao dia de hoje
-  - "anteontem" = 2 dias atrás
-  - "semana passada" = 7 dias atrás
-  - "sexta-feira", "sábado", etc = consulte o calendário e copie o YYYY-MM-DD correspondente
-  - "dia X", "no dia X", "dia X deste mês" = dia X do mês atual se for futuro, ou próximo mês se já passou
-  - "dia X do próximo mês", "mês que vem dia X" = dia X do próximo mês
-  - Sempre retorne no formato "YYYY-MM-DD"
-  - IMPORTANTE: para dias da semana, SEMPRE use o calendário fornecido. Nunca tente calcular a data manualmente.
+  - "ontem" = retorne "ontem"
+  - "anteontem" = retorne "anteontem"
+  - "amanha" = retorne "amanha"
+  - "segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo" = retorne o nome do dia (sem acento)
+  - "dia X" = retorne "YYYY-MM-DD" calculado (dia X do mês atual se futuro, próximo mês se passou)
+  - "dia X do próximo mês" = retorne "YYYY-MM-DD" calculado
 - "status": determina se a transação já foi efetivada ou é futura/planejada
   - "pago": quando o dinheiro JÁ saiu ou JÁ entrou (padrão)
   - "pendente": quando é uma conta A PAGAR ou valor A RECEBER no futuro
@@ -220,7 +201,7 @@ REGRAS PARA COMANDO:
 REGRAS PARA LEMBRETE:
 - "minutos": número de minutos a partir de agora (para "daqui 10 minutos" → 10, "daqui 1 hora" → 60, "daqui 2 horas" → 120, "daqui meia hora" → 30)
 - "horario": se o usuário indicar horário fixo ("às 15:00", "às 3 da tarde" → "15:00"), coloque aqui e use minutos = 0
-- "data": se o usuário indicar um dia específico (amanhã, sexta-feira, dia 20, etc.), consulte o CALENDÁRIO acima e copie a data YYYY-MM-DD correspondente. Use null se não especificar dia.
+- "data": se o usuário indicar um dia específico. Para dias da semana, retorne o NOME (ex: "sabado", "segunda"). Para datas numéricas, retorne "YYYY-MM-DD". Para "amanhã" retorne "amanha". Use null se não especificar dia.
 - "mensagem": o que deve ser lembrado, de forma clara e curta
 - IMPORTANTE: Se o usuário especificar um dia mas NÃO especificar horário, use horario: null e minutos: 0. O sistema vai perguntar a hora.
 - Exemplos:
@@ -298,15 +279,17 @@ REGRAS PARA AGENDA:
   - "amanha" → para amanhã
   - "semana" → para a semana atual (segunda a domingo)
   - "mes" → para o mês inteiro
-  - "YYYY-MM-DD" → para um dia específico (consulte o CALENDÁRIO acima)
+  - "YYYY-MM-DD" → para um dia específico
+  - Para dias da semana, retorne o nome: "segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"
 - Exemplos:
   - "o que tenho pra hoje" → periodo: "hoje"
   - "me organiza pro dia" → periodo: "hoje"
   - "como tá minha agenda amanhã" → periodo: "amanha"
   - "o que tenho essa semana" → periodo: "semana"
   - "minha agenda do mês" → periodo: "mes"
-  - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD" (consulte o calendário)
-  - "o que tenho sexta" → periodo: "YYYY-MM-DD" (consulte o calendário para a próxima sexta)
+  - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD"
+  - "o que tenho sexta" → periodo: "sexta"
+  - "minha agenda de sábado" → periodo: "sabado"
 - Sinônimos de agenda: "compromissos", "programação", "atividades", "tarefas do dia", "o que tenho"
   - "liste meus compromissos para esta semana" → periodo: "semana"
   - "quais minhas atividades de amanhã" → periodo: "amanha"
