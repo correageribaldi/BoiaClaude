@@ -56,7 +56,20 @@ client.on('message', async (msg) => {
   if (msg.from.includes('@g.us')) return;
   if (msg.from === 'status@broadcast') return;
 
-  const usuarioId = msg.from;
+  let usuarioId = msg.from;
+  let contato = null;
+
+  try {
+    contato = await msg.getContact();
+    const numeroContato = (contato?.number || '').replace(/\D/g, '');
+    if (numeroContato) {
+      usuarioId = `${numeroContato}@c.us`;
+    }
+  } catch (_) {}
+
+  if (process.env.DEBUG_SHARED_CONTACTS === '1' && usuarioId !== msg.from) {
+    console.log(`[SHARED][ID] from=${msg.from} canonical=${usuarioId}`);
+  }
 
   // Verificar se é o primeiro contato do usuário e registrar
   try {
@@ -64,10 +77,7 @@ client.on('message', async (msg) => {
     if (ehNovo) {
       // Obter nome do contato no WhatsApp
       let nome = null;
-      try {
-        const contact = await msg.getContact();
-        nome = contact.pushname || contact.name || null;
-      } catch (_) {}
+      nome = contato?.pushname || contato?.name || null;
 
       await db.registrarUsuario(usuarioId, nome);
       console.log(`[NOVO USUÁRIO] ${usuarioId} (${nome || 'sem nome'}) registrado. Processando primeira mensagem...`);

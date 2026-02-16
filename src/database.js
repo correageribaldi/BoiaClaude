@@ -4,6 +4,12 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+function debugSharedLog(message) {
+  if (process.env.DEBUG_SHARED_CONTACTS === '1') {
+    console.log(`[SHARED] ${message}`);
+  }
+}
+
 function normalizarContatoId(input) {
   if (!input) return null;
 
@@ -51,7 +57,11 @@ async function resolverUsuarioPrincipal(usuarioId) {
      LIMIT 1`,
     [variantes]
   );
-  return result.rows[0]?.usuario_principal_id || usuarioId;
+  const principal = result.rows[0]?.usuario_principal_id || usuarioId;
+  if (principal !== usuarioId) {
+    debugSharedLog(`resolve ${usuarioId} -> ${principal} via [${variantes.join(', ')}]`);
+  }
+  return principal;
 }
 
 async function initTables() {
@@ -789,6 +799,7 @@ async function vincularContato(usuarioId, contatoId) {
 
   const variantesDoUsuario = new Set(gerarVariantesContatoId(uid));
   if (variantesContato.some(v => variantesDoUsuario.has(v))) {
+    debugSharedLog(`vinculo rejeitado (self) principal=${uid} contato=${contatoId}`);
     return { status: 'self' };
   }
 
@@ -800,10 +811,12 @@ async function vincularContato(usuarioId, contatoId) {
   );
 
   if (vinculoExistente.rows.some(r => r.usuario_principal_id !== uid)) {
+    debugSharedLog(`vinculo rejeitado (outro dono) principal=${uid} contato=${contatoId}`);
     return { status: 'linked_to_other' };
   }
 
   if (vinculoExistente.rows.some(r => r.usuario_principal_id === uid)) {
+    debugSharedLog(`vinculo já existente principal=${uid} contato=${contatoId}`);
     return { status: 'already_linked' };
   }
 
@@ -813,6 +826,7 @@ async function vincularContato(usuarioId, contatoId) {
     [uid, variantesContato[0]]
   );
 
+  debugSharedLog(`vinculo criado principal=${uid} contato_salvo=${variantesContato[0]} variantes=[${variantesContato.join(', ')}]`);
   return { status: 'linked' };
 }
 
