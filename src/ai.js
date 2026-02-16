@@ -43,7 +43,7 @@ TIPOS DE AÇÃO:
 {"acao": "remover_limite", "categoria": "nome da categoria"}
 
 8. LEMBRETE ÚNICO (me lembre, lembra de, me avisa, daqui X minutos/horas, às X horas):
-{"acao": "lembrete", "minutos": 0, "horario": "HH:MM ou null", "mensagem": "o que lembrar"}
+{"acao": "lembrete", "minutos": 0, "horario": "HH:MM ou null", "data": "YYYY-MM-DD ou null", "mensagem": "o que lembrar"}
 ATENÇÃO: Se o "me lembre" envolver PAGAR ou RECEBER DINHEIRO (com valor), NÃO é lembrete! É TRANSAÇÃO com status "pendente". Veja exemplos na seção de transação.
 
 9. LEMBRETE RECORRENTE (toda semana, todo dia, todo mês, sempre às X):
@@ -187,13 +187,17 @@ REGRAS PARA COMANDO:
 REGRAS PARA LEMBRETE:
 - "minutos": número de minutos a partir de agora (para "daqui 10 minutos" → 10, "daqui 1 hora" → 60, "daqui 2 horas" → 120, "daqui meia hora" → 30)
 - "horario": se o usuário indicar horário fixo ("às 15:00", "às 3 da tarde" → "15:00"), coloque aqui e use minutos = 0
+- "data": se o usuário indicar um dia específico (amanhã, sexta-feira, dia 20, etc.), calcule a data no formato YYYY-MM-DD baseado em {{DATA_HOJE}}. Use null se não especificar dia.
 - "mensagem": o que deve ser lembrado, de forma clara e curta
+- IMPORTANTE: Se o usuário especificar um dia mas NÃO especificar horário, use horario: null e minutos: 0. O sistema vai perguntar a hora.
 - Exemplos:
-  - "me lembre daqui 10 min de pegar o Noah" → {"acao": "lembrete", "minutos": 10, "horario": null, "mensagem": "Pegar o Noah na escola"}
-  - "lembra de ligar pro dentista às 14:00" → {"acao": "lembrete", "minutos": 0, "horario": "14:00", "mensagem": "Ligar pro dentista"}
-  - "me avisa em 1 hora pra tomar o remédio" → {"acao": "lembrete", "minutos": 60, "horario": null, "mensagem": "Tomar o remédio"}
-  - "daqui meia hora me lembra da reunião" → {"acao": "lembrete", "minutos": 30, "horario": null, "mensagem": "Reunião"}
-  - "me lembra amanhã às 8 de ligar pro banco" → {"acao": "lembrete", "minutos": 0, "horario": "08:00", "mensagem": "Ligar pro banco", "amanha": true}
+  - "me lembre daqui 10 min de pegar o Noah" → {"acao": "lembrete", "minutos": 10, "horario": null, "data": null, "mensagem": "Pegar o Noah na escola"}
+  - "lembra de ligar pro dentista às 14:00" → {"acao": "lembrete", "minutos": 0, "horario": "14:00", "data": null, "mensagem": "Ligar pro dentista"}
+  - "me avisa em 1 hora pra tomar o remédio" → {"acao": "lembrete", "minutos": 60, "horario": null, "data": null, "mensagem": "Tomar o remédio"}
+  - "daqui meia hora me lembra da reunião" → {"acao": "lembrete", "minutos": 30, "horario": null, "data": null, "mensagem": "Reunião"}
+  - "me lembra amanhã às 8 de ligar pro banco" → {"acao": "lembrete", "minutos": 0, "horario": "08:00", "data": "YYYY-MM-DD", "mensagem": "Ligar pro banco"}
+  - "me lembra sexta-feira de pagar o aluguel" → {"acao": "lembrete", "minutos": 0, "horario": null, "data": "YYYY-MM-DD", "mensagem": "Pagar o aluguel"}
+  - "me lembre dia 20 de ligar pro banco" → {"acao": "lembrete", "minutos": 0, "horario": null, "data": "YYYY-MM-DD", "mensagem": "Ligar pro banco"}
 
 REGRAS PARA LEMBRETE RECORRENTE:
 - "horario": horário fixo no formato HH:MM (obrigatório)
@@ -300,7 +304,7 @@ async function interpretarMensagem(texto) {
 
     const prompt = SYSTEM_PROMPT
       .replace('{{CATEGORIAS}}', categorias)
-      .replace('{{DATA_HOJE}}', dataHoje);
+      .replaceAll('{{DATA_HOJE}}', dataHoje);
 
     const response = await getOpenAI().chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',

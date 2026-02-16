@@ -31,6 +31,26 @@ function limparDataPendente(usuarioId) {
   dataPendente.delete(usuarioId);
 }
 
+// Lembretes aguardando horário (expira em 5 min)
+const lembretesPendentes = new Map();
+
+function salvarLembretePendente(usuarioId, dados) {
+  lembretesPendentes.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 5 * 60 * 1000,
+  });
+}
+
+function obterLembretePendente(usuarioId) {
+  const dados = lembretesPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    lembretesPendentes.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
 // Estado do fluxo Finanças em Dia (expira em 30 min)
 const pontoZeroEstados = new Map();
 
@@ -468,6 +488,12 @@ async function handleMessage(usuarioId, texto) {
   const remocaoContato = obterRemocaoContatoPendente(usuarioId);
   if (remocaoContato) {
     return await handleEscolhaRemocaoContato(usuarioId, msg, remocaoContato);
+  }
+
+  // Verificar se tem lembrete aguardando horário
+  const lembretePend = obterLembretePendente(usuarioId);
+  if (lembretePend) {
+    return await handleLembreteHorario(usuarioId, msg, lembretePend);
   }
 
   // Verificar se está no fluxo Análise Financeira
@@ -1294,7 +1320,7 @@ async function handleImageMessage(usuarioId, base64Data, mimetype) {
 }
 
 async function handleLembrete(usuarioId, resultado) {
-  const { minutos, horario, mensagem, amanha } = resultado;
+  const { minutos, horario, mensagem, data } = resultado;
 
   if (!mensagem) {
     return '❌ Não entendi o que devo lembrar. Tente algo como:\n\n_"me lembre daqui 10 minutos de pegar o Noah"_\n_"lembra às 15:00 da reunião"_';
@@ -1306,20 +1332,67 @@ async function handleLembrete(usuarioId, resultado) {
   if (horario) {
     // Horário fixo (ex: "às 15:00")
     const [h, m] = horario.split(':').map(Number);
-    disparaEm = new Date(agora);
-    disparaEm.setHours(h, m, 0, 0);
 
-    // Se for amanhã ou se o horário já passou hoje
-    if (amanha || disparaEm <= agora) {
-      disparaEm.setDate(disparaEm.getDate() + 1);
+    if (data) {
+      // Data específica com horário (ex: "sexta-feira às 15:00")
+      const [ano, mes, dia] = data.split('-').map(Number);
+      disparaEm = new Date(ano, mes - 1, dia, h, m, 0, 0);
+    } else {
+      disparaEm = new Date(agora);
+      disparaEm.setHours(h, m, 0, 0);
+      // Se o horário já passou hoje, agenda pra amanhã
+      if (disparaEm <= agora) {
+        disparaEm.setDate(disparaEm.getDate() + 1);
+      }
     }
   } else if (minutos && minutos > 0) {
     // Daqui X minutos
     disparaEm = new Date(agora.getTime() + minutos * 60 * 1000);
+  } else if (data) {
+    // Tem data mas SEM horário → perguntar que horas
+    const [ano, mes, dia] = data.split('-').map(Number);
+    const dataObj = new Date(ano, mes - 1, dia);
+    const dataFormatada = dataObj.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    salvarLembretePendente(usuarioId, { mensagem, data });
+    return `🕐 *Que horas devo te lembrar disso?*\n\n📝 ${mensagem}\n📅 ${dataFormatada}\n\n_Exemplo: 08:00, 14:30, 9h..._`;
   } else {
-    return '❌ Não entendi quando devo te lembrar. Tente algo como:\n\n_"me lembre daqui 30 minutos"_\n_"me avisa às 14:00"_';
+    return '❌ Não entendi quando devo te lembrar. Tente algo como:\n\n_"me lembre daqui 30 minutos"_\n_"me avisa às 14:00"_\n_"me lembra sexta-feira às 10h"_';
   }
 
+  return await criarEConfirmarLembrete(usuarioId, mensagem, disparaEm, minutos, horario);
+}
+
+async function handleLembreteHorario(usuarioId, msg, pendente) {
+  const texto = msg.trim().toLowerCase();
+
+  // Cancelar
+  if (texto === 'cancelar' || texto === '0') {
+    lembretesPendentes.delete(usuarioId);
+    return '❌ Lembrete cancelado.';
+  }
+
+  // Extrair horário da resposta (formatos: 14:00, 14h, 14h30, 9:30, 9h)
+  const match = texto.match(/(\d{1,2})[h:](\d{2})?/);
+  if (!match) {
+    return '❌ Não entendi o horário. Tente no formato:\n\n_08:00, 14:30, 9h, 15h30..._\n\n_Digite *cancelar* para desistir._';
+  }
+
+  const h = parseInt(match[1]);
+  const m = parseInt(match[2] || '0');
+
+  if (h < 0 || h > 23 || m < 0 || m > 59) {
+    return '❌ Horário inválido. Use um horário entre 00:00 e 23:59.';
+  }
+
+  const [ano, mes, dia] = pendente.data.split('-').map(Number);
+  const disparaEm = new Date(ano, mes - 1, dia, h, m, 0, 0);
+
+  lembretesPendentes.delete(usuarioId);
+  return await criarEConfirmarLembrete(usuarioId, pendente.mensagem, disparaEm, 0, `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+}
+
+async function criarEConfirmarLembrete(usuarioId, mensagem, disparaEm, minutos, horario) {
   const id = await db.criarLembreteGeral(usuarioId, mensagem, disparaEm);
 
   // Formatar horário para exibição
@@ -1334,7 +1407,7 @@ async function handleLembrete(usuarioId, resultado) {
   } else if (disparaEm.toDateString() === amanhaDia.toDateString()) {
     quando = `amanhã às ${horaStr}`;
   } else {
-    quando = `${disparaEm.toLocaleDateString('pt-BR')} às ${horaStr}`;
+    quando = `${disparaEm.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })} às ${horaStr}`;
   }
 
   if (minutos && minutos > 0 && !horario) {
