@@ -1534,7 +1534,7 @@ async function handleListarTodosLembretes(usuarioId) {
     for (const l of recorrentes) {
       let freq;
       if (l.frequencia === 'diario') freq = 'Todo dia';
-      else if (l.frequencia === 'semanal') freq = `${DIAS_SEMANA[l.dia_semana]}`;
+      else if (l.frequencia === 'semanal') freq = `${NOMES_DIAS_SEMANA[l.dia_semana]}`;
       else freq = `Dia ${l.dia_mes}/mês`;
 
       const fim = l.data_fim ? ` (até ${l.data_fim})` : ' (♾️)';
@@ -1562,7 +1562,7 @@ async function handleCancelarLembrete(usuarioId, msg) {
   return `✅ Lembrete #${id} cancelado!\n\n_"${resultado.mensagem}"_`;
 }
 
-const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const NOMES_DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
 async function handleLembreteRecorrente(usuarioId, resultado) {
   const { horario, frequencia, dia_semana, dia_mes, duracao_meses, mensagem } = resultado;
@@ -1591,7 +1591,7 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
     freqTexto = 'Todo dia';
   } else if (frequencia === 'semanal') {
     const dia = dia_semana ?? new Date().getDay();
-    freqTexto = `Toda ${DIAS_SEMANA[dia]}`;
+    freqTexto = `Toda ${NOMES_DIAS_SEMANA[dia]}`;
   } else {
     const dia = dia_mes ?? new Date().getDate();
     freqTexto = `Todo dia ${dia} do mês`;
@@ -1623,7 +1623,7 @@ async function handleListarRecorrentes(usuarioId) {
   for (const l of lembretes) {
     let freq;
     if (l.frequencia === 'diario') freq = 'Todo dia';
-    else if (l.frequencia === 'semanal') freq = `${DIAS_SEMANA[l.dia_semana]}`;
+    else if (l.frequencia === 'semanal') freq = `${NOMES_DIAS_SEMANA[l.dia_semana]}`;
     else freq = `Dia ${l.dia_mes}/mês`;
 
     const fim = l.data_fim ? ` (até ${l.data_fim})` : ' (♾️)';
@@ -1967,7 +1967,7 @@ async function handleAgenda(usuarioId, periodo) {
     for (const r of recorrentesDoPeriodo) {
       let freq;
       if (r.frequencia === 'diario') freq = 'todo dia';
-      else if (r.frequencia === 'semanal') freq = `${DIAS_SEMANA[r.dia_semana]}`;
+      else if (r.frequencia === 'semanal') freq = `${NOMES_DIAS_SEMANA[r.dia_semana]}`;
       else freq = `dia ${r.dia_mes}/mês`;
       msg += `  🔔 ${r.horario} - ${r.mensagem} _(${freq})_\n`;
     }
