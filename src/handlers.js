@@ -2098,6 +2098,18 @@ async function executarAnalise503020(usuarioId, estado) {
     }
   }
 
+  // Salvar todas as transações no banco de dados (como a importação normal)
+  let salvos = 0;
+  for (const t of transacoes) {
+    try {
+      await db.adicionarTransacao(usuarioId, t.tipo, t.valor, t.descricao, t.categoria, t.data, 'pago');
+      salvos++;
+    } catch (err) {
+      console.error(`[ANÁLISE 50/30/20] Erro ao salvar transação: ${err.message}`);
+    }
+  }
+  console.log(`[ANÁLISE 50/30/20] ${salvos}/${transacoes.length} transações salvas no banco.`);
+
   // Detectar recorrentes antes de mostrar a análise
   const recorrentes = detectarRecorrentes(transacoes);
 
