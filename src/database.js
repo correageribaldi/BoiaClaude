@@ -4,10 +4,52 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+function normalizarContatoId(input) {
+  if (!input) return null;
+
+  let digits = String(input).replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+
+  if (digits.length === 10 || digits.length === 11) {
+    digits = `55${digits}`;
+  }
+
+  if (digits.length < 12 || digits.length > 13) return null;
+  return `${digits}@c.us`;
+}
+
+function gerarVariantesContatoId(input) {
+  const normalizado = normalizarContatoId(input);
+  if (!normalizado) return [];
+
+  const digits = normalizado.replace(/\D/g, '');
+  const candidatos = new Set([normalizado]);
+
+  // BR celular: tolera variação com/sem dígito 9
+  if (digits.startsWith('55')) {
+    const ddd = digits.slice(2, 4);
+    const local = digits.slice(4);
+
+    if (local.length === 9 && local.startsWith('9')) {
+      candidatos.add(`55${ddd}${local.slice(1)}@c.us`);
+    } else if (local.length === 8) {
+      candidatos.add(`55${ddd}9${local}@c.us`);
+    }
+  }
+
+  return [...candidatos];
+}
+
 async function resolverUsuarioPrincipal(usuarioId) {
+  const variantes = gerarVariantesContatoId(usuarioId);
+  if (variantes.length === 0) return usuarioId;
+
   const result = await pool.query(
-    'SELECT usuario_principal_id FROM contatos_compartilhados WHERE contato_id = $1',
-    [usuarioId]
+    `SELECT usuario_principal_id
+     FROM contatos_compartilhados
+     WHERE contato_id = ANY($1::text[])
+     LIMIT 1`,
+    [variantes]
   );
   return result.rows[0]?.usuario_principal_id || usuarioId;
 }
@@ -739,28 +781,36 @@ async function verificarLimite(usuarioId, categoria) {
 
 async function vincularContato(usuarioId, contatoId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  const variantesContato = gerarVariantesContatoId(contatoId);
 
-  if (uid === contatoId) {
+  if (variantesContato.length === 0) {
+    return { status: 'invalid_contact' };
+  }
+
+  const variantesDoUsuario = new Set(gerarVariantesContatoId(uid));
+  if (variantesContato.some(v => variantesDoUsuario.has(v))) {
     return { status: 'self' };
   }
 
   const vinculoExistente = await pool.query(
-    `SELECT usuario_principal_id
+    `SELECT contato_id, usuario_principal_id
      FROM contatos_compartilhados
-     WHERE contato_id = $1`,
-    [contatoId]
+     WHERE contato_id = ANY($1::text[])`,
+    [variantesContato]
   );
 
-  if (vinculoExistente.rows.length > 0) {
-    const principalAtual = vinculoExistente.rows[0].usuario_principal_id;
-    if (principalAtual === uid) return { status: 'already_linked' };
+  if (vinculoExistente.rows.some(r => r.usuario_principal_id !== uid)) {
     return { status: 'linked_to_other' };
+  }
+
+  if (vinculoExistente.rows.some(r => r.usuario_principal_id === uid)) {
+    return { status: 'already_linked' };
   }
 
   await pool.query(
     `INSERT INTO contatos_compartilhados (usuario_principal_id, contato_id)
      VALUES ($1, $2)`,
-    [uid, contatoId]
+    [uid, variantesContato[0]]
   );
 
   return { status: 'linked' };

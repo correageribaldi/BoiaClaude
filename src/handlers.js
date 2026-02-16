@@ -227,6 +227,9 @@ async function vincularContatoPorNumero(usuarioId, numeroInformado) {
   if (resultado.status === 'self') {
     return '❌ Esse número é o seu próprio contato.';
   }
+  if (resultado.status === 'invalid_contact') {
+    return '❌ Não consegui validar esse número de contato.';
+  }
   if (resultado.status === 'already_linked') {
     return `ℹ️ O contato *${numeroFmt}* já está vinculado à sua conta.`;
   }
