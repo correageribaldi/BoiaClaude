@@ -7,6 +7,30 @@ const charts = require('./charts');
 // Estado temporário para confirmações pendentes (expira em 5 min)
 const confirmacoesPendentes = new Map();
 
+// Estado para transações aguardando data (expira em 5 min)
+const dataPendente = new Map();
+
+function salvarDataPendente(usuarioId, dados) {
+  dataPendente.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 5 * 60 * 1000,
+  });
+}
+
+function obterDataPendente(usuarioId) {
+  const dados = dataPendente.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    dataPendente.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparDataPendente(usuarioId) {
+  dataPendente.delete(usuarioId);
+}
+
 // Estado do fluxo Finanças em Dia (expira em 30 min)
 const pontoZeroEstados = new Map();
 
@@ -202,6 +226,12 @@ Você também pode escrever naturalmente:
 async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
+
+  // Verificar se há transação aguardando data
+  const pendDate = obterDataPendente(usuarioId);
+  if (pendDate) {
+    return await handleDataPendenteResposta(usuarioId, msg, pendDate);
+  }
 
   // Verificar se há confirmação pendente de imagem
   const confirmacao = obterConfirmacao(usuarioId);
@@ -656,55 +686,140 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     }
 
     const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
-    const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
-    const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
 
-    let emoji, label;
-    if (statusFinal === 'pendente') {
-      emoji = tipo === 'receita' ? '⏳💰' : '⏳💸';
-      label = tipo === 'receita' ? 'Receita a receber' : 'Despesa a pagar';
-    } else {
-      emoji = tipo === 'receita' ? '✅💰' : '✅💸';
-      label = tipo === 'receita' ? 'Receita registrada' : 'Despesa registrada';
+    // Se é pendente e não tem data, perguntar pro usuário
+    if (statusFinal === 'pendente' && !dataFinal) {
+      salvarDataPendente(usuarioId, { tipo, valor, descricao, categoria });
+      return `Anotei! *${descricao}* no valor de *${fmt.formatarMoeda(valor)}* 👍\n\nPra que dia tu quer que eu programe ${tipo === 'receita' ? 'esse recebimento' : 'esse pagamento'}?\n\n_Ex: "dia 20", "dia 5 do mês que vem", "semana que vem", "amanhã"_`;
     }
 
-    let msg = `${emoji} *${label}!*\n\n` +
-      `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
-      `📝 Descrição: ${descricao}\n` +
-      `📂 Categoria: ${categoria || 'Outros'}\n` +
-      `📅 Data: ${dataExibir}\n` +
-      `🆔 ID: #${result.lastInsertRowid}`;
-
-    if (statusFinal === 'pendente') {
-      const quando = tipo === 'receita' ? 'receber' : 'pagar';
-      msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
-    }
-
-    // Verificar limite de gastos (apenas para despesas)
-    if (tipo === 'despesa' && categoria) {
-      const limiteInfo = await db.verificarLimite(usuarioId, categoria);
-      if (limiteInfo) {
-        const { limite, gastos, restante, percentual } = limiteInfo;
-        let emoji = '';
-        if (percentual >= 100) emoji = '🚨';
-        else if (percentual >= 80) emoji = '⚠️';
-        else if (percentual >= 60) emoji = '📊';
-        else emoji = '✅';
-
-        msg += `\n\n${emoji} *Limite de ${categoria}:*\n`;
-        msg += `Gasto: ${fmt.formatarMoeda(gastos)} de ${fmt.formatarMoeda(limite)} (${percentual}%)\n`;
-        if (restante > 0) {
-          msg += `Restam: ${fmt.formatarMoeda(restante)} este mês`;
-        } else {
-          msg += `⚠️ *Limite excedido em ${fmt.formatarMoeda(Math.abs(restante))}!*`;
-        }
-      }
-    }
-
-    return msg;
+    return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
   }
 
   return foraDoEscopoMsg();
+}
+
+async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal) {
+  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
+  const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
+
+  let emoji, label;
+  if (statusFinal === 'pendente') {
+    emoji = tipo === 'receita' ? '⏳💰' : '⏳💸';
+    label = tipo === 'receita' ? 'Receita a receber' : 'Despesa a pagar';
+  } else {
+    emoji = tipo === 'receita' ? '✅💰' : '✅💸';
+    label = tipo === 'receita' ? 'Receita registrada' : 'Despesa registrada';
+  }
+
+  let msg = `${emoji} *${label}!*\n\n` +
+    `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
+    `📝 Descrição: ${descricao}\n` +
+    `📂 Categoria: ${categoria || 'Outros'}\n` +
+    `📅 Data: ${dataExibir}\n` +
+    `🆔 ID: #${result.lastInsertRowid}`;
+
+  if (statusFinal === 'pendente') {
+    const quando = tipo === 'receita' ? 'receber' : 'pagar';
+    msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
+  }
+
+  // Verificar limite de gastos (apenas para despesas)
+  if (tipo === 'despesa' && categoria) {
+    const limiteInfo = await db.verificarLimite(usuarioId, categoria);
+    if (limiteInfo) {
+      const { limite, gastos, restante, percentual } = limiteInfo;
+      let emojiLimite = '';
+      if (percentual >= 100) emojiLimite = '🚨';
+      else if (percentual >= 80) emojiLimite = '⚠️';
+      else if (percentual >= 60) emojiLimite = '📊';
+      else emojiLimite = '✅';
+
+      msg += `\n\n${emojiLimite} *Limite de ${categoria}:*\n`;
+      msg += `Gasto: ${fmt.formatarMoeda(gastos)} de ${fmt.formatarMoeda(limite)} (${percentual}%)\n`;
+      if (restante > 0) {
+        msg += `Restam: ${fmt.formatarMoeda(restante)} este mês`;
+      } else {
+        msg += `⚠️ *Limite excedido em ${fmt.formatarMoeda(Math.abs(restante))}!*`;
+      }
+    }
+  }
+
+  return msg;
+}
+
+async function handleDataPendenteResposta(usuarioId, texto, pendente) {
+  const lower = texto.toLowerCase().trim();
+
+  // Cancelar
+  if (lower === 'cancelar' || lower === 'deixa' || lower === 'esquece') {
+    limparDataPendente(usuarioId);
+    return '❌ Cancelado! Não salvei nada.';
+  }
+
+  // Usar a IA para interpretar a data
+  const resultado = await interpretarMensagem(texto);
+
+  let dataFinal = null;
+
+  // Se a IA retornou uma transação com data, usar a data dela
+  if (resultado && resultado.data) {
+    dataFinal = resultado.data;
+    if (dataFinal && dataFinal.includes('/')) {
+      dataFinal = parseData(dataFinal);
+    }
+    if (dataFinal && !/^\d{4}-\d{2}-\d{2}$/.test(dataFinal)) {
+      dataFinal = null;
+    }
+  }
+
+  // Fallback: tentar extrair "dia X" manualmente
+  if (!dataFinal) {
+    const matchDia = lower.match(/dia\s+(\d{1,2})/);
+    if (matchDia) {
+      const dia = parseInt(matchDia[1]);
+      if (dia >= 1 && dia <= 31) {
+        const hoje = new Date();
+        const diaHoje = hoje.getDate();
+        let mes = hoje.getMonth();
+        let ano = hoje.getFullYear();
+        // Se o dia já passou neste mês, vai pro próximo
+        if (dia < diaHoje) {
+          mes += 1;
+          if (mes > 11) { mes = 0; ano += 1; }
+        }
+        dataFinal = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  // Fallback: palavras comuns
+  if (!dataFinal) {
+    const hoje = new Date();
+    if (lower === 'hoje') {
+      dataFinal = hoje.toISOString().split('T')[0];
+    } else if (lower === 'amanhã' || lower === 'amanha') {
+      const amanha = new Date(hoje);
+      amanha.setDate(amanha.getDate() + 1);
+      dataFinal = amanha.toISOString().split('T')[0];
+    } else if (lower.includes('semana que vem') || lower.includes('proxima semana') || lower.includes('próxima semana')) {
+      const prox = new Date(hoje);
+      prox.setDate(prox.getDate() + 7);
+      dataFinal = prox.toISOString().split('T')[0];
+    } else if (lower.includes('mês que vem') || lower.includes('mes que vem') || lower.includes('próximo mês') || lower.includes('proximo mes')) {
+      const prox = new Date(hoje);
+      prox.setMonth(prox.getMonth() + 1);
+      dataFinal = prox.toISOString().split('T')[0];
+    }
+  }
+
+  if (!dataFinal) {
+    return 'Não consegui entender a data 😅\n\nMe diz de um jeito mais direto:\n_Ex: "dia 20", "amanhã", "semana que vem", "dia 5 do mês que vem"_\n\n_Ou manda "cancelar" pra desistir._';
+  }
+
+  const { tipo, valor, descricao, categoria } = pendente;
+  limparDataPendente(usuarioId);
+  return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, 'pendente');
 }
 
 async function handleMensagemIA(usuarioId, texto) {
