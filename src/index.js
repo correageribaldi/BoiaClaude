@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, mensagemBoasVindas } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
@@ -134,8 +134,18 @@ client.on('message', async (msg) => {
         const filename = (media.filename || msg.body || '').toLowerCase();
         if (filename.endsWith('.csv')) {
           console.log(`[CSV] Recebido arquivo CSV de ${usuarioId}: ${media.filename || 'sem nome'}`);
-          await msg.reply('📄 Recebi teu extrato! Analisando e categorizando as transações... ⏳');
           const csvContent = Buffer.from(media.data, 'base64').toString('utf-8');
+
+          // Verificar se está no fluxo de análise financeira
+          const analise = obterAnaliseFinanceira(usuarioId);
+          if (analise && analise.etapa === 'aguardando_csv') {
+            await msg.reply('📄 Recebendo extrato para análise... ⏳');
+            const resposta = await handleAnaliseFinanceiraCSV(usuarioId, csvContent);
+            await msg.reply(resposta);
+            return;
+          }
+
+          await msg.reply('📄 Recebi teu extrato! Analisando e categorizando as transações... ⏳');
           const resposta = await handleCSVImport(usuarioId, csvContent);
           await msg.reply(resposta);
         } else {

@@ -81,6 +81,10 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 
 IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "limpar tudo" — esses são comandos de RESET que apagam tudo. "Finanças em dia" é para ORGANIZAR as finanças, não apagar.
 
+16b. ANÁLISE FINANCEIRA / REGRA 50/30/20 (análise financeira, analisar meus gastos, regra 50 30 20, quero analisar meu extrato, diagnóstico financeiro, como estou gastando, quero ver onde estou gastando errado):
+{"acao": "analise_financeira"}
+ATENÇÃO: Use quando o usuário quer uma ANÁLISE DETALHADA dos gastos pela regra 50/30/20 (necessidades/desejos/poupança). É diferente de "finanças em dia" (que é para CADASTRAR receitas/despesas manualmente).
+
 17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
 
@@ -593,4 +597,54 @@ REGRAS DE DESCRIÇÃO CURTA:
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato };
+async function gerarDiagnosticoFinanceiro(dados) {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  try {
+    const { receitaTotal, despesaTotal, buckets, categoriaDetalhe } = dados;
+
+    const prompt = `Você é um consultor financeiro amigável e prático. Fala de forma natural, como um amigo que entende de finanças.
+
+O usuário te enviou seus extratos bancários e você analisou os gastos dele pela regra 50/30/20.
+
+DADOS DA ANÁLISE:
+- Renda total: R$ ${receitaTotal.toFixed(2)}
+- Gastos totais: R$ ${despesaTotal.toFixed(2)}
+
+NECESSIDADES (meta 50% = R$ ${(receitaTotal * 0.5).toFixed(2)}):
+  Real: R$ ${buckets.necessidades.real.toFixed(2)} (${buckets.necessidades.percentual.toFixed(1)}%)
+  Categorias: ${categoriaDetalhe.necessidades}
+
+DESEJOS (meta 30% = R$ ${(receitaTotal * 0.3).toFixed(2)}):
+  Real: R$ ${buckets.desejos.real.toFixed(2)} (${buckets.desejos.percentual.toFixed(1)}%)
+  Categorias: ${categoriaDetalhe.desejos}
+
+POUPANÇA (meta 20% = R$ ${(receitaTotal * 0.2).toFixed(2)}):
+  Real: R$ ${buckets.poupanca.real.toFixed(2)} (${buckets.poupanca.percentual.toFixed(1)}%)
+  Categorias: ${categoriaDetalhe.poupanca}
+
+Gere um diagnóstico CURTO (máximo 5-6 linhas) com:
+1. Um elogio se algo estiver bom, ou uma observação construtiva
+2. 2-3 sugestões PRÁTICAS e ESPECÍFICAS baseadas nos números
+3. Um incentivo final
+
+Use linguagem informal brasileira. Não use emojis. Não repita os números da análise.`;
+
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: 'Gere o diagnóstico financeiro.' },
+      ],
+      temperature: 0.6,
+      max_tokens: 400,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    console.error('[AI] Erro ao gerar diagnóstico financeiro:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro };

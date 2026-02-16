@@ -249,7 +249,113 @@ async function gerarGraficoReceitasDespesas(dadosResumo) {
   }
 }
 
+/**
+ * Gera gráfico de barras horizontais para análise 50/30/20
+ * dados: { necessidades: { real, meta }, desejos: { real, meta }, poupanca: { real, meta } }
+ */
+async function gerarGrafico503020(dados) {
+  const { necessidades, desejos, poupanca } = dados;
+
+  const chartCanvas = new ChartJSNodeCanvas({
+    width: 800,
+    height: 500,
+    chartCallback
+  });
+
+  const labels = ['🏠 Necessidades (50%)', '🎯 Desejos (30%)', '💰 Poupança (20%)'];
+  const reais = [necessidades.real, desejos.real, poupanca.real];
+  const metas = [necessidades.meta, desejos.meta, poupanca.meta];
+
+  // Cores: verde se dentro da meta, vermelho se acima (necessidades/desejos), amarelo se abaixo (poupança)
+  const coresReais = [
+    necessidades.real <= necessidades.meta ? 'rgba(75, 192, 192, 0.85)' : 'rgba(255, 99, 132, 0.85)',
+    desejos.real <= desejos.meta ? 'rgba(75, 192, 192, 0.85)' : 'rgba(255, 99, 132, 0.85)',
+    poupanca.real >= poupanca.meta ? 'rgba(75, 192, 192, 0.85)' : 'rgba(255, 206, 86, 0.85)',
+  ];
+
+  const configuration = {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Realizado',
+          data: reais,
+          backgroundColor: coresReais,
+          borderColor: coresReais.map(c => c.replace('0.85', '1')),
+          borderWidth: 2,
+        },
+        {
+          label: 'Meta',
+          data: metas,
+          backgroundColor: 'rgba(200, 200, 200, 0.5)',
+          borderColor: 'rgba(150, 150, 150, 0.8)',
+          borderWidth: 2,
+          borderDash: [5, 5],
+        }
+      ]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: false,
+      plugins: {
+        title: {
+          display: true,
+          text: 'Análise Financeira - Regra 50/30/20',
+          font: { size: 22, weight: 'bold' },
+          padding: { top: 10, bottom: 20 }
+        },
+        legend: {
+          position: 'top',
+          labels: { font: { size: 14 }, padding: 15 }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const value = context.parsed.x || 0;
+              return `${context.dataset.label}: R$ ${value.toFixed(2).replace('.', ',')}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: {
+            callback: function(value) {
+              return 'R$ ' + value.toFixed(0);
+            }
+          }
+        },
+        y: {
+          ticks: { font: { size: 14 } }
+        }
+      }
+    },
+    plugins: [{
+      id: 'background',
+      beforeDraw: (chart) => {
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, chart.width, chart.height);
+        ctx.restore();
+      }
+    }]
+  };
+
+  try {
+    const imageBuffer = await chartCanvas.renderToBuffer(configuration);
+    console.log('[CHART] Gráfico 50/30/20 gerado com sucesso');
+    return imageBuffer;
+  } catch (err) {
+    console.error('[CHART] Erro ao gerar gráfico 50/30/20:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
   gerarGraficoCategorias,
-  gerarGraficoReceitasDespesas
+  gerarGraficoReceitasDespesas,
+  gerarGrafico503020
 };

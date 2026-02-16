@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro } = require('./ai');
 const { pesquisarWeb, pesquisarLocal } = require('./search');
 const charts = require('./charts');
 
@@ -53,6 +53,51 @@ function obterPontoZero(usuarioId) {
 
 function limparPontoZero(usuarioId) {
   pontoZeroEstados.delete(usuarioId);
+}
+
+// Estado da análise financeira 50/30/20 (expira em 30 min)
+const analiseFinanceiraEstados = new Map();
+
+const REGRA_503020 = {
+  necessidades: {
+    categorias: ['Alimentacao', 'Transporte', 'Moradia', 'Saude', 'Educacao'],
+    meta: 0.50,
+    emoji: '🏠',
+    label: 'Necessidades',
+  },
+  desejos: {
+    categorias: ['Lazer', 'Vestuario', 'Compras', 'Outros'],
+    meta: 0.30,
+    emoji: '🎯',
+    label: 'Desejos',
+  },
+  poupanca: {
+    categorias: ['Investimentos', 'Poupanca'],
+    meta: 0.20,
+    emoji: '💰',
+    label: 'Poupança / Investimentos',
+  },
+};
+
+function salvarAnaliseFinanceira(usuarioId, dados) {
+  analiseFinanceiraEstados.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 30 * 60 * 1000,
+  });
+}
+
+function obterAnaliseFinanceira(usuarioId) {
+  const dados = analiseFinanceiraEstados.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    analiseFinanceiraEstados.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparAnaliseFinanceira(usuarioId) {
+  analiseFinanceiraEstados.delete(usuarioId);
 }
 
 // Localização do usuário para buscas locais (expira em 30 min)
@@ -260,10 +305,21 @@ async function handleMessage(usuarioId, texto) {
     return await handleConfirmacaoImagem(usuarioId, lower, confirmacao);
   }
 
+  // Verificar se está no fluxo Análise Financeira
+  const analise = obterAnaliseFinanceira(usuarioId);
+  if (analise) {
+    return await handleAnaliseFinanceiraMsg(usuarioId, msg, analise);
+  }
+
   // Verificar se está no fluxo Finanças em Dia
   const pontoZero = obterPontoZero(usuarioId);
   if (pontoZero) {
     return await handlePontoZero(usuarioId, msg, pontoZero);
+  }
+
+  // Comando: análise financeira (texto direto)
+  if (lower === 'análise financeira' || lower === 'analise financeira' || lower === '50 30 20' || lower === '503020') {
+    return await iniciarAnaliseFinanceira(usuarioId);
   }
 
   // Comando: finanças em dia (texto direto)
@@ -572,6 +628,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
   // Finanças em Dia - organizar finanças
   if (resultado.acao === 'financas_em_dia') {
     return await iniciarPontoZero(usuarioId);
+  }
+
+  // Análise financeira 50/30/20
+  if (resultado.acao === 'analise_financeira') {
+    return await iniciarAnaliseFinanceira(usuarioId);
   }
 
   // Saudação - verificar se é usuário novo ou existente
@@ -1736,6 +1797,248 @@ async function finalizarPontoZero(usuarioId, estado) {
 
 // ==================== IMPORTAR EXTRATO CSV ====================
 
+// ========== ANÁLISE FINANCEIRA 50/30/20 ==========
+
+async function iniciarAnaliseFinanceira(usuarioId) {
+  salvarAnaliseFinanceira(usuarioId, {
+    etapa: 'aguardando_csv',
+    transacoes: [],
+    csvsRecebidos: 0,
+  });
+
+  return `📊 *Análise Financeira - Regra 50/30/20*\n\nVou analisar seus gastos e te mostrar como estão distribuídos entre:\n\n🏠 *Necessidades* (meta: 50%) - moradia, contas, comida, transporte\n🎯 *Desejos* (meta: 30%) - lazer, compras, comer fora\n💰 *Poupança* (meta: 20%) - investimentos, objetivos, dívidas\n\n📄 Me manda o primeiro extrato bancário em *CSV*.\n_(Você pode enviar até 3 extratos de bancos diferentes)_`;
+}
+
+async function handleAnaliseFinanceiraCSV(usuarioId, csvContent) {
+  const estado = obterAnaliseFinanceira(usuarioId);
+
+  if (!estado || estado.etapa !== 'aguardando_csv') {
+    // Não está no fluxo de análise - retorna null para seguir fluxo normal
+    return null;
+  }
+
+  const novasTransacoes = parseCSV(csvContent);
+
+  if (novasTransacoes.length === 0) {
+    return '❌ Não encontrei transações nesse CSV. Verifica se está no formato: Data,Valor,Identificador,Descrição\n\n_Tenta mandar outro arquivo ou digite *cancelar* pra sair._';
+  }
+
+  estado.transacoes = estado.transacoes.concat(novasTransacoes);
+  estado.csvsRecebidos++;
+
+  salvarAnaliseFinanceira(usuarioId, estado);
+
+  const totalTx = estado.transacoes.length;
+  const restantes = 3 - estado.csvsRecebidos;
+
+  if (restantes === 0) {
+    // Já recebeu 3 CSVs - inicia análise automaticamente
+    return await executarAnalise503020(usuarioId, estado);
+  }
+
+  return `✅ *Extrato ${estado.csvsRecebidos} recebido!* ${novasTransacoes.length} transações identificadas.\n📋 Total acumulado: ${totalTx} transações\n\nQuer enviar mais um extrato? _(${restantes === 1 ? 'Falta 1' : `Faltam ${restantes}`})_\nOu digite *analisar* para eu começar a análise.`;
+}
+
+async function handleAnaliseFinanceiraMsg(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'sair') {
+    limparAnaliseFinanceira(usuarioId);
+    return '❌ Análise financeira cancelada.';
+  }
+
+  if (estado.etapa === 'aguardando_csv') {
+    if (lower === 'analisar' || lower === 'analisa' || lower === 'pode analisar') {
+      if (estado.transacoes.length === 0) {
+        return '📄 Ainda não recebi nenhum extrato! Me manda um CSV primeiro.\n\n_Ou digite *cancelar* pra sair._';
+      }
+      return await executarAnalise503020(usuarioId, estado);
+    }
+    return '📄 Estou esperando um extrato em CSV.\n\nEnvia o arquivo ou digite *analisar* pra começar com o que já temos.\n_Digite *cancelar* pra sair._';
+  }
+
+  if (estado.etapa === 'confirmando_limites') {
+    if (['sim', 's', 'pode', 'bora', 'quero', 'ok', 'pode ser'].includes(lower)) {
+      return await criarLimitesAnalise(usuarioId, estado.limitesSugeridos);
+    }
+    if (['não', 'nao', 'n', 'não quero', 'nao quero'].includes(lower)) {
+      limparAnaliseFinanceira(usuarioId);
+      return '👍 Sem problemas! Os limites não foram criados.\n\n_Você pode criar limites manualmente a qualquer momento: "limitar gastos com Alimentação em 1000 reais"_';
+    }
+    return 'Quer que eu crie os limites? Responde *sim* ou *não*.';
+  }
+
+  return '🤔 Algo deu errado com a análise. Digite *análise financeira* pra começar de novo.';
+}
+
+async function executarAnalise503020(usuarioId, estado) {
+  const transacoes = estado.transacoes;
+
+  // Categorizar todas as transações via IA
+  const descUnicas = [...new Set(transacoes.map(t => t.descricaoOriginal))];
+  console.log(`[ANÁLISE 50/30/20] ${transacoes.length} transações, ${descUnicas.length} descrições únicas. Categorizando...`);
+
+  const categoriaMap = await categorizarExtrato(descUnicas);
+
+  for (const t of transacoes) {
+    const info = categoriaMap[t.descricaoOriginal];
+    if (info) {
+      t.categoria = info.categoria || 'Outros';
+      t.descricao = info.descricao || t.descricaoOriginal;
+    }
+  }
+
+  // Separar receitas e despesas
+  const receitas = transacoes.filter(t => t.tipo === 'receita');
+  const despesas = transacoes.filter(t => t.tipo === 'despesa');
+  const receitaTotal = receitas.reduce((acc, t) => acc + t.valor, 0);
+  const despesaTotal = despesas.reduce((acc, t) => acc + t.valor, 0);
+
+  if (receitaTotal === 0) {
+    limparAnaliseFinanceira(usuarioId);
+    return '❌ Não identifiquei receitas nos extratos. A regra 50/30/20 precisa da renda pra calcular as metas.\n\n_Certifica que o extrato contém entradas positivas (salário, transferências recebidas, etc.)_';
+  }
+
+  // Calcular gastos por categoria
+  const gastosPorCategoria = {};
+  for (const t of despesas) {
+    gastosPorCategoria[t.categoria] = (gastosPorCategoria[t.categoria] || 0) + t.valor;
+  }
+
+  // Classificar categorias nos buckets 50/30/20
+  const buckets = {};
+  const categoriasDetalhe = {};
+
+  for (const [bucket, config] of Object.entries(REGRA_503020)) {
+    let total = 0;
+    const detalhes = [];
+    for (const cat of config.categorias) {
+      if (gastosPorCategoria[cat]) {
+        total += gastosPorCategoria[cat];
+        detalhes.push(`${cat}: ${fmt.formatarMoeda(gastosPorCategoria[cat])}`);
+      }
+    }
+    const meta = receitaTotal * config.meta;
+    const percentual = receitaTotal > 0 ? (total / receitaTotal) * 100 : 0;
+    buckets[bucket] = { real: total, meta, percentual };
+    categoriasDetalhe[bucket] = detalhes.length > 0 ? detalhes.join(', ') : 'Nenhum gasto';
+  }
+
+  // Categorias não classificadas (não mapeadas em nenhum bucket)
+  const categsMapeadas = Object.values(REGRA_503020).flatMap(b => b.categorias);
+  for (const [cat, valor] of Object.entries(gastosPorCategoria)) {
+    if (!categsMapeadas.includes(cat)) {
+      buckets.desejos.real += valor;
+      buckets.desejos.percentual = receitaTotal > 0 ? (buckets.desejos.real / receitaTotal) * 100 : 0;
+      categoriasDetalhe.desejos += `, ${cat}: ${fmt.formatarMoeda(valor)}`;
+    }
+  }
+
+  // Montar mensagem
+  let msg = `📊 *ANÁLISE FINANCEIRA - REGRA 50/30/20*\n\n`;
+  msg += `💵 Renda identificada: *${fmt.formatarMoeda(receitaTotal)}*\n`;
+  msg += `💸 Total de gastos: *${fmt.formatarMoeda(despesaTotal)}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  for (const [bucket, config] of Object.entries(REGRA_503020)) {
+    const dados = buckets[bucket];
+    const metaPct = config.meta * 100;
+    const desvio = dados.percentual - metaPct;
+
+    let statusIcon;
+    if (bucket === 'poupanca') {
+      statusIcon = dados.real >= dados.meta ? '✅' : '❌';
+    } else {
+      if (Math.abs(desvio) <= 3) statusIcon = '✅';
+      else statusIcon = dados.real > dados.meta ? '⚠️' : '✅';
+    }
+
+    msg += `${config.emoji} *${config.label.toUpperCase()} (meta: ${metaPct}% = ${fmt.formatarMoeda(dados.meta)})*\n`;
+    msg += `Você gastou: ${fmt.formatarMoeda(dados.real)} (${dados.percentual.toFixed(1)}%) ${statusIcon}`;
+
+    if (Math.abs(desvio) > 1) {
+      if (bucket === 'poupanca') {
+        msg += desvio < 0 ? ` ${Math.abs(desvio).toFixed(0)}% abaixo` : ` +${desvio.toFixed(0)}% acima`;
+      } else {
+        msg += desvio > 0 ? ` +${desvio.toFixed(0)}% acima` : ` ${Math.abs(desvio).toFixed(0)}% abaixo`;
+      }
+    }
+    msg += '\n';
+
+    // Detalhes por categoria
+    for (const cat of config.categorias) {
+      if (gastosPorCategoria[cat]) {
+        msg += `  📂 ${cat}: ${fmt.formatarMoeda(gastosPorCategoria[cat])}\n`;
+      }
+    }
+    msg += '\n';
+  }
+
+  msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Diagnóstico da IA
+  const diagnostico = await gerarDiagnosticoFinanceiro({
+    receitaTotal,
+    despesaTotal,
+    buckets,
+    categoriaDetalhe: categoriasDetalhe,
+  });
+
+  if (diagnostico) {
+    msg += `💡 *DIAGNÓSTICO:*\n${diagnostico}\n\n`;
+  }
+
+  // Calcular limites sugeridos (distribuir a renda por categoria proporcionalmente dentro de cada bucket)
+  const limitesSugeridos = {};
+  for (const [bucket, config] of Object.entries(REGRA_503020)) {
+    const orcamentoBucket = receitaTotal * config.meta;
+    const categsComGasto = config.categorias.filter(c => gastosPorCategoria[c]);
+
+    if (categsComGasto.length > 0) {
+      const totalBucket = categsComGasto.reduce((acc, c) => acc + gastosPorCategoria[c], 0);
+      for (const cat of categsComGasto) {
+        // Proporção do gasto real, mas limitada pelo orçamento do bucket
+        const proporcao = gastosPorCategoria[cat] / totalBucket;
+        limitesSugeridos[cat] = Math.round(orcamentoBucket * proporcao);
+      }
+    }
+  }
+
+  msg += `Quer que eu crie *limites de gastos* por categoria baseados na regra 50/30/20? *(sim/não)*`;
+
+  // Gerar gráfico
+  const grafico = await charts.gerarGrafico503020({
+    necessidades: { real: buckets.necessidades.real, meta: buckets.necessidades.meta },
+    desejos: { real: buckets.desejos.real, meta: buckets.desejos.meta },
+    poupanca: { real: buckets.poupanca.real, meta: buckets.poupanca.meta },
+  });
+
+  // Salvar estado para confirmação de limites
+  salvarAnaliseFinanceira(usuarioId, {
+    etapa: 'confirmando_limites',
+    limitesSugeridos,
+  });
+
+  if (grafico) {
+    return { texto: msg, grafico };
+  }
+  return msg;
+}
+
+async function criarLimitesAnalise(usuarioId, limitesSugeridos) {
+  let msg = '✅ *Limites criados com sucesso!*\n\n';
+
+  for (const [categoria, valor] of Object.entries(limitesSugeridos)) {
+    await db.definirLimite(usuarioId, categoria, valor);
+    msg += `📂 ${categoria}: ${fmt.formatarMoeda(valor)}/mês\n`;
+  }
+
+  msg += '\n_Vou te avisar sempre que uma despesa ultrapassar o limite!_';
+
+  limparAnaliseFinanceira(usuarioId);
+  return msg;
+}
+
 function parseCSV(csvContent) {
   // Remove BOM e normaliza line endings
   const content = csvContent.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -1855,4 +2158,4 @@ async function handleCSVImport(usuarioId, csvContent) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, mensagemBoasVindas };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas };
