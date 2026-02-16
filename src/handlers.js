@@ -2139,21 +2139,32 @@ async function executarAnalise503020(usuarioId, estado) {
 async function gerarRelatorio503020(usuarioId, estado) {
   const transacoes = estado.transacoes;
 
+  // Determinar quantos meses distintos existem nos extratos
+  const mesesDistintos = new Set(transacoes.map(t => t.data.substring(0, 7))); // YYYY-MM
+  const qtdMeses = Math.max(mesesDistintos.size, 1);
+  console.log(`[ANÁLISE 50/30/20] ${qtdMeses} mês(es) distinto(s) nos extratos: ${[...mesesDistintos].join(', ')}`);
+
   // Separar receitas e despesas
   const receitas = transacoes.filter(t => t.tipo === 'receita');
   const despesas = transacoes.filter(t => t.tipo === 'despesa');
-  const receitaTotal = receitas.reduce((acc, t) => acc + t.valor, 0);
-  const despesaTotal = despesas.reduce((acc, t) => acc + t.valor, 0);
+
+  // Calcular médias mensais (dividir pelo número de meses)
+  const receitaTotal = receitas.reduce((acc, t) => acc + t.valor, 0) / qtdMeses;
+  const despesaTotal = despesas.reduce((acc, t) => acc + t.valor, 0) / qtdMeses;
 
   if (receitaTotal === 0) {
     limparAnaliseFinanceira(usuarioId);
     return '❌ Não identifiquei receitas nos extratos. A regra 50/30/20 precisa da renda pra calcular as metas.\n\n_Certifica que o extrato contém entradas positivas (salário, transferências recebidas, etc.)_';
   }
 
-  // Calcular gastos por categoria
+  // Calcular gastos por categoria (média mensal)
   const gastosPorCategoria = {};
   for (const t of despesas) {
     gastosPorCategoria[t.categoria] = (gastosPorCategoria[t.categoria] || 0) + t.valor;
+  }
+  // Dividir cada categoria pelo número de meses
+  for (const cat of Object.keys(gastosPorCategoria)) {
+    gastosPorCategoria[cat] = gastosPorCategoria[cat] / qtdMeses;
   }
 
   // Classificar categorias nos buckets 50/30/20
@@ -2186,9 +2197,13 @@ async function gerarRelatorio503020(usuarioId, estado) {
   }
 
   // Montar mensagem
-  let msg = `📊 *ANÁLISE FINANCEIRA - REGRA 50/30/20*\n\n`;
-  msg += `💵 Renda identificada: *${fmt.formatarMoeda(receitaTotal)}*\n`;
-  msg += `💸 Total de gastos: *${fmt.formatarMoeda(despesaTotal)}*\n`;
+  let msg = `📊 *ANÁLISE FINANCEIRA - REGRA 50/30/20*\n`;
+  if (qtdMeses > 1) {
+    msg += `📅 _Média mensal baseada em ${qtdMeses} meses de extratos_\n`;
+  }
+  msg += `\n`;
+  msg += `💵 Renda${qtdMeses > 1 ? ' mensal' : ''}: *${fmt.formatarMoeda(receitaTotal)}*\n`;
+  msg += `💸 Gastos${qtdMeses > 1 ? ' mensais' : ''}: *${fmt.formatarMoeda(despesaTotal)}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   for (const [bucket, config] of Object.entries(REGRA_503020)) {
