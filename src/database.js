@@ -40,6 +40,23 @@ async function initTables() {
       ON transacoes(status);
   `);
 
+  // Migração: adicionar numero_usuario (ID sequencial por usuário, visível pro cliente)
+  await pool.query(`
+    ALTER TABLE transacoes
+      ADD COLUMN IF NOT EXISTS numero_usuario INTEGER;
+  `);
+
+  // Preencher numero_usuario para registros existentes que não têm
+  await pool.query(`
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (PARTITION BY usuario_id ORDER BY id) as rn
+      FROM transacoes
+      WHERE numero_usuario IS NULL
+    )
+    UPDATE transacoes SET numero_usuario = numbered.rn
+    FROM numbered WHERE transacoes.id = numbered.id;
+  `);
+
   // Tabela para controlar lembretes enviados (evitar duplicatas)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS lembretes_enviados (
@@ -138,17 +155,18 @@ async function initTables() {
 
 async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status) {
   const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id`,
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7,
+       (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
+     RETURNING id, numero_usuario`,
     [usuarioId, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0], status || 'pago']
   );
-  return { lastInsertRowid: result.rows[0].id };
+  return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
 
 async function listarTransacoes(usuarioId, tipo, limite) {
   const result = await pool.query(
-    `SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
      FROM transacoes
      WHERE usuario_id = $1 AND ($2::text IS NULL OR tipo = $2)
      ORDER BY data DESC, id DESC
@@ -218,10 +236,10 @@ async function resumoAnual(usuarioId, ano) {
   return { ano: a, meses: result.rows };
 }
 
-async function excluirTransacao(usuarioId, transacaoId) {
+async function excluirTransacao(usuarioId, numeroUsuario) {
   const result = await pool.query(
-    'DELETE FROM transacoes WHERE id = $1 AND usuario_id = $2',
-    [transacaoId, usuarioId]
+    'DELETE FROM transacoes WHERE numero_usuario = $1 AND usuario_id = $2',
+    [numeroUsuario, usuarioId]
   );
   return { changes: result.rowCount };
 }
@@ -229,7 +247,7 @@ async function excluirTransacao(usuarioId, transacaoId) {
 async function consultarTransacoes(usuarioId, filtros = {}) {
   const { tipo, categoria, dataInicio, dataFim, descricao, status, limite } = filtros;
   let query = `
-    SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
     FROM transacoes
     WHERE usuario_id = $1
   `;
@@ -307,19 +325,19 @@ async function consultarTotalTransacoes(usuarioId, filtros = {}) {
   return result.rows[0];
 }
 
-async function liquidarTransacao(usuarioId, transacaoId) {
+async function liquidarTransacao(usuarioId, numeroUsuario) {
   const result = await pool.query(
     `UPDATE transacoes SET status = 'pago'
-     WHERE id = $1 AND usuario_id = $2 AND status = 'pendente'
-     RETURNING id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data`,
-    [transacaoId, usuarioId]
+     WHERE numero_usuario = $1 AND usuario_id = $2 AND status = 'pendente'
+     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data`,
+    [numeroUsuario, usuarioId]
   );
   return result.rows[0] || null;
 }
 
 async function listarPendentes(usuarioId, tipo) {
   const result = await pool.query(
-    `SELECT id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
      FROM transacoes
      WHERE usuario_id = $1 AND status = 'pendente' AND ($2::text IS NULL OR tipo = $2)
      ORDER BY data ASC, id ASC`,
@@ -355,7 +373,7 @@ async function calcularSaldos(usuarioId) {
 // Buscar transações pendentes que vencem hoje ou já venceram (para lembretes)
 async function buscarPendentesParaLembrete(rodada) {
   const result = await pool.query(
-    `SELECT t.id, t.usuario_id, t.tipo, t.valor::float, t.descricao, t.categoria,
+    `SELECT t.id, t.numero_usuario, t.usuario_id, t.tipo, t.valor::float, t.descricao, t.categoria,
             TO_CHAR(t.data, 'YYYY-MM-DD') as data
      FROM transacoes t
      WHERE t.status = 'pendente'

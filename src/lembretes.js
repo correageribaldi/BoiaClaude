@@ -13,7 +13,7 @@ function gerarMensagem(rodada, transacoes) {
     const hoje = new Date().toISOString().split('T')[0];
     const atrasado = t.data < hoje;
     const tag = atrasado ? ' _(vencida!)_' : '';
-    detalhes += `  ${t.tipo === 'despesa' ? '🔴' : '🟢'} *#${t.id}* - ${t.descricao}: ${fmt.formatarMoeda(t.valor)} (venc. ${vencimento})${tag}\n`;
+    detalhes += `  ${t.tipo === 'despesa' ? '🔴' : '🟢'} *#${t.numero_usuario}* - ${t.descricao}: ${fmt.formatarMoeda(t.valor)} (venc. ${vencimento})${tag}\n`;
   }
   detalhes += `\n💵 *Total:* ${fmt.formatarMoeda(total)}`;
 
