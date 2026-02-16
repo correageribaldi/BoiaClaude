@@ -627,7 +627,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     }
     if (resultado.dica === 'lista') {
       const transacoes = await db.listarTransacoes(usuarioId, null, 10);
-      return fmt.formatarLista(transacoes, 'todas');
+      return fmt.formatarListaTransacoes(transacoes);
     }
     return `Parece que você quer usar um comando. Tente digitar: *${resultado.dica || 'ajuda'}*`;
   }
