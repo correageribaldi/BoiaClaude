@@ -1,7 +1,7 @@
 const db = require('./database');
 const fmt = require('./formatters');
 const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato } = require('./ai');
-const { pesquisarWeb } = require('./search');
+const { pesquisarWeb, pesquisarLocal } = require('./search');
 const charts = require('./charts');
 
 // Estado temporário para confirmações pendentes (expira em 5 min)
@@ -53,6 +53,27 @@ function obterPontoZero(usuarioId) {
 
 function limparPontoZero(usuarioId) {
   pontoZeroEstados.delete(usuarioId);
+}
+
+// Localização do usuário para buscas locais (expira em 30 min)
+const localizacaoUsuario = new Map();
+
+function salvarLocalizacao(usuarioId, lat, lng) {
+  localizacaoUsuario.set(usuarioId, {
+    lat,
+    lng,
+    expiraEm: Date.now() + 30 * 60 * 1000,
+  });
+}
+
+function obterLocalizacao(usuarioId) {
+  const dados = localizacaoUsuario.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    localizacaoUsuario.delete(usuarioId);
+    return null;
+  }
+  return dados;
 }
 
 function salvarConfirmacao(usuarioId, dados) {
@@ -618,6 +639,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     return await handlePesquisa(resultado);
   }
 
+  // Busca local (por localização)
+  if (resultado.acao === 'busca_local') {
+    return await handleBuscaLocal(usuarioId, resultado);
+  }
+
   // Definir limite de gastos
   if (resultado.acao === 'definir_limite') {
     return await handleDefinirLimite(usuarioId, resultado);
@@ -1173,6 +1199,58 @@ async function handlePesquisa(resultado) {
   }
 
   return respostaFormatada;
+}
+
+async function handleLocationMessage(usuarioId, location) {
+  const { latitude, longitude } = location;
+  salvarLocalizacao(usuarioId, latitude, longitude);
+  return `📍 *Localização recebida!*\n\nAgora me diz o que tu quer encontrar por perto.\n\n_Ex: "restaurantes", "farmácias", "postos de gasolina", "mercados"..._`;
+}
+
+async function handleBuscaLocal(usuarioId, resultado) {
+  const { query, pergunta } = resultado;
+
+  if (!query) {
+    return 'Não entendi o que tu quer buscar por perto. Tenta reformular? 🤔';
+  }
+
+  if (!process.env.BRAVE_SEARCH_API_KEY) {
+    return '🔍 A pesquisa está desabilitada no momento.\n\n_O administrador precisa configurar a BRAVE_SEARCH_API_KEY._';
+  }
+
+  const loc = obterLocalizacao(usuarioId);
+
+  if (!loc) {
+    return `📍 Para encontrar *${pergunta || query}* pertinho de você, preciso da sua localização!\n\nClica no 📎 (clipe) → *Localização* → *Enviar localização atual*\n\n_Depois é só me pedir de novo!_`;
+  }
+
+  console.log(`[BUSCA LOCAL] "${query}" em lat=${loc.lat}, lng=${loc.lng}`);
+  const resultados = await pesquisarLocal(query, loc.lat, loc.lng);
+
+  if (!resultados || resultados.length === 0) {
+    return `Não encontrei resultados pra "${pergunta || query}" perto de você 😕\n\nTenta ser mais específico ou buscar outra coisa.`;
+  }
+
+  console.log(`[BUSCA LOCAL] ${resultados.length} resultados encontrados, formatando...`);
+
+  let msg = `📍 *${pergunta || query}* perto de você:\n\n`;
+
+  for (let i = 0; i < resultados.length; i++) {
+    const r = resultados[i];
+    msg += `*${i + 1}. ${r.titulo}*\n`;
+    if (r.avaliacao) msg += `⭐ ${r.avaliacao}  `;
+    if (r.endereco) msg += `📍 ${r.endereco}`;
+    if (r.avaliacao || r.endereco) msg += '\n';
+    if (r.telefone) msg += `📞 ${r.telefone}\n`;
+    if (r.descricao) {
+      const desc = r.descricao.length > 120 ? r.descricao.substring(0, 120) + '...' : r.descricao;
+      msg += `${desc}\n`;
+    }
+    msg += `🗺️ ${r.mapsLink}\n\n`;
+  }
+
+  msg += '_📍 Sua localização fica salva por 30 min. Pode pedir mais buscas!_';
+  return msg;
 }
 
 async function handleDefinirLimite(usuarioId, resultado) {
@@ -1777,4 +1855,4 @@ async function handleCSVImport(usuarioId, csvContent) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, mensagemBoasVindas };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, mensagemBoasVindas };

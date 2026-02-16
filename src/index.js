@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, mensagemBoasVindas } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, mensagemBoasVindas } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
@@ -98,6 +98,20 @@ client.on('message', async (msg) => {
       await msg.reply('❌ Erro ao processar o áudio. Tente novamente ou envie por texto.');
       return;
     }
+  } else if (msg.type === 'location') {
+    // Processar localização compartilhada
+    try {
+      const loc = msg.location;
+      if (loc && loc.latitude && loc.longitude) {
+        console.log(`[LOCALIZAÇÃO] Recebida de ${usuarioId}: lat=${loc.latitude}, lng=${loc.longitude}`);
+        const resposta = await handleLocationMessage(usuarioId, loc);
+        await msg.reply(resposta);
+      }
+    } catch (error) {
+      console.error('[LOCALIZAÇÃO] Erro ao processar localização:', error.message);
+      await msg.reply('❌ Erro ao processar a localização. Tente enviar novamente.');
+    }
+    return;
   } else if (msg.hasMedia && msg.type === 'image') {
     // Processar imagens (boletos, notas fiscais, cupons)
     try {
