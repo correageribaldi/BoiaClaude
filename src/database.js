@@ -842,6 +842,37 @@ async function listarContatosCompartilhados(usuarioId) {
   return result.rows.map(r => r.contato_id);
 }
 
+async function obterVinculoSecundario(usuarioId) {
+  const variantes = gerarVariantesContatoId(usuarioId);
+  if (variantes.length === 0) return null;
+
+  const result = await pool.query(
+    `SELECT usuario_principal_id, contato_id
+     FROM contatos_compartilhados
+     WHERE contato_id = ANY($1::text[])
+     LIMIT 1`,
+    [variantes]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function removerContatoCompartilhado(usuarioId, contatoId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const variantesContato = gerarVariantesContatoId(contatoId);
+  if (variantesContato.length === 0) return null;
+
+  const result = await pool.query(
+    `DELETE FROM contatos_compartilhados
+     WHERE usuario_principal_id = $1
+       AND contato_id = ANY($2::text[])
+     RETURNING contato_id`,
+    [uid, variantesContato]
+  );
+
+  return result.rows[0] || null;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -880,5 +911,7 @@ module.exports = {
   buscarLembretesGeraisPorPeriodo,
   vincularContato,
   listarContatosCompartilhados,
+  obterVinculoSecundario,
+  removerContatoCompartilhado,
   resolverUsuarioPrincipal,
 };

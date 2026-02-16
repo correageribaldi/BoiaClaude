@@ -142,6 +142,30 @@ function limparConfirmacao(usuarioId) {
   confirmacoesPendentes.delete(usuarioId);
 }
 
+// Estado para remoção de contato compartilhado por seleção (expira em 5 min)
+const removerContatoPendente = new Map();
+
+function salvarRemocaoContatoPendente(usuarioId, dados) {
+  removerContatoPendente.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 5 * 60 * 1000,
+  });
+}
+
+function obterRemocaoContatoPendente(usuarioId) {
+  const dados = removerContatoPendente.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    removerContatoPendente.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparRemocaoContatoPendente(usuarioId) {
+  removerContatoPendente.delete(usuarioId);
+}
+
 function parseValor(str) {
   const limpo = str.replace(/r\$\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
   const valor = parseFloat(limpo);
@@ -392,6 +416,7 @@ _Exemplos:_
 • *categorias* - Ver categorias disponíveis
 • *adicionar contato* <número> - Compartilhar a conta com outro WhatsApp
 • *contatos* - Ver contatos vinculados
+• *remover contato* - Remover um contato compartilhado (seleção por número)
 • Ou envie o contato anexado pelo WhatsApp para vincular automaticamente
 • *ajuda* - Mostrar esta mensagem
 
@@ -439,6 +464,12 @@ async function handleMessage(usuarioId, texto) {
     return await handleConfirmacaoImagem(usuarioId, lower, confirmacao);
   }
 
+  // Verificar se há seleção pendente para remover contato compartilhado
+  const remocaoContato = obterRemocaoContatoPendente(usuarioId);
+  if (remocaoContato) {
+    return await handleEscolhaRemocaoContato(usuarioId, msg, remocaoContato);
+  }
+
   // Verificar se está no fluxo Análise Financeira
   const analise = obterAnaliseFinanceira(usuarioId);
   if (analise) {
@@ -483,6 +514,14 @@ async function handleMessage(usuarioId, texto) {
   // Comando: listar contatos vinculados
   if (lower === 'contatos' || lower === 'meus contatos' || lower === 'contatos vinculados') {
     return await handleListarContatos(usuarioId);
+  }
+
+  // Comando: remover contato compartilhado
+  if (
+    lower === 'remover contato' || lower === 'excluir contato' ||
+    lower.startsWith('remover contato ') || lower.startsWith('excluir contato ')
+  ) {
+    return await handleIniciarRemocaoContato(usuarioId, msg);
   }
 
   // Comando: despesa / receita (direto)
@@ -745,6 +784,71 @@ async function handleListarContatos(usuarioId) {
     msg += `• ${formatarContatoExibicao(contato)}\n`;
   }
   return msg;
+}
+
+async function handleIniciarRemocaoContato(usuarioId, msg) {
+  const vinculo = await db.obterVinculoSecundario(usuarioId);
+  if (vinculo && vinculo.usuario_principal_id !== usuarioId) {
+    return '❌ Apenas o usuário master pode remover contatos compartilhados.';
+  }
+
+  const contatos = await db.listarContatosCompartilhados(usuarioId);
+  if (!contatos || contatos.length === 0) {
+    return '👥 Você não tem contatos compartilhados para remover.';
+  }
+
+  const matchIndice = msg.trim().match(/\b(\d{1,2})$/);
+  if (matchIndice) {
+    const indice = parseInt(matchIndice[1], 10);
+    if (!indice || indice < 1 || indice > contatos.length) {
+      return `❌ Escolha inválida. Digite um número de 1 a ${contatos.length}.`;
+    }
+
+    const contatoEscolhido = contatos[indice - 1];
+    const removido = await db.removerContatoCompartilhado(usuarioId, contatoEscolhido);
+    if (!removido) {
+      return '❌ Não consegui remover esse contato agora. Tente novamente.';
+    }
+    return `✅ Contato *${formatarContatoExibicao(contatoEscolhido)}* removido dos compartilhados.`;
+  }
+
+  salvarRemocaoContatoPendente(usuarioId, { contatos });
+
+  let texto = '👥 *Contatos compartilhados:*\n\n';
+  contatos.forEach((contato, i) => {
+    texto += `${i + 1}. ${formatarContatoExibicao(contato)}\n`;
+  });
+
+  texto += '\nDigite o número do contato que você quer remover.\n_Ex: 1_\n\n_Para cancelar: digite "cancelar"_';
+  return texto;
+}
+
+async function handleEscolhaRemocaoContato(usuarioId, msg, estado) {
+  const lower = msg.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
+    limparRemocaoContatoPendente(usuarioId);
+    return '✅ Remoção de contato cancelada.';
+  }
+
+  const indice = parseInt(lower, 10);
+  if (!indice || isNaN(indice)) {
+    return `Digite apenas o número do contato que deseja remover (1 a ${estado.contatos.length}).\n_Para cancelar: "cancelar"_`;
+  }
+
+  if (indice < 1 || indice > estado.contatos.length) {
+    return `❌ Número inválido. Escolha entre 1 e ${estado.contatos.length}.`;
+  }
+
+  const contatoEscolhido = estado.contatos[indice - 1];
+  const removido = await db.removerContatoCompartilhado(usuarioId, contatoEscolhido);
+  if (!removido) {
+    limparRemocaoContatoPendente(usuarioId);
+    return '❌ Não consegui remover esse contato agora. Tente novamente com *remover contato*.';
+  }
+
+  limparRemocaoContatoPendente(usuarioId);
+  return `✅ Contato *${formatarContatoExibicao(contatoEscolhido)}* removido dos compartilhados.`;
 }
 
 async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
