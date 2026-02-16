@@ -1799,6 +1799,156 @@ async function finalizarPontoZero(usuarioId, estado) {
 
 // ========== ANÁLISE FINANCEIRA 50/30/20 ==========
 
+// Mapeamento de palavras-chave para reclassificação de recorrentes
+const PALAVRAS_CATEGORIA = {
+  'aluguel': 'Moradia', 'condominio': 'Moradia', 'condomínio': 'Moradia', 'iptu': 'Moradia',
+  'luz': 'Moradia', 'energia': 'Moradia', 'agua': 'Moradia', 'água': 'Moradia', 'gas': 'Moradia', 'gás': 'Moradia',
+  'internet': 'Moradia', 'telefone': 'Moradia', 'celular': 'Moradia',
+  'mercado': 'Alimentacao', 'supermercado': 'Alimentacao', 'feira': 'Alimentacao',
+  'gasolina': 'Transporte', 'combustivel': 'Transporte', 'estacionamento': 'Transporte', 'uber': 'Transporte',
+  'academia': 'Saude', 'plano de saude': 'Saude', 'plano de saúde': 'Saude', 'farmacia': 'Saude', 'farmácia': 'Saude',
+  'escola': 'Educacao', 'faculdade': 'Educacao', 'curso': 'Educacao', 'mensalidade': 'Educacao',
+  'netflix': 'Lazer', 'spotify': 'Lazer', 'streaming': 'Lazer', 'assinatura': 'Lazer',
+  'investimento': 'Investimentos', 'poupanca': 'Investimentos', 'poupança': 'Investimentos',
+  'salario': 'Salario', 'salário': 'Salario',
+};
+
+function detectarRecorrentes(transacoes) {
+  const grupos = {};
+  for (const t of transacoes) {
+    const chave = `${t.descricao}|${t.tipo}`;
+    if (!grupos[chave]) grupos[chave] = [];
+    grupos[chave].push(t);
+  }
+
+  const totalMeses = new Set(transacoes.map(t => t.data.substring(0, 7))).size;
+  const recorrentes = [];
+
+  for (const [chave, items] of Object.entries(grupos)) {
+    const meses = new Set(items.map(t => t.data.substring(0, 7)));
+    if (meses.size < 2) continue;
+
+    const valorMedio = items.reduce((s, t) => s + t.valor, 0) / items.length;
+    const diaMedio = Math.round(items.reduce((s, t) => s + parseInt(t.data.split('-')[2]), 0) / items.length);
+
+    // Valores similares (variação < 20%)
+    const valoresProximos = items.every(t => Math.abs(t.valor - valorMedio) / valorMedio < 0.20);
+    if (!valoresProximos) continue;
+
+    recorrentes.push({
+      descricao: items[0].descricao,
+      tipo: items[0].tipo,
+      categoria: items[0].categoria,
+      valorMedio: Math.round(valorMedio * 100) / 100,
+      diaMedio,
+      mesesEncontrados: meses.size,
+      totalMeses,
+    });
+  }
+
+  // Despesas primeiro, depois por valor decrescente
+  return recorrentes.sort((a, b) => {
+    if (a.tipo !== b.tipo) return a.tipo === 'despesa' ? -1 : 1;
+    return b.valorMedio - a.valorMedio;
+  });
+}
+
+function interpretarRespostaRecorrente(texto) {
+  const lower = texto.toLowerCase().trim();
+
+  // Negação
+  if (['não', 'nao', 'n', 'nope', 'pular', 'skip'].includes(lower)) {
+    return { acao: 'pular' };
+  }
+
+  // Pular todos
+  if (['pronto', 'pular todos', 'chega', 'pular tudo', 'seguir'].includes(lower)) {
+    return { acao: 'pular_todos' };
+  }
+
+  // Confirmação simples
+  if (['sim', 's', 'pode', 'ok', 'é', 'eh', 'isso'].includes(lower)) {
+    return { acao: 'confirmar' };
+  }
+
+  // Texto com "sim" + nome: "sim, é o aluguel" ou "sim é meu salário"
+  const matchSimNome = lower.match(/^(?:sim|s|é|eh),?\s*(?:é|eh|e)?\s*(?:o|a|meu|minha)?\s*(.+)$/);
+  if (matchSimNome) {
+    const nome = matchSimNome[1].trim();
+    return extrairNomeECategoria(nome);
+  }
+
+  // Texto livre = nome personalizado
+  return extrairNomeECategoria(lower);
+}
+
+function extrairNomeECategoria(texto) {
+  // Capitalizar primeira letra
+  const nome = texto.charAt(0).toUpperCase() + texto.slice(1);
+
+  // Tentar detectar categoria pelo nome
+  for (const [palavra, cat] of Object.entries(PALAVRAS_CATEGORIA)) {
+    if (texto.includes(palavra)) {
+      return { acao: 'renomear', nome, categoria: cat };
+    }
+  }
+
+  return { acao: 'renomear', nome, categoria: null };
+}
+
+function montarPerguntaRecorrente(item, indice, total) {
+  const emoji = item.tipo === 'despesa' ? '🔴' : '🟢';
+  const tipoLabel = item.tipo === 'despesa' ? 'gasto' : 'receita';
+
+  let msg = `${emoji} *${indice + 1}/${total}* — *${item.descricao}* (${item.categoria})\n`;
+  msg += `💰 ${fmt.formatarMoeda(item.valorMedio)}/mês | 📅 dia ~${item.diaMedio}\n`;
+  msg += `_Aparece em ${item.mesesEncontrados} de ${item.totalMeses} meses_\n\n`;
+  msg += `Esse ${tipoLabel} é fixo? *(sim/não)*\n`;
+  msg += `_Ou escreva o nome correto (ex: "é o aluguel")_`;
+
+  return msg;
+}
+
+async function confirmarRecorrente(usuarioId, item) {
+  const dataStr = calcularDataPendente(item.diaMedio);
+  await db.adicionarTransacao(usuarioId, item.tipo, item.valorMedio, item.descricao, item.categoria, dataStr, 'pendente');
+
+  const labelPagar = item.tipo === 'despesa' ? '💸 Pagar' : '💰 Receber';
+  await db.criarLembreteRecorrente(
+    usuarioId,
+    `${labelPagar}: ${item.descricao} - ${fmt.formatarMoeda(item.valorMedio)}`,
+    '09:00',
+    'mensal',
+    null,
+    item.diaMedio || 1,
+    null
+  );
+}
+
+async function finalizarRecorrentes(usuarioId, estado) {
+  const confirmados = estado.recorrentesConfirmados || [];
+  const despFixas = confirmados.filter(r => r.tipo === 'despesa');
+  const recFixas = confirmados.filter(r => r.tipo === 'receita');
+
+  let msg = '';
+  if (confirmados.length > 0) {
+    msg = `✅ *${confirmados.length} ${confirmados.length === 1 ? 'item fixo cadastrado' : 'itens fixos cadastrados'}!*\n`;
+    if (despFixas.length > 0) msg += `🔴 ${despFixas.length} despesa${despFixas.length > 1 ? 's' : ''} fixa${despFixas.length > 1 ? 's' : ''}\n`;
+    if (recFixas.length > 0) msg += `🟢 ${recFixas.length} receita${recFixas.length > 1 ? 's' : ''} fixa${recFixas.length > 1 ? 's' : ''}\n`;
+    msg += '\n';
+  }
+
+  msg += '⏳ Agora vou fazer a análise 50/30/20...\n\n';
+
+  // Executar a análise com as transações salvas no estado
+  const analise = await gerarRelatorio503020(usuarioId, estado);
+
+  if (typeof analise === 'object' && analise.texto) {
+    return { texto: msg + analise.texto, grafico: analise.grafico };
+  }
+  return msg + analise;
+}
+
 async function iniciarAnaliseFinanceira(usuarioId) {
   salvarAnaliseFinanceira(usuarioId, {
     etapa: 'aguardando_csv',
@@ -1857,6 +2007,66 @@ async function handleAnaliseFinanceiraMsg(usuarioId, texto, estado) {
     return '📄 Estou esperando um extrato em CSV.\n\nEnvia o arquivo ou digite *analisar* pra começar com o que já temos.\n_Digite *cancelar* pra sair._';
   }
 
+  if (estado.etapa === 'confirmando_recorrentes') {
+    const resposta = interpretarRespostaRecorrente(texto);
+    const recorrentes = estado.recorrentesDetectados;
+    const idx = estado.recorrenteAtual;
+    const itemAtual = recorrentes[idx];
+
+    if (resposta.acao === 'pular_todos') {
+      // Salvar os já confirmados e ir pra análise
+      for (const item of estado.recorrentesConfirmados || []) {
+        await confirmarRecorrente(usuarioId, item);
+      }
+      return await finalizarRecorrentes(usuarioId, estado);
+    }
+
+    if (resposta.acao === 'pular') {
+      // Próximo item
+    } else if (resposta.acao === 'confirmar') {
+      if (!estado.recorrentesConfirmados) estado.recorrentesConfirmados = [];
+      estado.recorrentesConfirmados.push(itemAtual);
+    } else if (resposta.acao === 'renomear') {
+      const itemRenomeado = {
+        ...itemAtual,
+        descricao: resposta.nome,
+        categoria: resposta.categoria || itemAtual.categoria,
+      };
+      if (!estado.recorrentesConfirmados) estado.recorrentesConfirmados = [];
+      estado.recorrentesConfirmados.push(itemRenomeado);
+    }
+
+    // Feedback da ação
+    let feedback = '';
+    if (resposta.acao === 'pular') {
+      feedback = '⏭️ Pulei.\n\n';
+    } else {
+      const nomeUsado = resposta.acao === 'renomear' ? resposta.nome : itemAtual.descricao;
+      const catUsada = resposta.acao === 'renomear' && resposta.categoria ? resposta.categoria : itemAtual.categoria;
+      feedback = `✅ *${nomeUsado}* registrado como ${itemAtual.tipo === 'despesa' ? 'despesa' : 'receita'} fixa! (${catUsada}, dia ${itemAtual.diaMedio})\n\n`;
+    }
+
+    // Avançar para próximo
+    estado.recorrenteAtual = idx + 1;
+
+    if (estado.recorrenteAtual >= recorrentes.length) {
+      // Acabaram os recorrentes - salvar confirmados e fazer análise
+      for (const item of estado.recorrentesConfirmados || []) {
+        await confirmarRecorrente(usuarioId, item);
+      }
+      const resultado = await finalizarRecorrentes(usuarioId, estado);
+      if (typeof resultado === 'object' && resultado.texto) {
+        return { texto: feedback + resultado.texto, grafico: resultado.grafico };
+      }
+      return feedback + resultado;
+    }
+
+    // Mostrar próximo
+    salvarAnaliseFinanceira(usuarioId, estado);
+    const proxima = montarPerguntaRecorrente(recorrentes[estado.recorrenteAtual], estado.recorrenteAtual, recorrentes.length);
+    return feedback + proxima;
+  }
+
   if (estado.etapa === 'confirmando_limites') {
     if (['sim', 's', 'pode', 'bora', 'quero', 'ok', 'pode ser'].includes(lower)) {
       return await criarLimitesAnalise(usuarioId, estado.limitesSugeridos);
@@ -1887,6 +2097,35 @@ async function executarAnalise503020(usuarioId, estado) {
       t.descricao = info.descricao || t.descricaoOriginal;
     }
   }
+
+  // Detectar recorrentes antes de mostrar a análise
+  const recorrentes = detectarRecorrentes(transacoes);
+
+  if (recorrentes.length > 0) {
+    console.log(`[ANÁLISE 50/30/20] ${recorrentes.length} transações recorrentes detectadas.`);
+
+    // Salvar estado com recorrentes e transacoes categorizadas
+    salvarAnaliseFinanceira(usuarioId, {
+      etapa: 'confirmando_recorrentes',
+      transacoes,
+      recorrentesDetectados: recorrentes,
+      recorrenteAtual: 0,
+      recorrentesConfirmados: [],
+    });
+
+    let msg = `🔄 *Identifiquei ${recorrentes.length} ${recorrentes.length === 1 ? 'gasto que parece' : 'gastos que parecem'} ser FIXO${recorrentes.length > 1 ? 'S' : ''}!*\n\n`;
+    msg += `Vou te mostrar um a um pra você confirmar.\n_Digite *pronto* a qualquer momento pra pular os restantes._\n\n`;
+    msg += montarPerguntaRecorrente(recorrentes[0], 0, recorrentes.length);
+
+    return msg;
+  }
+
+  // Sem recorrentes, ir direto pra análise
+  return await gerarRelatorio503020(usuarioId, estado);
+}
+
+async function gerarRelatorio503020(usuarioId, estado) {
+  const transacoes = estado.transacoes;
 
   // Separar receitas e despesas
   const receitas = transacoes.filter(t => t.tipo === 'receita');
@@ -1988,7 +2227,7 @@ async function executarAnalise503020(usuarioId, estado) {
     msg += `💡 *DIAGNÓSTICO:*\n${diagnostico}\n\n`;
   }
 
-  // Calcular limites sugeridos (distribuir a renda por categoria proporcionalmente dentro de cada bucket)
+  // Calcular limites sugeridos
   const limitesSugeridos = {};
   for (const [bucket, config] of Object.entries(REGRA_503020)) {
     const orcamentoBucket = receitaTotal * config.meta;
@@ -1997,7 +2236,6 @@ async function executarAnalise503020(usuarioId, estado) {
     if (categsComGasto.length > 0) {
       const totalBucket = categsComGasto.reduce((acc, c) => acc + gastosPorCategoria[c], 0);
       for (const cat of categsComGasto) {
-        // Proporção do gasto real, mas limitada pelo orçamento do bucket
         const proporcao = gastosPorCategoria[cat] / totalBucket;
         limitesSugeridos[cat] = Math.round(orcamentoBucket * proporcao);
       }
