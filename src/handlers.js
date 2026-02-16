@@ -234,31 +234,49 @@ function formatarContatoExibicao(contatoId) {
 
 async function vincularContatoPorNumero(usuarioId, numeroInformado) {
   if (!numeroInformado) {
-    return '❌ Informe o número do contato.\n\nExemplo: *adicionar contato 51999998888*';
+    return {
+      texto: '❌ Informe o número do contato.\n\nExemplo: *adicionar contato 51999998888*',
+      vinculoCriado: false,
+    };
   }
 
   const contatoId = normalizarNumeroContato(numeroInformado);
   if (!contatoId) {
-    return '❌ Número inválido. Envie com DDD e país.\n\nExemplo: *adicionar contato 5511999998888*';
+    return {
+      texto: '❌ Número inválido. Envie com DDD e país.\n\nExemplo: *adicionar contato 5511999998888*',
+      vinculoCriado: false,
+    };
   }
 
   const resultado = await db.vincularContato(usuarioId, contatoId);
   const numeroFmt = formatarContatoExibicao(contatoId);
 
   if (resultado.status === 'self') {
-    return '❌ Esse número é o seu próprio contato.';
+    return { texto: '❌ Esse número é o seu próprio contato.', vinculoCriado: false };
   }
   if (resultado.status === 'invalid_contact') {
-    return '❌ Não consegui validar esse número de contato.';
+    return { texto: '❌ Não consegui validar esse número de contato.', vinculoCriado: false };
   }
   if (resultado.status === 'already_linked') {
-    return `ℹ️ O contato *${numeroFmt}* já está vinculado à sua conta.`;
+    return {
+      texto: `ℹ️ O contato *${numeroFmt}* já está vinculado à sua conta.`,
+      vinculoCriado: false,
+      contatoId,
+    };
   }
   if (resultado.status === 'linked_to_other') {
-    return `❌ O contato *${numeroFmt}* já está vinculado a outra conta do Cronos.`;
+    return {
+      texto: `❌ O contato *${numeroFmt}* já está vinculado a outra conta do Cronos.`,
+      vinculoCriado: false,
+      contatoId,
+    };
   }
 
-  return `✅ Contato *${numeroFmt}* vinculado com sucesso!\n\nQuando essa pessoa mandar mensagem pro Cronos, ela vai acessar a mesma conta e as mesmas movimentações.`;
+  return {
+    texto: `✅ Contato *${numeroFmt}* vinculado com sucesso!\n\nQuando essa pessoa mandar mensagem pro Cronos, ela vai acessar a mesma conta e as mesmas movimentações.`,
+    vinculoCriado: true,
+    contatoId,
+  };
 }
 
 function mensagemBoasVindas(nome) {
@@ -386,6 +404,23 @@ Você também pode escrever naturalmente:
 
 🎤 *Áudio:* Envie mensagens de voz!
 📸 *Imagens:* Envie fotos de boletos e notas!`;
+}
+
+function mensagemConviteCompartilhado(nomeNovoUsuario, nomeUsuarioMaster) {
+  const nomeNovo = nomeNovoUsuario || 'tudo bem';
+  const nomeMaster = nomeUsuarioMaster || 'um usuário';
+
+  return `Olá, ${nomeNovo}! 👋
+
+O ${nomeMaster} te adicionou como usuário secundário no *Cronos Assistente Pessoal*.
+
+A partir de agora, tudo que você registrar aqui será compartilhado com o usuário master e vice-versa.
+
+Veja tudo o que você pode fazer:
+
+${ajudaMsg()}
+
+_Aproveite!_`;
 }
 
 async function handleMessage(usuarioId, texto) {
@@ -646,7 +681,13 @@ async function handleAdicionarContato(usuarioId, msg) {
     .replace(/^compartilhar com\s*/i, '')
     .trim();
 
-  return await vincularContatoPorNumero(usuarioId, numero);
+  const resultado = await vincularContatoPorNumero(usuarioId, numero);
+  return {
+    texto: resultado.texto,
+    notificarContatos: resultado.vinculoCriado && resultado.contatoId
+      ? [{ contatoId: resultado.contatoId }]
+      : [],
+  };
 }
 
 async function handleContatoCompartilhado(usuarioId, vcardsRaw) {
@@ -660,7 +701,10 @@ async function handleContatoCompartilhado(usuarioId, vcardsRaw) {
   }
 
   if (numeros.size === 0) {
-    return '❌ Não consegui extrair o número deste contato.\n\nTente enviar novamente ou use: *adicionar contato 5511999998888*';
+    return {
+      texto: '❌ Não consegui extrair o número deste contato.\n\nTente enviar novamente ou use: *adicionar contato 5511999998888*',
+      notificarContatos: [],
+    };
   }
 
   const resultados = [];
@@ -670,10 +714,23 @@ async function handleContatoCompartilhado(usuarioId, vcardsRaw) {
   }
 
   if (resultados.length === 1) {
-    return resultados[0];
+    return {
+      texto: resultados[0].texto,
+      notificarContatos: resultados[0].vinculoCriado && resultados[0].contatoId
+        ? [{ contatoId: resultados[0].contatoId }]
+        : [],
+    };
   }
 
-  return `✅ Contatos processados:\n\n${resultados.map(r => `• ${r}`).join('\n\n')}`;
+  const textos = resultados.map(r => `• ${r.texto}`).join('\n\n');
+  const notificarContatos = resultados
+    .filter(r => r.vinculoCriado && r.contatoId)
+    .map(r => ({ contatoId: r.contatoId }));
+
+  return {
+    texto: `✅ Contatos processados:\n\n${textos}`,
+    notificarContatos,
+  };
 }
 
 async function handleListarContatos(usuarioId) {
@@ -2586,4 +2643,4 @@ async function handleCSVImport(usuarioId, csvContent) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado };

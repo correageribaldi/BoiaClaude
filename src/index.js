@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
@@ -50,6 +50,53 @@ client.on('disconnected', (reason) => {
   console.log('   Reiniciando...');
   client.initialize();
 });
+
+async function notificarContatosCompartilhados(usuarioPrincipalId, notificarContatos) {
+  if (!Array.isArray(notificarContatos) || notificarContatos.length === 0) return;
+
+  let nomeMaster = null;
+  try {
+    const usuarioMaster = await db.buscarUsuario(usuarioPrincipalId);
+    nomeMaster = usuarioMaster?.nome || null;
+  } catch (_) {}
+
+  for (const item of notificarContatos) {
+    const contatoId = item?.contatoId;
+    if (!contatoId || contatoId === usuarioPrincipalId) continue;
+
+    try {
+      let nomeNovo = null;
+      try {
+        const contatoNovo = await client.getContactById(contatoId);
+        nomeNovo = contatoNovo?.pushname || contatoNovo?.name || null;
+      } catch (_) {}
+
+      const convite = mensagemConviteCompartilhado(nomeNovo, nomeMaster);
+      await client.sendMessage(contatoId, convite);
+      console.log(`[SHARED] convite enviado para ${contatoId} (master=${usuarioPrincipalId})`);
+    } catch (err) {
+      console.error(`[SHARED] erro ao enviar convite para ${contatoId}:`, err.message);
+    }
+  }
+}
+
+async function responderMensagem(msg, usuarioId, resposta) {
+  if (typeof resposta === 'object' && resposta?.texto && resposta?.grafico) {
+    await msg.reply(resposta.texto);
+    const media = new MessageMedia('image/png', resposta.grafico.toString('base64'), 'grafico.png');
+    await msg.reply(media);
+    console.log(`[GRAFICO] Gráfico enviado para ${usuarioId}`);
+    return;
+  }
+
+  if (typeof resposta === 'object' && resposta?.texto) {
+    await msg.reply(resposta.texto);
+    await notificarContatosCompartilhados(usuarioId, resposta.notificarContatos);
+    return;
+  }
+
+  await msg.reply(resposta);
+}
 
 client.on('message', async (msg) => {
   // Ignorar mensagens de grupo e status
@@ -134,7 +181,7 @@ client.on('message', async (msg) => {
       }
 
       const resposta = await handleContatoCompartilhado(usuarioId, vcards);
-      await msg.reply(resposta);
+      await responderMensagem(msg, usuarioId, resposta);
     } catch (error) {
       console.error('[CONTATO] Erro ao processar vCard:', error.message);
       await msg.reply('❌ Não consegui processar esse contato agora. Tente novamente ou use: *adicionar contato 5511999998888*');
@@ -196,20 +243,7 @@ client.on('message', async (msg) => {
 
   try {
     const resposta = await handleMessage(usuarioId, texto);
-
-    // Verificar se a resposta contém gráfico (objeto) ou é só texto (string)
-    if (typeof resposta === 'object' && resposta.texto && resposta.grafico) {
-      // Enviar texto primeiro
-      await msg.reply(resposta.texto);
-
-      // Enviar gráfico como imagem
-      const media = new MessageMedia('image/png', resposta.grafico.toString('base64'), 'grafico.png');
-      await msg.reply(media);
-      console.log(`[GRAFICO] Gráfico enviado para ${usuarioId}`);
-    } else {
-      // Resposta normal (só texto)
-      await msg.reply(resposta);
-    }
+    await responderMensagem(msg, usuarioId, resposta);
   } catch (error) {
     console.error('Erro ao processar mensagem:', error);
     await msg.reply('❌ Ocorreu um erro ao processar sua mensagem. Tente novamente.');
