@@ -650,6 +650,10 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
     if (dataFinal && dataFinal.includes('/')) {
       dataFinal = parseData(dataFinal);
     }
+    // Validar formato YYYY-MM-DD (descartar datas inválidas como templates "YYYY-MM-20")
+    if (dataFinal && !/^\d{4}-\d{2}-\d{2}$/.test(dataFinal)) {
+      dataFinal = null;
+    }
 
     const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
     const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);

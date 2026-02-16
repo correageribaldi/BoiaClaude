@@ -137,9 +137,10 @@ REGRA DE OURO DO STATUS:
 
 REGRA IMPORTANTE - "ME LEMBRE" COM DINHEIRO:
 - Se o usuário diz "me lembre" + PAGAR/RECEBER/COBRAR + VALOR → use "transacao" com status "pendente"
-  - "me lembre de pagar a conta de luz dia 20, 150 reais" → {"acao": "transacao", "tipo": "despesa", "valor": 150, "descricao": "Conta de luz", "categoria": "Moradia", "data": "YYYY-MM-20", "status": "pendente"}
-  - "me lembra que tenho que pagar 500 do cartão dia 10" → {"acao": "transacao", "tipo": "despesa", "valor": 500, "descricao": "Cartão de crédito", "categoria": "Outros", "data": "YYYY-MM-10", "status": "pendente"}
-  - "não esquecer de receber 200 do João dia 25" → {"acao": "transacao", "tipo": "receita", "valor": 200, "descricao": "Receber do João", "categoria": "Outros", "data": "YYYY-MM-25", "status": "pendente"}
+  - "me lembre de pagar a conta de luz dia 20, 150 reais" → {"acao": "transacao", "tipo": "despesa", "valor": 150, "descricao": "Conta de luz", "categoria": "Moradia", "data": "calcule a data do dia 20 conforme regras acima", "status": "pendente"}
+  - "me lembra que tenho que pagar 500 do cartão dia 10" → {"acao": "transacao", "tipo": "despesa", "valor": 500, "descricao": "Cartão de crédito", "categoria": "Outros", "data": "calcule a data do dia 10 conforme regras acima", "status": "pendente"}
+  - "não esquecer de receber 200 do João dia 25" → {"acao": "transacao", "tipo": "receita", "valor": 200, "descricao": "Receber do João", "categoria": "Outros", "data": "calcule a data do dia 25 conforme regras acima", "status": "pendente"}
+  - IMPORTANTE: o campo "data" DEVE ser uma data real no formato YYYY-MM-DD (ex: "2026-02-20"), NUNCA use templates como "YYYY-MM-20"
 - Se o usuário diz "me lembre" SEM valor financeiro → use "lembrete" (ação 8)
   - "me lembre de ligar pro dentista" → lembrete (não tem valor financeiro)
   - "me lembra de comprar leite" → lembrete (não tem valor financeiro)
