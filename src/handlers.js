@@ -203,12 +203,33 @@ function extrairNumerosDeVCard(vcardText) {
 
 function formatarContatoExibicao(contatoId) {
   const digits = (contatoId || '').replace(/\D/g, '');
-  if (digits.length < 12) return contatoId;
-  const pais = digits.slice(0, digits.length - 11);
-  const ddd = digits.slice(-11, -9);
-  const inicio = digits.slice(-9, -5);
-  const fim = digits.slice(-4);
-  return `+${pais} (${ddd}) ${inicio}-${fim}`;
+  if (!digits) return contatoId;
+
+  // BR com código do país (55 + DDD + número local 8/9 dígitos)
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    const ddd = digits.slice(2, 4);
+    const local = digits.slice(4);
+    if (local.length === 9) {
+      return `+55 (${ddd}) ${local.slice(0, 5)}-${local.slice(5)}`;
+    }
+    if (local.length === 8) {
+      return `+55 (${ddd}) ${local.slice(0, 4)}-${local.slice(4)}`;
+    }
+  }
+
+  // BR sem código do país
+  if (digits.length === 11 || digits.length === 10) {
+    const ddd = digits.slice(0, 2);
+    const local = digits.slice(2);
+    if (local.length === 9) {
+      return `(${ddd}) ${local.slice(0, 5)}-${local.slice(5)}`;
+    }
+    if (local.length === 8) {
+      return `(${ddd}) ${local.slice(0, 4)}-${local.slice(4)}`;
+    }
+  }
+
+  return `+${digits}`;
 }
 
 async function vincularContatoPorNumero(usuarioId, numeroInformado) {
