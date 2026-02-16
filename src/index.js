@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
@@ -110,6 +110,24 @@ client.on('message', async (msg) => {
     } catch (error) {
       console.error('[LOCALIZAÇÃO] Erro ao processar localização:', error.message);
       await msg.reply('❌ Erro ao processar a localização. Tente enviar novamente.');
+    }
+    return;
+  } else if (msg.type === 'vcard' || msg.type === 'multi_vcard') {
+    // Processar contato anexado (vCard) para vínculo de conta compartilhada
+    try {
+      const vcards = [];
+      if (Array.isArray(msg.vCards) && msg.vCards.length > 0) {
+        vcards.push(...msg.vCards);
+      }
+      if (msg.body) {
+        vcards.push(msg.body);
+      }
+
+      const resposta = await handleContatoCompartilhado(usuarioId, vcards);
+      await msg.reply(resposta);
+    } catch (error) {
+      console.error('[CONTATO] Erro ao processar vCard:', error.message);
+      await msg.reply('❌ Não consegui processar esse contato agora. Tente novamente ou use: *adicionar contato 5511999998888*');
     }
     return;
   } else if (msg.hasMedia && msg.type === 'image') {

@@ -180,6 +180,27 @@ function normalizarNumeroContato(input) {
   return `${digits}@c.us`;
 }
 
+function extrairNumerosDeVCard(vcardText) {
+  if (!vcardText || typeof vcardText !== 'string') return [];
+
+  const encontrados = new Set();
+
+  const waidRegex = /waid=(\d{8,20})/gi;
+  let m;
+  while ((m = waidRegex.exec(vcardText)) !== null) {
+    if (m[1]) encontrados.add(m[1]);
+  }
+
+  const telRegex = /^TEL[^:]*:(.+)$/gim;
+  while ((m = telRegex.exec(vcardText)) !== null) {
+    if (!m[1]) continue;
+    const digits = m[1].replace(/\D/g, '');
+    if (digits) encontrados.add(digits);
+  }
+
+  return [...encontrados];
+}
+
 function formatarContatoExibicao(contatoId) {
   const digits = (contatoId || '').replace(/\D/g, '');
   if (digits.length < 12) return contatoId;
@@ -188,6 +209,32 @@ function formatarContatoExibicao(contatoId) {
   const inicio = digits.slice(-9, -5);
   const fim = digits.slice(-4);
   return `+${pais} (${ddd}) ${inicio}-${fim}`;
+}
+
+async function vincularContatoPorNumero(usuarioId, numeroInformado) {
+  if (!numeroInformado) {
+    return '❌ Informe o número do contato.\n\nExemplo: *adicionar contato 51999998888*';
+  }
+
+  const contatoId = normalizarNumeroContato(numeroInformado);
+  if (!contatoId) {
+    return '❌ Número inválido. Envie com DDD e país.\n\nExemplo: *adicionar contato 5511999998888*';
+  }
+
+  const resultado = await db.vincularContato(usuarioId, contatoId);
+  const numeroFmt = formatarContatoExibicao(contatoId);
+
+  if (resultado.status === 'self') {
+    return '❌ Esse número é o seu próprio contato.';
+  }
+  if (resultado.status === 'already_linked') {
+    return `ℹ️ O contato *${numeroFmt}* já está vinculado à sua conta.`;
+  }
+  if (resultado.status === 'linked_to_other') {
+    return `❌ O contato *${numeroFmt}* já está vinculado a outra conta do Cronos.`;
+  }
+
+  return `✅ Contato *${numeroFmt}* vinculado com sucesso!\n\nQuando essa pessoa mandar mensagem pro Cronos, ela vai acessar a mesma conta e as mesmas movimentações.`;
 }
 
 function mensagemBoasVindas(nome) {
@@ -303,6 +350,7 @@ _Exemplos:_
 • *categorias* - Ver categorias disponíveis
 • *adicionar contato* <número> - Compartilhar a conta com outro WhatsApp
 • *contatos* - Ver contatos vinculados
+• Ou envie o contato anexado pelo WhatsApp para vincular automaticamente
 • *ajuda* - Mostrar esta mensagem
 
 💬 *Linguagem natural:*
@@ -574,29 +622,34 @@ async function handleAdicionarContato(usuarioId, msg) {
     .replace(/^compartilhar com\s*/i, '')
     .trim();
 
-  if (!numero) {
-    return '❌ Informe o número do contato.\n\nExemplo: *adicionar contato 51999998888*';
+  return await vincularContatoPorNumero(usuarioId, numero);
+}
+
+async function handleContatoCompartilhado(usuarioId, vcardsRaw) {
+  const vcards = Array.isArray(vcardsRaw) ? vcardsRaw : [vcardsRaw];
+  const numeros = new Set();
+
+  for (const v of vcards) {
+    for (const n of extrairNumerosDeVCard(v)) {
+      numeros.add(n);
+    }
   }
 
-  const contatoId = normalizarNumeroContato(numero);
-  if (!contatoId) {
-    return '❌ Número inválido. Envie com DDD e país.\n\nExemplo: *adicionar contato 5511999998888*';
+  if (numeros.size === 0) {
+    return '❌ Não consegui extrair o número deste contato.\n\nTente enviar novamente ou use: *adicionar contato 5511999998888*';
   }
 
-  const resultado = await db.vincularContato(usuarioId, contatoId);
-  const numeroFmt = formatarContatoExibicao(contatoId);
-
-  if (resultado.status === 'self') {
-    return '❌ Esse número é o seu próprio contato.';
-  }
-  if (resultado.status === 'already_linked') {
-    return `ℹ️ O contato *${numeroFmt}* já está vinculado à sua conta.`;
-  }
-  if (resultado.status === 'linked_to_other') {
-    return `❌ O contato *${numeroFmt}* já está vinculado a outra conta do Cronos.`;
+  const resultados = [];
+  for (const numero of numeros) {
+    const resposta = await vincularContatoPorNumero(usuarioId, numero);
+    resultados.push(resposta);
   }
 
-  return `✅ Contato *${numeroFmt}* vinculado com sucesso!\n\nQuando essa pessoa mandar mensagem pro Cronos, ela vai acessar a mesma conta e as mesmas movimentações.`;
+  if (resultados.length === 1) {
+    return resultados[0];
+  }
+
+  return `✅ Contatos processados:\n\n${resultados.map(r => `• ${r}`).join('\n\n')}`;
 }
 
 async function handleListarContatos(usuarioId) {
@@ -2509,4 +2562,4 @@ async function handleCSVImport(usuarioId, csvContent) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas };

@@ -89,13 +89,31 @@ async function initTables() {
       id SERIAL PRIMARY KEY,
       usuario_id TEXT NOT NULL,
       mensagem TEXT NOT NULL,
-      dispara_em TIMESTAMP NOT NULL,
+      dispara_em TIMESTAMPTZ NOT NULL,
       enviado BOOLEAN NOT NULL DEFAULT FALSE,
       criado_em TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
     CREATE INDEX IF NOT EXISTS idx_lembretes_gerais_disparo
       ON lembretes_gerais(dispara_em, enviado);
+  `);
+
+  // Migração: garantir timezone correto nos lembretes gerais
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'lembretes_gerais'
+          AND column_name = 'dispara_em'
+          AND data_type = 'timestamp without time zone'
+      ) THEN
+        ALTER TABLE lembretes_gerais
+          ALTER COLUMN dispara_em TYPE TIMESTAMPTZ
+          USING dispara_em AT TIME ZONE 'America/Sao_Paulo';
+      END IF;
+    END $$;
   `);
 
   // Tabela para lembretes recorrentes
@@ -469,7 +487,8 @@ async function buscarLembretesParaDisparar() {
 async function listarLembretesGerais(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT id, mensagem, TO_CHAR(dispara_em, 'DD/MM HH24:MI') as horario
+    `SELECT id, mensagem,
+            TO_CHAR(dispara_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') as horario
      FROM lembretes_gerais
      WHERE usuario_id = $1 AND enviado = FALSE AND dispara_em > NOW()
      ORDER BY dispara_em ASC`,
@@ -656,13 +675,14 @@ async function removerLimite(usuarioId, categoria) {
 async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT id, mensagem, TO_CHAR(dispara_em, 'DD/MM HH24:MI') as horario,
-            TO_CHAR(dispara_em, 'YYYY-MM-DD') as data_disparo,
-            TO_CHAR(dispara_em, 'HH24:MI') as hora
+    `SELECT id, mensagem,
+            TO_CHAR(dispara_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') as horario,
+            TO_CHAR(dispara_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') as data_disparo,
+            TO_CHAR(dispara_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') as hora
      FROM lembretes_gerais
      WHERE usuario_id = $1 AND enviado = FALSE
-       AND dispara_em >= $2::timestamp
-       AND dispara_em < ($3::date + interval '1 day')
+       AND dispara_em >= ($2::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+       AND dispara_em < (($3::date + interval '1 day')::timestamp AT TIME ZONE 'America/Sao_Paulo')
      ORDER BY dispara_em ASC`,
     [uid, dataInicio, dataFim]
   );
