@@ -24,14 +24,24 @@ function resolverData(valor) {
   if (!valor) return null;
   const v = valor.toLowerCase().trim();
 
+  console.log(`[resolverData] entrada: "${valor}" → normalizado: "${v}"`);
+
   // Já é YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    console.log(`[resolverData] já é ISO: ${v}`);
+    return v;
+  }
 
   // Obter "hoje" correto no timezone de São Paulo (evita bug UTC vs -03)
-  const hojeISO = dateParaISO(new Date());
+  const agoraRaw = new Date();
+  const hojeISO = dateParaISO(agoraRaw);
   const [anoH, mesH, diaH] = hojeISO.split('-').map(Number);
   // Criar date ao meio-dia para evitar shift de timezone em qualquer operação
   const hoje = new Date(anoH, mesH - 1, diaH, 12, 0, 0);
+
+  console.log(`[resolverData] agoraRaw UTC: ${agoraRaw.toISOString()}`);
+  console.log(`[resolverData] hojeISO (SP): ${hojeISO}`);
+  console.log(`[resolverData] hoje (noon): ${hoje.toISOString()}, getDay()=${hoje.getDay()}`);
 
   // Referências relativas
   if (v === 'hoje') return hojeISO;
@@ -54,12 +64,18 @@ function resolverData(valor) {
   // Dia da semana → próxima ocorrência
   const diaSemanaAlvo = DIAS_SEMANA[v];
   if (diaSemanaAlvo !== undefined) {
-    const diaAtual = hoje.getDay(); // correto pois hoje está no dia certo de SP
+    const diaAtual = hoje.getDay();
     let diff = diaSemanaAlvo - diaAtual;
-    if (diff <= 0) diff += 7; // sempre próxima ocorrência (nunca hoje)
+    if (diff <= 0) diff += 7;
     const d = new Date(hoje);
     d.setDate(d.getDate() + diff);
-    return dateParaISO(d);
+    const resultado = dateParaISO(d);
+
+    console.log(`[resolverData] dia da semana: "${v}" → alvo=${diaSemanaAlvo}, atual=${diaAtual}, diff=${diff}`);
+    console.log(`[resolverData] d após setDate: ${d.toISOString()}`);
+    console.log(`[resolverData] resultado final: ${resultado}`);
+
+    return resultado;
   }
 
   // DD/MM/YYYY
@@ -73,6 +89,7 @@ function resolverData(valor) {
     }
   }
 
+  console.log(`[resolverData] não conseguiu resolver: "${v}"`);
   return null;
 }
 const { pesquisarWeb, pesquisarLocal } = require('./search');
@@ -1392,9 +1409,11 @@ async function handleImageMessage(usuarioId, base64Data, mimetype) {
 }
 
 async function handleLembrete(usuarioId, resultado) {
+  console.log(`[LEMBRETE] resultado da IA:`, JSON.stringify(resultado));
   const { minutos, horario, mensagem } = resultado;
   // Resolver data: converte nomes de dia da semana, referências relativas, etc. em YYYY-MM-DD
   const dataResolvida = resolverData(resultado.data);
+  console.log(`[LEMBRETE] data da IA: "${resultado.data}" → resolvida: "${dataResolvida}"`);
 
   if (!mensagem) {
     return '❌ Não entendi o que devo lembrar. Tente algo como:\n\n_"me lembre daqui 10 minutos de pegar o Noah"_\n_"lembra às 15:00 da reunião"_';
