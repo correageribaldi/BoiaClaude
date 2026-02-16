@@ -165,6 +165,31 @@ function parseData(str) {
   return null;
 }
 
+function normalizarNumeroContato(input) {
+  if (!input) return null;
+  let digits = input.replace(/\D/g, '');
+
+  if (digits.length === 10 || digits.length === 11) {
+    digits = `55${digits}`;
+  }
+
+  if (digits.length < 12 || digits.length > 13) {
+    return null;
+  }
+
+  return `${digits}@c.us`;
+}
+
+function formatarContatoExibicao(contatoId) {
+  const digits = (contatoId || '').replace(/\D/g, '');
+  if (digits.length < 12) return contatoId;
+  const pais = digits.slice(0, digits.length - 11);
+  const ddd = digits.slice(-11, -9);
+  const inicio = digits.slice(-9, -5);
+  const fim = digits.slice(-4);
+  return `+${pais} (${ddd}) ${inicio}-${fim}`;
+}
+
 function mensagemBoasVindas(nome) {
   const nomeExibir = nome || 'amigo(a)';
   return `Fala ${nomeExibir}, aqui é o Cronos, teu Assistente Pessoal. 👋😄
@@ -276,6 +301,8 @@ _Exemplos:_
 🗑️ *Outros:*
 • *excluir* <id> - Excluir um lançamento
 • *categorias* - Ver categorias disponíveis
+• *adicionar contato* <número> - Compartilhar a conta com outro WhatsApp
+• *contatos* - Ver contatos vinculados
 • *ajuda* - Mostrar esta mensagem
 
 💬 *Linguagem natural:*
@@ -336,6 +363,19 @@ async function handleMessage(usuarioId, texto) {
   if (lower === 'categorias') {
     const cats = await db.listarCategorias();
     return `📂 *Categorias disponíveis:*\n\n${cats.map(c => `• ${c}`).join('\n')}`;
+  }
+
+  // Comando: adicionar contato (conta em conjunto)
+  if (
+    lower === 'adicionar contato' || lower === 'vincular contato' || lower === 'compartilhar com' ||
+    lower.startsWith('adicionar contato ') || lower.startsWith('vincular contato ') || lower.startsWith('compartilhar com ')
+  ) {
+    return await handleAdicionarContato(usuarioId, msg);
+  }
+
+  // Comando: listar contatos vinculados
+  if (lower === 'contatos' || lower === 'meus contatos' || lower === 'contatos vinculados') {
+    return await handleListarContatos(usuarioId);
   }
 
   // Comando: despesa / receita (direto)
@@ -525,6 +565,52 @@ async function handleExcluir(usuarioId, msg) {
   }
 
   return `🗑️ Lançamento #${id} excluído com sucesso!`;
+}
+
+async function handleAdicionarContato(usuarioId, msg) {
+  const numero = msg
+    .replace(/^adicionar contato\s*/i, '')
+    .replace(/^vincular contato\s*/i, '')
+    .replace(/^compartilhar com\s*/i, '')
+    .trim();
+
+  if (!numero) {
+    return '❌ Informe o número do contato.\n\nExemplo: *adicionar contato 51999998888*';
+  }
+
+  const contatoId = normalizarNumeroContato(numero);
+  if (!contatoId) {
+    return '❌ Número inválido. Envie com DDD e país.\n\nExemplo: *adicionar contato 5511999998888*';
+  }
+
+  const resultado = await db.vincularContato(usuarioId, contatoId);
+  const numeroFmt = formatarContatoExibicao(contatoId);
+
+  if (resultado.status === 'self') {
+    return '❌ Esse número é o seu próprio contato.';
+  }
+  if (resultado.status === 'already_linked') {
+    return `ℹ️ O contato *${numeroFmt}* já está vinculado à sua conta.`;
+  }
+  if (resultado.status === 'linked_to_other') {
+    return `❌ O contato *${numeroFmt}* já está vinculado a outra conta do Cronos.`;
+  }
+
+  return `✅ Contato *${numeroFmt}* vinculado com sucesso!\n\nQuando essa pessoa mandar mensagem pro Cronos, ela vai acessar a mesma conta e as mesmas movimentações.`;
+}
+
+async function handleListarContatos(usuarioId) {
+  const contatos = await db.listarContatosCompartilhados(usuarioId);
+
+  if (!contatos || contatos.length === 0) {
+    return '👥 Você ainda não tem contatos vinculados.\n\nUse: *adicionar contato 5511999998888*';
+  }
+
+  let msg = '👥 *Contatos vinculados à sua conta:*\n\n';
+  for (const contato of contatos) {
+    msg += `• ${formatarContatoExibicao(contato)}\n`;
+  }
+  return msg;
 }
 
 async function handleConfirmacaoImagem(usuarioId, resposta, dados) {

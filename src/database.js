@@ -4,6 +4,14 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+async function resolverUsuarioPrincipal(usuarioId) {
+  const result = await pool.query(
+    'SELECT usuario_principal_id FROM contatos_compartilhados WHERE contato_id = $1',
+    [usuarioId]
+  );
+  return result.rows[0]?.usuario_principal_id || usuarioId;
+}
+
 async function initTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS categorias (
@@ -139,6 +147,21 @@ async function initTables() {
       ON limites_categoria(usuario_id, ativo);
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contatos_compartilhados (
+      id SERIAL PRIMARY KEY,
+      usuario_principal_id TEXT NOT NULL,
+      contato_id TEXT NOT NULL UNIQUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      CHECK(usuario_principal_id <> contato_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_contatos_compartilhados_principal
+      ON contatos_compartilhados(usuario_principal_id);
+    CREATE INDEX IF NOT EXISTS idx_contatos_compartilhados_contato
+      ON contatos_compartilhados(contato_id);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -154,29 +177,32 @@ async function initTables() {
 }
 
 async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, numero_usuario)
      VALUES ($1, $2, $3, $4, $5, $6, $7,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id, numero_usuario`,
-    [usuarioId, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0], status || 'pago']
+    [uid, tipo, valor, descricao, categoria || 'Outros', data || new Date().toISOString().split('T')[0], status || 'pago']
   );
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
 
 async function listarTransacoes(usuarioId, tipo, limite) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
      FROM transacoes
      WHERE usuario_id = $1 AND ($2::text IS NULL OR tipo = $2)
      ORDER BY data DESC, id DESC
      LIMIT $3`,
-    [usuarioId, tipo, limite || 10]
+    [uid, tipo, limite || 10]
   );
   return result.rows;
 }
 
 async function resumoMensal(usuarioId, mes, ano) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const agora = new Date();
   const m = mes || agora.getMonth() + 1;
   const a = ano || agora.getFullYear();
@@ -197,7 +223,7 @@ async function resumoMensal(usuarioId, mes, ano) {
      WHERE usuario_id = $1
        AND data >= $2 AND data <= $3
      GROUP BY tipo, status`,
-    [usuarioId, inicioMes, fimMes]
+    [uid, inicioMes, fimMes]
   );
 
   const catResult = await pool.query(
@@ -211,13 +237,14 @@ async function resumoMensal(usuarioId, mes, ano) {
        AND data >= $2 AND data <= $3
      GROUP BY categoria, tipo
      ORDER BY total DESC`,
-    [usuarioId, inicioMes, fimMes]
+    [uid, inicioMes, fimMes]
   );
 
   return { mes: m, ano: a, totais: totaisResult.rows, porCategoria: catResult.rows };
 }
 
 async function resumoAnual(usuarioId, ano) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const a = ano || new Date().getFullYear();
 
   const result = await pool.query(
@@ -231,27 +258,29 @@ async function resumoAnual(usuarioId, ano) {
        AND data >= $2 AND data <= $3
      GROUP BY mes, tipo
      ORDER BY mes`,
-    [usuarioId, `${a}-01-01`, `${a}-12-31`]
+    [uid, `${a}-01-01`, `${a}-12-31`]
   );
   return { ano: a, meses: result.rows };
 }
 
 async function excluirTransacao(usuarioId, numeroUsuario) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     'DELETE FROM transacoes WHERE numero_usuario = $1 AND usuario_id = $2',
-    [numeroUsuario, usuarioId]
+    [numeroUsuario, uid]
   );
   return { changes: result.rowCount };
 }
 
 async function consultarTransacoes(usuarioId, filtros = {}) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const { tipo, categoria, dataInicio, dataFim, descricao, status, limite } = filtros;
   let query = `
     SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
     FROM transacoes
     WHERE usuario_id = $1
   `;
-  const params = [usuarioId];
+  const params = [uid];
   let idx = 2;
 
   if (tipo) {
@@ -287,13 +316,14 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
 }
 
 async function consultarTotalTransacoes(usuarioId, filtros = {}) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const { tipo, categoria, dataInicio, dataFim, descricao, status } = filtros;
   let query = `
     SELECT COALESCE(SUM(valor), 0)::float as total, COUNT(*)::int as quantidade
     FROM transacoes
     WHERE usuario_id = $1
   `;
-  const params = [usuarioId];
+  const params = [uid];
   let idx = 2;
 
   if (tipo) {
@@ -326,27 +356,30 @@ async function consultarTotalTransacoes(usuarioId, filtros = {}) {
 }
 
 async function liquidarTransacao(usuarioId, numeroUsuario) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `UPDATE transacoes SET status = 'pago'
      WHERE numero_usuario = $1 AND usuario_id = $2 AND status = 'pendente'
      RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data`,
-    [numeroUsuario, usuarioId]
+    [numeroUsuario, uid]
   );
   return result.rows[0] || null;
 }
 
 async function listarPendentes(usuarioId, tipo) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
      FROM transacoes
      WHERE usuario_id = $1 AND status = 'pendente' AND ($2::text IS NULL OR tipo = $2)
      ORDER BY data ASC, id ASC`,
-    [usuarioId, tipo || null]
+    [uid, tipo || null]
   );
   return result.rows;
 }
 
 async function calcularSaldos(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as receitas_pagas,
@@ -357,7 +390,7 @@ async function calcularSaldos(usuarioId) {
        COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0)::float as despesas_total
      FROM transacoes
      WHERE usuario_id = $1`,
-    [usuarioId]
+    [uid]
   );
   const r = result.rows[0];
   return {
@@ -411,11 +444,12 @@ async function transacaoAindaPendente(transacaoId) {
 
 // Criar lembrete geral
 async function criarLembreteGeral(usuarioId, mensagem, disparaEm) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `INSERT INTO lembretes_gerais (usuario_id, mensagem, dispara_em)
      VALUES ($1, $2, $3)
      RETURNING id`,
-    [usuarioId, mensagem, disparaEm]
+    [uid, mensagem, disparaEm]
   );
   return result.rows[0].id;
 }
@@ -433,34 +467,37 @@ async function buscarLembretesParaDisparar() {
 
 // Listar lembretes pendentes de um usuário
 async function listarLembretesGerais(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT id, mensagem, TO_CHAR(dispara_em, 'DD/MM HH24:MI') as horario
      FROM lembretes_gerais
      WHERE usuario_id = $1 AND enviado = FALSE AND dispara_em > NOW()
      ORDER BY dispara_em ASC`,
-    [usuarioId]
+    [uid]
   );
   return result.rows;
 }
 
 // Cancelar lembrete
 async function cancelarLembreteGeral(usuarioId, lembreteId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `DELETE FROM lembretes_gerais
      WHERE id = $1 AND usuario_id = $2 AND enviado = FALSE
      RETURNING id, mensagem`,
-    [lembreteId, usuarioId]
+    [lembreteId, uid]
   );
   return result.rows[0] || null;
 }
 
 // Criar lembrete recorrente
 async function criarLembreteRecorrente(usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `INSERT INTO lembretes_recorrentes (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id`,
-    [usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim]
+    [uid, mensagem, horario, frequencia, diaSemana, diaMes, dataFim]
   );
   return result.rows[0].id;
 }
@@ -501,52 +538,59 @@ async function desativarRecorrentesExpirados() {
 
 // Listar lembretes recorrentes ativos de um usuário
 async function listarLembretesRecorrentes(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT id, mensagem, TO_CHAR(horario, 'HH24:MI') as horario, frequencia,
             dia_semana, dia_mes, TO_CHAR(data_fim, 'DD/MM/YYYY') as data_fim
      FROM lembretes_recorrentes
      WHERE usuario_id = $1 AND ativo = TRUE
      ORDER BY horario ASC`,
-    [usuarioId]
+    [uid]
   );
   return result.rows;
 }
 
 // Cancelar lembrete recorrente
 async function cancelarLembreteRecorrente(usuarioId, lembreteId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `UPDATE lembretes_recorrentes SET ativo = FALSE
      WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE
      RETURNING id, mensagem, frequencia`,
-    [lembreteId, usuarioId]
+    [lembreteId, uid]
   );
   return result.rows[0] || null;
 }
 
 // Verificar se é o primeiro contato do usuário
 async function verificarUsuarioNovo(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  if (uid !== usuarioId) return false;
+
   const result = await pool.query(
     'SELECT id FROM usuarios WHERE usuario_id = $1',
-    [usuarioId]
+    [uid]
   );
   return result.rows.length === 0;
 }
 
 // Registrar novo usuário
 async function registrarUsuario(usuarioId, nome) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   await pool.query(
     `INSERT INTO usuarios (usuario_id, nome)
      VALUES ($1, $2)
      ON CONFLICT (usuario_id) DO UPDATE SET nome = $2`,
-    [usuarioId, nome]
+    [uid, nome]
   );
 }
 
 // Buscar dados do usuário
 async function buscarUsuario(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     'SELECT usuario_id, nome, primeiro_contato FROM usuarios WHERE usuario_id = $1',
-    [usuarioId]
+    [uid]
   );
   return result.rows[0] || null;
 }
@@ -558,53 +602,59 @@ async function listarCategorias() {
 
 // Limpar todos os dados de um usuário (para testes)
 async function limparDadosUsuario(usuarioId) {
-  await pool.query('DELETE FROM transacoes WHERE usuario_id = $1', [usuarioId]);
-  await pool.query('DELETE FROM lembretes_enviados WHERE usuario_id = $1', [usuarioId]);
-  await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [usuarioId]);
-  await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [usuarioId]);
-  await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [usuarioId]);
-  await pool.query('DELETE FROM usuarios WHERE usuario_id = $1', [usuarioId]);
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query('DELETE FROM transacoes WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM lembretes_enviados WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM contatos_compartilhados WHERE usuario_principal_id = $1 OR contato_id = $1', [uid]);
+  await pool.query('DELETE FROM usuarios WHERE usuario_id = $1', [uid]);
   return true;
 }
 
 // Definir limite de gastos para uma categoria
 async function definirLimite(usuarioId, categoria, valorLimite) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite)
      VALUES ($1, $2, $3)
      ON CONFLICT (usuario_id, categoria)
      DO UPDATE SET valor_limite = $3, ativo = TRUE
      RETURNING id`,
-    [usuarioId, categoria, valorLimite]
+    [uid, categoria, valorLimite]
   );
   return result.rows[0].id;
 }
 
 // Listar limites ativos do usuário
 async function listarLimites(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT categoria, valor_limite::float
      FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE
      ORDER BY categoria`,
-    [usuarioId]
+    [uid]
   );
   return result.rows;
 }
 
 // Remover limite de uma categoria
 async function removerLimite(usuarioId, categoria) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `UPDATE limites_categoria SET ativo = FALSE
      WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE
      RETURNING id`,
-    [usuarioId, categoria]
+    [uid, categoria]
   );
   return result.rows[0] || null;
 }
 
 // Buscar lembretes gerais por período (para agenda)
 async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT id, mensagem, TO_CHAR(dispara_em, 'DD/MM HH24:MI') as horario,
             TO_CHAR(dispara_em, 'YYYY-MM-DD') as data_disparo,
@@ -614,13 +664,14 @@ async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
        AND dispara_em >= $2::timestamp
        AND dispara_em < ($3::date + interval '1 day')
      ORDER BY dispara_em ASC`,
-    [usuarioId, dataInicio, dataFim]
+    [uid, dataInicio, dataFim]
   );
   return result.rows;
 }
 
 // Verificar limite e gastos de uma categoria no mês atual
 async function verificarLimite(usuarioId, categoria) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
   const agora = new Date();
   const ano = agora.getFullYear();
   const mes = agora.getMonth() + 1;
@@ -635,7 +686,7 @@ async function verificarLimite(usuarioId, categoria) {
   const limiteResult = await pool.query(
     `SELECT valor_limite::float FROM limites_categoria
      WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE`,
-    [usuarioId, categoria]
+    [uid, categoria]
   );
 
   if (limiteResult.rows.length === 0) return null;
@@ -650,7 +701,7 @@ async function verificarLimite(usuarioId, categoria) {
        AND categoria = $2
        AND tipo = 'despesa'
        AND data >= $3 AND data <= $4`,
-    [usuarioId, categoria, inicioMes, fimMes]
+    [uid, categoria, inicioMes, fimMes]
   );
 
   const gastos = gastosResult.rows[0].total;
@@ -664,6 +715,47 @@ async function verificarLimite(usuarioId, categoria) {
     restante,
     percentual: Math.round(percentual)
   };
+}
+
+async function vincularContato(usuarioId, contatoId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  if (uid === contatoId) {
+    return { status: 'self' };
+  }
+
+  const vinculoExistente = await pool.query(
+    `SELECT usuario_principal_id
+     FROM contatos_compartilhados
+     WHERE contato_id = $1`,
+    [contatoId]
+  );
+
+  if (vinculoExistente.rows.length > 0) {
+    const principalAtual = vinculoExistente.rows[0].usuario_principal_id;
+    if (principalAtual === uid) return { status: 'already_linked' };
+    return { status: 'linked_to_other' };
+  }
+
+  await pool.query(
+    `INSERT INTO contatos_compartilhados (usuario_principal_id, contato_id)
+     VALUES ($1, $2)`,
+    [uid, contatoId]
+  );
+
+  return { status: 'linked' };
+}
+
+async function listarContatosCompartilhados(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT contato_id
+     FROM contatos_compartilhados
+     WHERE usuario_principal_id = $1
+     ORDER BY contato_id`,
+    [uid]
+  );
+  return result.rows.map(r => r.contato_id);
 }
 
 module.exports = {
@@ -702,4 +794,7 @@ module.exports = {
   verificarLimite,
   limparDadosUsuario,
   buscarLembretesGeraisPorPeriodo,
+  vincularContato,
+  listarContatosCompartilhados,
+  resolverUsuarioPrincipal,
 };
