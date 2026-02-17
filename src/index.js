@@ -271,9 +271,15 @@ async function start() {
   }
 
   if (process.env.BRAVE_SEARCH_API_KEY) {
-    console.log('🔍 Pesquisa ativa (Brave Search) - busca na internet habilitada.');
+    console.log('🔍 Pesquisa web ativa (Brave Search).');
   } else {
-    console.log('⚠️  BRAVE_SEARCH_API_KEY não configurada - pesquisa na internet desabilitada.');
+    console.log('⚠️  BRAVE_SEARCH_API_KEY nao configurada - pesquisa web desabilitada.');
+  }
+
+  if (process.env.GOOGLE_MAPS_API_KEY) {
+    console.log('📍 Busca local ativa (Google Maps Places).');
+  } else {
+    console.log('⚠️  GOOGLE_MAPS_API_KEY nao configurada - busca local desabilitada.');
   }
 
   client.initialize();

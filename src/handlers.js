@@ -2100,8 +2100,8 @@ async function handleBuscaLocal(usuarioId, resultado) {
     return 'Não entendi o que tu quer buscar por perto. Tenta reformular? 🤔';
   }
 
-  if (!process.env.BRAVE_SEARCH_API_KEY) {
-    return '🔍 A pesquisa está desabilitada no momento.\n\n_O administrador precisa configurar a BRAVE_SEARCH_API_KEY._';
+  if (!process.env.GOOGLE_MAPS_API_KEY) {
+    return '🔍 A busca local está desabilitada no momento.\n\n_O administrador precisa configurar a GOOGLE_MAPS_API_KEY._';
   }
 
   const loc = obterLocalizacao(usuarioId);
@@ -2131,6 +2131,16 @@ async function handleBuscaLocal(usuarioId, resultado) {
     if (r.descricao) {
       const desc = r.descricao.length > 120 ? r.descricao.substring(0, 120) + '...' : r.descricao;
       msg += `${desc}\n`;
+    }
+    if (Array.isArray(r.avaliacoesRecentes) && r.avaliacoesRecentes.length > 0) {
+      msg += '🗣️ *Últimas avaliações:*\n';
+      for (const avaliacao of r.avaliacoesRecentes.slice(0, 3)) {
+        const nota = avaliacao.nota ? `⭐${avaliacao.nota}` : '⭐';
+        const textoAvaliacao = (avaliacao.texto || '').replace(/\s+/g, ' ').trim();
+        const resumo = textoAvaliacao.length > 90 ? `${textoAvaliacao.substring(0, 90)}...` : textoAvaliacao;
+        const tempo = avaliacao.tempoRelativo ? ` (${avaliacao.tempoRelativo})` : '';
+        msg += `- ${nota}${tempo}: ${resumo}\n`;
+      }
     }
     msg += `🗺️ ${r.mapsLink}\n\n`;
   }
