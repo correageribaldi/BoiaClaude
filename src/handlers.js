@@ -338,6 +338,36 @@ function parseData(str) {
   return null;
 }
 
+function isDataIsoValida(valor) {
+  if (!valor || !/^\d{4}-\d{2}-\d{2}$/.test(valor)) return false;
+  const [ano, mes, dia] = valor.split('-').map(Number);
+  const dt = new Date(ano, mes - 1, dia);
+  return dt.getFullYear() === ano && (dt.getMonth() + 1) === mes && dt.getDate() === dia;
+}
+
+function normalizarDataConsulta(valor, campo, pergunta) {
+  if (!valor || typeof valor !== 'string') return null;
+
+  const bruto = valor.trim();
+  if (!bruto) return null;
+
+  let resolvida = resolverData(bruto);
+  if (!resolvida && bruto.includes('/')) {
+    resolvida = parseData(bruto);
+  }
+
+  if (isDataIsoValida(resolvida)) {
+    return resolvida;
+  }
+
+  if (isDataIsoValida(bruto)) {
+    return bruto;
+  }
+
+  console.warn(`[CONSULTA] Ignorando ${campo} invalida da IA: "${valor}" (pergunta="${pergunta || ''}")`);
+  return null;
+}
+
 function normalizarNumeroContato(input) {
   if (!input) return null;
   let digits = input.replace(/\D/g, '');
@@ -1767,11 +1797,30 @@ async function handleCancelarRecorrente(usuarioId, msg) {
 }
 
 async function handleConsulta(usuarioId, consulta) {
+  const dataInicioNormalizada = normalizarDataConsulta(consulta.dataInicio, 'dataInicio', consulta.pergunta);
+  const dataFimNormalizada = normalizarDataConsulta(consulta.dataFim, 'dataFim', consulta.pergunta);
+
+  if (consulta.dataInicio && !dataInicioNormalizada) {
+    return 'Nao consegui entender a data inicial da consulta. Tente novamente com um periodo mais claro, como "hoje", "amanha" ou "10/03/2026".';
+  }
+
+  if (consulta.dataFim && !dataFimNormalizada) {
+    return 'Nao consegui entender a data final da consulta. Tente novamente com um periodo mais claro, como "hoje", "amanha" ou "10/03/2026".';
+  }
+
+  let dataInicioFinal = dataInicioNormalizada;
+  let dataFimFinal = dataFimNormalizada;
+  if (dataInicioFinal && dataFimFinal && dataInicioFinal > dataFimFinal) {
+    const tmp = dataInicioFinal;
+    dataInicioFinal = dataFimFinal;
+    dataFimFinal = tmp;
+  }
+
   const filtros = {
     tipo: consulta.tipo || null,
     categoria: consulta.categoria || null,
-    dataInicio: consulta.dataInicio || null,
-    dataFim: consulta.dataFim || null,
+    dataInicio: dataInicioFinal || null,
+    dataFim: dataFimFinal || null,
     descricao: consulta.descricao || null,
   };
 

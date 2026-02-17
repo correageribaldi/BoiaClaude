@@ -10,6 +10,20 @@ function dataHojeBR() {
   return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
 }
 
+function normalizarDataISO(valor) {
+  if (!valor || typeof valor !== 'string') return null;
+  const v = valor.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+
+  const [ano, mes, dia] = v.split('-').map(Number);
+  const dt = new Date(ano, mes - 1, dia);
+  if (dt.getFullYear() !== ano || (dt.getMonth() + 1) !== mes || dt.getDate() !== dia) {
+    return null;
+  }
+
+  return v;
+}
+
 function debugSharedLog(message) {
   if (process.env.DEBUG_SHARED_CONTACTS === '1') {
     console.log(`[SHARED] ${message}`);
@@ -351,6 +365,16 @@ async function excluirTransacao(usuarioId, numeroUsuario) {
 async function consultarTransacoes(usuarioId, filtros = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const { tipo, categoria, dataInicio, dataFim, descricao, status, limite } = filtros;
+  const dataInicioValida = normalizarDataISO(dataInicio);
+  const dataFimValida = normalizarDataISO(dataFim);
+
+  if (dataInicio && !dataInicioValida) {
+    console.warn(`[DB] consultarTransacoes ignorou dataInicio invalida: "${dataInicio}" (uid=${uid})`);
+  }
+  if (dataFim && !dataFimValida) {
+    console.warn(`[DB] consultarTransacoes ignorou dataFim invalida: "${dataFim}" (uid=${uid})`);
+  }
+
   let query = `
     SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
     FROM transacoes
@@ -367,13 +391,13 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
     query += ` AND categoria ILIKE $${idx++}`;
     params.push(`%${categoria}%`);
   }
-  if (dataInicio) {
+  if (dataInicioValida) {
     query += ` AND data >= $${idx++}`;
-    params.push(dataInicio);
+    params.push(dataInicioValida);
   }
-  if (dataFim) {
+  if (dataFimValida) {
     query += ` AND data <= $${idx++}`;
-    params.push(dataFim);
+    params.push(dataFimValida);
   }
   if (descricao) {
     query += ` AND descricao ILIKE $${idx++}`;
@@ -394,6 +418,16 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
 async function consultarTotalTransacoes(usuarioId, filtros = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const { tipo, categoria, dataInicio, dataFim, descricao, status } = filtros;
+  const dataInicioValida = normalizarDataISO(dataInicio);
+  const dataFimValida = normalizarDataISO(dataFim);
+
+  if (dataInicio && !dataInicioValida) {
+    console.warn(`[DB] consultarTotalTransacoes ignorou dataInicio invalida: "${dataInicio}" (uid=${uid})`);
+  }
+  if (dataFim && !dataFimValida) {
+    console.warn(`[DB] consultarTotalTransacoes ignorou dataFim invalida: "${dataFim}" (uid=${uid})`);
+  }
+
   let query = `
     SELECT COALESCE(SUM(valor), 0)::float as total, COUNT(*)::int as quantidade
     FROM transacoes
@@ -410,13 +444,13 @@ async function consultarTotalTransacoes(usuarioId, filtros = {}) {
     query += ` AND categoria ILIKE $${idx++}`;
     params.push(`%${categoria}%`);
   }
-  if (dataInicio) {
+  if (dataInicioValida) {
     query += ` AND data >= $${idx++}`;
-    params.push(dataInicio);
+    params.push(dataInicioValida);
   }
-  if (dataFim) {
+  if (dataFimValida) {
     query += ` AND data <= $${idx++}`;
-    params.push(dataFim);
+    params.push(dataFimValida);
   }
   if (descricao) {
     query += ` AND descricao ILIKE $${idx++}`;
@@ -732,6 +766,14 @@ async function removerLimite(usuarioId, categoria) {
 // Buscar lembretes gerais por período (para agenda)
 async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  const dataInicioValida = normalizarDataISO(dataInicio);
+  const dataFimValida = normalizarDataISO(dataFim);
+
+  if (!dataInicioValida || !dataFimValida) {
+    console.warn(`[DB] buscarLembretesGeraisPorPeriodo recebeu periodo invalido: inicio="${dataInicio}" fim="${dataFim}" (uid=${uid})`);
+    return [];
+  }
+
   const result = await pool.query(
     `SELECT id, mensagem,
             TO_CHAR(dispara_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') as horario,
@@ -742,7 +784,7 @@ async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
        AND dispara_em >= ($2::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
        AND dispara_em < (($3::date + interval '1 day')::timestamp AT TIME ZONE 'America/Sao_Paulo')
      ORDER BY dispara_em ASC`,
-    [uid, dataInicio, dataFim]
+    [uid, dataInicioValida, dataFimValida]
   );
   return result.rows;
 }
