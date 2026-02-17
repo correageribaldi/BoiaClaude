@@ -129,15 +129,22 @@ function chaveCacheCoordenadas(lat, lng) {
   return `${a},${b}`;
 }
 
-function formatarLocalizacaoPadrao(lat, lng) {
-  return `${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}, Brasil`;
+function montarContextoLocalizacaoPadrao(lat, lng) {
+  return {
+    location: `${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}, Brasil`,
+    cidade: '',
+    estado: '',
+    pais: 'Brasil',
+    bairro: '',
+    rua: '',
+  };
 }
 
 async function reverseGeocodeNominatim(lat, lng) {
   const key = chaveCacheCoordenadas(lat, lng);
   const cached = cacheReverseGeocode.get(key);
   if (cached && Date.now() < cached.expiresAt) {
-    return cached.location;
+    return cached.contexto;
   }
 
   return new Promise((resolve) => {
@@ -171,6 +178,8 @@ async function reverseGeocodeNominatim(lat, lng) {
           const cidade = addr.city || addr.town || addr.village || addr.municipality || addr.county || '';
           const estado = addr.state || addr.region || '';
           const pais = addr.country || '';
+          const bairro = addr.suburb || addr.neighbourhood || addr.quarter || addr.city_district || '';
+          const rua = addr.road || addr.pedestrian || addr.cycleway || '';
 
           let location = [cidade, estado, pais].filter(Boolean).join(', ');
           if (!location && data.display_name) {
@@ -183,11 +192,20 @@ async function reverseGeocodeNominatim(lat, lng) {
           }
 
           if (location) {
-            cacheReverseGeocode.set(key, {
+            const contexto = {
               location,
+              cidade,
+              estado,
+              pais: pais || 'Brasil',
+              bairro,
+              rua,
+            };
+
+            cacheReverseGeocode.set(key, {
+              contexto,
               expiresAt: Date.now() + 6 * 60 * 60 * 1000,
             });
-            resolve(location);
+            resolve(contexto);
             return;
           }
         } catch (_) {}
@@ -265,6 +283,25 @@ function formatarDistancia(metros) {
   if (!Number.isFinite(metros)) return '';
   if (metros < 1000) return `${Math.round(metros)} m`;
   return `${(metros / 1000).toFixed(1)} km`;
+}
+
+function parseDistanciaTexto(valor) {
+  if (!valor || typeof valor !== 'string') return null;
+
+  const texto = valor
+    .toLowerCase()
+    .replace(',', '.')
+    .trim();
+
+  const m = texto.match(/(-?\d+(?:\.\d+)?)\s*(km|quilometro|quilômetros|quilometros|m|metro|metros)\b/);
+  if (!m) return null;
+
+  const numero = toNumber(m[1]);
+  if (numero == null || numero < 0) return null;
+
+  const unidade = m[2];
+  if (unidade.startsWith('k') || unidade.includes('quilo')) return numero * 1000;
+  return numero;
 }
 
 function formatarAvaliacaoBrave(rating) {
@@ -432,6 +469,25 @@ function removerCampoDistanciaInterna(list) {
   });
 }
 
+function limitarPorDistancia(list, maxResultados) {
+  const limiteKm = toNumber(process.env.LOCAL_MAX_DISTANCE_KM) ?? 50;
+  const limiteMetros = limiteKm > 0 ? limiteKm * 1000 : null;
+
+  ordenarPorDistancia(list);
+  if (limiteMetros == null) {
+    return list.slice(0, maxResultados);
+  }
+
+  const dentro = list.filter((r) => r.distanciaMetros != null && r.distanciaMetros <= limiteMetros);
+  const semDistancia = list.filter((r) => r.distanciaMetros == null);
+
+  if (dentro.length > 0) {
+    return [...dentro, ...semDistancia].slice(0, maxResultados);
+  }
+
+  return list.slice(0, maxResultados);
+}
+
 function extrairCoordenadasGenericas(obj) {
   if (!obj || typeof obj !== 'object') return null;
 
@@ -460,9 +516,7 @@ function mapearLocalSerper(item, lat, lng) {
 
   const endereco = formatarEndereco(item.address || item.formattedAddress || item.vicinity || '');
   const telefone = item.phoneNumber || item.phone || '';
-
-  const coords = extrairCoordenadasGenericas(item);
-  const distanciaMetros = coords ? calcularDistanciaMetros(lat, lng, coords.lat, coords.lng) : null;
+  const coordsDoItem = extrairCoordenadasGenericas(item);
 
   let mapsLink = extrairLinkMapsBruto(
     item.googleMapsUrl
@@ -477,12 +531,21 @@ function mapearLocalSerper(item, lat, lng) {
   if (!mapsLink) {
     if (item.placeId) {
       mapsLink = `https://www.google.com/maps/place/?q=place_id:${item.placeId}`;
-    } else if (coords) {
-      mapsLink = `https://maps.google.com/?q=${coords.lat},${coords.lng}`;
+    } else if (coordsDoItem) {
+      mapsLink = `https://maps.google.com/?q=${coordsDoItem.lat},${coordsDoItem.lng}`;
     } else {
       mapsLink = `https://maps.google.com/?q=${encodeURIComponent(`${titulo} ${endereco}`.trim())}`;
     }
   }
+
+  const coordsDoLink = extrairCoordenadasDeUrl(mapsLink);
+  const coords = coordsDoItem || coordsDoLink;
+
+  const distanciaTextoSerper = typeof item.distance === 'string' ? item.distance : '';
+  const distanciaMetrosTexto = parseDistanciaTexto(distanciaTextoSerper);
+  const distanciaMetros = coords
+    ? calcularDistanciaMetros(lat, lng, coords.lat, coords.lng)
+    : distanciaMetrosTexto;
 
   const rating = item.rating ?? item.stars ?? null;
   const ratingCount = item.ratingCount ?? item.reviews ?? item.reviewCount ?? null;
@@ -490,9 +553,7 @@ function mapearLocalSerper(item, lat, lng) {
     ? (ratingCount != null ? `${rating}/5 (${ratingCount} avaliacoes)` : `${rating}/5`)
     : '';
 
-  const distanciaTexto = typeof item.distance === 'string'
-    ? item.distance
-    : formatarDistancia(distanciaMetros);
+  const distanciaTexto = formatarDistancia(distanciaMetros) || distanciaTextoSerper;
 
   return {
     titulo,
@@ -523,31 +584,34 @@ function extrairLocaisSerper(data, lat, lng) {
     .filter(Boolean);
 }
 
-async function pesquisarLocalSerper(query, lat, lng, maxResultados = 5) {
+async function pesquisarLocalSerper(query, lat, lng, maxResultados = 15) {
   if (!process.env.SERPER_API_KEY) return null;
 
-  const locationTexto = await reverseGeocodeNominatim(lat, lng);
-  const locationFallback = formatarLocalizacaoPadrao(lat, lng);
-  const locationFinal = locationTexto || locationFallback;
-  const cidade = locationFinal.split(',')[0]?.trim() || '';
+  const contextoGeo = (await reverseGeocodeNominatim(lat, lng)) || montarContextoLocalizacaoPadrao(lat, lng);
+  const locationFinal = contextoGeo.location;
+  const cidade = contextoGeo.cidade || '';
+  const bairro = contextoGeo.bairro || '';
+  const rua = contextoGeo.rua || '';
 
   const payloadBase = {
     q: query,
     gl: 'br',
     hl: 'pt-br',
     location: locationFinal,
-    num: Math.max(maxResultados, 5),
+    ll: `@${lat},${lng},14z`,
+    num: Math.max(maxResultados, 15),
     autocorrect: true,
     page: 1,
   };
 
-  const endpoints = ['places', 'maps', 'search'];
+  const endpoints = ['places'];
   const queries = [query];
+  if (rua && bairro && cidade) queries.unshift(`${query} na ${rua}, ${bairro}, ${cidade}`);
+  if (bairro && cidade) queries.unshift(`${query} em ${bairro}, ${cidade}`);
   if (cidade) queries.push(`${query} em ${cidade}`);
   queries.push(`${query} perto de mim`);
-  queries.push(`${query} google maps`);
 
-  console.log(`[LOCAL][SERPER] location="${locationFinal}" (coords=${lat},${lng})`);
+  console.log(`[LOCAL][SERPER] location="${locationFinal}" ll="@${lat},${lng},14z" (coords=${lat},${lng})`);
 
   const resultados = [];
   const existentes = new Set();
@@ -580,8 +644,8 @@ async function pesquisarLocalSerper(query, lat, lng, maxResultados = 5) {
     return null;
   }
 
-  ordenarPorDistancia(resultados);
-  return removerCampoDistanciaInterna(resultados.slice(0, maxResultados));
+  const selecionados = limitarPorDistancia(resultados, maxResultados);
+  return removerCampoDistanciaInterna(selecionados);
 }
 
 async function pesquisarWeb(query, maxResultados = 5) {
@@ -623,7 +687,7 @@ async function pesquisarWeb(query, maxResultados = 5) {
   }
 }
 
-async function pesquisarLocal(query, lat, lng, maxResultados = 5) {
+async function pesquisarLocal(query, lat, lng, maxResultados = 15) {
   if (!process.env.SERPER_API_KEY) {
     console.error('[LOCAL] SERPER_API_KEY nao configurada. Busca local desabilitada.');
     return null;

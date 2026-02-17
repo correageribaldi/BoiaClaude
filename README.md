@@ -35,7 +35,8 @@ Observacao importante:
 - Transcricao de audio
 - Busca na internet e busca local por geolocalizacao
 - Busca local usa Serper; se sem resultado, retorna link direto de busca no Google Maps
-- Busca local usa geocodificacao reversa (lat/lng -> cidade) para enviar `location` textual ao Serper
+- Busca local usa geocodificacao reversa (lat/lng -> rua/bairro/cidade) para enviar `location` textual ao Serper
+- Busca local ordena por proximidade e retorna ate 15 resultados (com filtro configuravel por `LOCAL_MAX_DISTANCE_KM`)
 - Contatos compartilhados (master + secundarios)
 - Analise financeira (inclui fluxo 50/30/20)
 
@@ -48,6 +49,7 @@ Copie `.env.example` para `.env` e configure:
 - `OPENAI_MODEL` (opcional)
 - `BRAVE_SEARCH_API_KEY` (obrigatorio para pesquisa web)
 - `SERPER_API_KEY` (obrigatorio para busca local)
+- `LOCAL_MAX_DISTANCE_KM` (opcional, padrao 50 km para priorizar resultados locais)
 - `CHROMIUM_PATH` (opcional, recomendado para Linux server)
 - `DEBUG_SHARED_CONTACTS=1` (opcional para debug de vinculos)
 

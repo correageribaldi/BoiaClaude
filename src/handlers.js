@@ -2175,7 +2175,7 @@ async function handleBuscaLocal(usuarioId, resultado) {
   }
 
   console.log(`[BUSCA LOCAL] "${query}" em lat=${loc.lat}, lng=${loc.lng}`);
-  const resultados = await pesquisarLocal(query, loc.lat, loc.lng);
+  const resultados = await pesquisarLocal(query, loc.lat, loc.lng, 15);
 
   if (!resultados || resultados.length === 0) {
     return `Não encontrei resultados pra "${pergunta || query}" perto de você 😕\n\nTenta ser mais específico ou buscar outra coisa.`;
