@@ -1230,7 +1230,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   if (resultado.acao === 'transacao') {
     // Detectar dia da semana no texto e sobrescrever data da IA
     const diaDetectadoTx = extrairDiaSemanaDoTexto(lower);
-    if (diaDetectadoTx && resultado.data) {
+    if (diaDetectadoTx) {
       resultado.data = diaDetectadoTx;
     }
     const { tipo, valor, descricao, categoria, data, status } = resultado;
@@ -1243,15 +1243,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
       return `❌ O valor precisa ser positivo.`;
     }
 
-    // data já vem em YYYY-MM-DD do novo prompt
-    let dataFinal = data || null;
-    // Se vier no formato dd/mm/aaaa (fallback), converter
-    if (dataFinal && dataFinal.includes('/')) {
-      dataFinal = parseData(dataFinal);
-    }
-    // Validar formato YYYY-MM-DD (descartar datas inválidas como templates "YYYY-MM-20")
-    if (dataFinal && !/^\d{4}-\d{2}-\d{2}$/.test(dataFinal)) {
-      dataFinal = null;
+    // Resolver data: dia da semana, referências relativas, DD/MM/YYYY, YYYY-MM-DD
+    let dataFinal = resolverData(data);
+    // Fallback: tentar parse DD/MM/YYYY
+    if (!dataFinal && data && data.includes('/')) {
+      dataFinal = parseData(data);
     }
 
     const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
@@ -1259,7 +1255,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     // Se é pendente e não tem data, perguntar pro usuário
     if (statusFinal === 'pendente' && !dataFinal) {
       salvarDataPendente(usuarioId, { tipo, valor, descricao, categoria });
-      return `Anotei! *${descricao}* no valor de *${fmt.formatarMoeda(valor)}* 👍\n\nPra que dia tu quer que eu programe ${tipo === 'receita' ? 'esse recebimento' : 'esse pagamento'}?\n\n_Ex: "dia 20", "dia 5 do mês que vem", "semana que vem", "amanhã"_`;
+      return `Anotei! *${descricao}* no valor de *${fmt.formatarMoeda(valor)}* 👍\n\nPra que dia tu quer que eu programe ${tipo === 'receita' ? 'esse recebimento' : 'esse pagamento'}?\n\n_Ex: "sexta-feira", "dia 20", "amanhã", "semana que vem"_`;
     }
 
     return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
