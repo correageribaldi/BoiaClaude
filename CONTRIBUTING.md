@@ -2,6 +2,9 @@
 
 Este documento define o padrao minimo para contribuicoes no projeto Cronos.
 
+Regra geral:
+- Contribuicoes feitas por IA devem seguir obrigatoriamente o fluxo definido em `AGENTS.md`.
+
 ## Objetivo
 
 - Manter previsibilidade de entrega.

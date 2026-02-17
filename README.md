@@ -77,6 +77,20 @@ Esse comando roda:
 - `npm test`
 - `npm run typecheck`
 
+## Fluxo Para IAs Colaboradoras
+
+Se a alteracao for feita por IA, siga obrigatoriamente:
+
+- `AGENTS.md` para o fluxo operacional completo
+- `CONTRIBUTING.md` para padroes de branch/commit/PR
+
+Resumo minimo obrigatorio para IA:
+
+1. Mostrar arquivos que serao alterados.
+2. Aplicar alteracoes somente no escopo solicitado.
+3. Executar `npm run ci`.
+4. Reportar resultado antes de commit/push.
+
 ## Comandos e Intencoes Suportadas
 
 ### Financeiro (direto)
