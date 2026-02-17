@@ -5,7 +5,11 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "lint": "node scripts/lint.js",
+    "test": "node --test test/**/*.test.js",
+    "typecheck": "node scripts/typecheck.js",
+    "ci": "npm run lint && npm run test && npm run typecheck"
   },
   "keywords": [
     "whatsapp",

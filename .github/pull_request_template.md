@@ -44,3 +44,4 @@ Inclua logs, prints, outputs ou exemplos de mensagens (quando aplicavel).
 - [ ] Nao inclui segredos nem arquivos locais indevidos
 - [ ] Atualizei docs (README/.env.example) se necessario
 - [ ] Validei os fluxos impactados
+- [ ] Executei `npm run ci` localmente e anexei/validei o resultado

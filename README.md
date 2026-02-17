@@ -63,6 +63,20 @@ npm start
 
 Na primeira execucao sera exibido um QR Code para conectar o WhatsApp.
 
+## Validacao de Qualidade (Local)
+
+Antes de commit/push, execute:
+
+```bash
+npm run ci
+```
+
+Esse comando roda:
+
+- `npm run lint`
+- `npm test`
+- `npm run typecheck`
+
 ## Comandos e Intencoes Suportadas
 
 ### Financeiro (direto)
@@ -145,4 +159,3 @@ src/
 - Para servidor Linux, defina `CHROMIUM_PATH` para o binario valido do Chromium.
 - O bot foi pensado para execucao continua (ex: PM2/systemd).
 - A autenticacao WhatsApp fica em `.wwebjs_auth/` e `.wwebjs_cache/`.
-

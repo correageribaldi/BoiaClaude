@@ -63,6 +63,20 @@ Use o template em `.github/pull_request_template.md`.
 - [ ] `README.md` e `.env.example` foram revisados quando houve mudanca de configuracao.
 - [ ] Fluxos principais foram validados manualmente no WhatsApp.
 
+## Fluxo Obrigatorio de Validacao (Local)
+
+Antes de qualquer commit/push, execute no terminal:
+
+```bash
+npm run ci
+```
+
+Regras:
+
+- Se `npm run ci` falhar, **nao** faça commit/push.
+- Corrija, rode novamente e so depois prossiga.
+- Quando estiver trabalhando com IA, sempre solicite o resultado da execucao local antes de aprovar o commit.
+
 ## Regras de Review
 
 - Mudancas em `src/database.js`, `src/handlers.js` e `src/index.js` exigem review do owner.
