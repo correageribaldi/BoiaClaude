@@ -271,9 +271,15 @@ async function start() {
   }
 
   if (process.env.BRAVE_SEARCH_API_KEY) {
-    console.log('🔍 Pesquisa web/local ativa (Brave Search).');
+    console.log('🔍 Pesquisa web ativa (Brave Search).');
   } else {
-    console.log('⚠️  BRAVE_SEARCH_API_KEY nao configurada - pesquisa web/local desabilitada.');
+    console.log('⚠️  BRAVE_SEARCH_API_KEY nao configurada - pesquisa web desabilitada.');
+  }
+
+  if (process.env.SERPER_API_KEY) {
+    console.log('📍 Busca local ativa (Serper).');
+  } else {
+    console.log('⚠️  SERPER_API_KEY nao configurada - busca local desabilitada.');
   }
 
   client.initialize();

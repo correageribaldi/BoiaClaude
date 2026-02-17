@@ -68,6 +68,59 @@ function braveSearch(query, count = 5, opts = {}) {
   });
 }
 
+function serperRequest(endpoint, payload) {
+  return new Promise((resolve, reject) => {
+    const apiKey = process.env.SERPER_API_KEY;
+    if (!apiKey) {
+      reject(new Error('SERPER_API_KEY nao configurada'));
+      return;
+    }
+
+    const body = JSON.stringify(payload || {});
+    const options = {
+      hostname: 'google.serper.dev',
+      path: `/${endpoint}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': apiKey,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString();
+        let data = null;
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch (err) {
+          reject(new Error(`Erro ao parsear resposta Serper: ${err.message}`));
+          return;
+        }
+
+        if (res.statusCode >= 400) {
+          const msg = data?.message || data?.error || `HTTP ${res.statusCode}`;
+          reject(new Error(`Serper ${endpoint}: ${msg}`));
+          return;
+        }
+
+        resolve(data);
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(10000, () => {
+      req.destroy();
+      reject(new Error('Timeout na busca Serper'));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
 function toNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -189,11 +242,6 @@ function extrairLinkMapsBruto(url, profundidade = 0) {
   }
 }
 
-function urlEhGoogleMaps(url) {
-  if (!url) return false;
-  return !!extrairLinkMapsBruto(url);
-}
-
 function extrairCoordenadasDeUrl(url) {
   if (!url) return null;
 
@@ -300,6 +348,150 @@ function removerCampoDistanciaInterna(list) {
   });
 }
 
+function extrairCoordenadasGenericas(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+
+  const candidatos = [
+    obj,
+    obj.coordinates,
+    obj.coordinate,
+    obj.location,
+    obj.geo,
+    obj.position,
+    obj.geometry?.location,
+  ].filter(Boolean);
+
+  for (const c of candidatos) {
+    const lat = toNumber(c.lat ?? c.latitude);
+    const lng = toNumber(c.lng ?? c.longitude ?? c.lon ?? c.long);
+    if (lat != null && lng != null) return { lat, lng };
+  }
+
+  return null;
+}
+
+function mapearLocalSerper(item, lat, lng) {
+  const titulo = item.title || item.name || item.placeName || '';
+  if (!titulo) return null;
+
+  const endereco = formatarEndereco(item.address || item.formattedAddress || item.vicinity || '');
+  const telefone = item.phoneNumber || item.phone || '';
+
+  const coords = extrairCoordenadasGenericas(item);
+  const distanciaMetros = coords ? calcularDistanciaMetros(lat, lng, coords.lat, coords.lng) : null;
+
+  let mapsLink = extrairLinkMapsBruto(
+    item.googleMapsUrl
+    || item.mapsUrl
+    || item.placeUrl
+    || item.mapUrl
+    || item.link
+    || item.url
+    || ''
+  );
+
+  if (!mapsLink) {
+    if (item.placeId) {
+      mapsLink = `https://www.google.com/maps/place/?q=place_id:${item.placeId}`;
+    } else if (coords) {
+      mapsLink = `https://maps.google.com/?q=${coords.lat},${coords.lng}`;
+    } else {
+      mapsLink = `https://maps.google.com/?q=${encodeURIComponent(`${titulo} ${endereco}`.trim())}`;
+    }
+  }
+
+  const rating = item.rating ?? item.stars ?? null;
+  const ratingCount = item.ratingCount ?? item.reviews ?? item.reviewCount ?? null;
+  const avaliacao = rating != null
+    ? (ratingCount != null ? `${rating}/5 (${ratingCount} avaliacoes)` : `${rating}/5`)
+    : '';
+
+  const distanciaTexto = typeof item.distance === 'string'
+    ? item.distance
+    : formatarDistancia(distanciaMetros);
+
+  return {
+    titulo,
+    descricao: item.snippet || item.description || item.category || '',
+    url: mapsLink,
+    endereco,
+    telefone,
+    avaliacao,
+    mapsLink,
+    distancia: distanciaTexto,
+    distanciaMetros,
+    avaliacoesRecentes: [],
+  };
+}
+
+function extrairLocaisSerper(data, lat, lng) {
+  if (!data || typeof data !== 'object') return [];
+
+  const grupos = [];
+  if (Array.isArray(data.places)) grupos.push(...data.places);
+  if (Array.isArray(data.localResults)) grupos.push(...data.localResults);
+  if (Array.isArray(data.localPack)) grupos.push(...data.localPack);
+  if (Array.isArray(data.maps)) grupos.push(...data.maps);
+  if (Array.isArray(data.organic)) grupos.push(...data.organic);
+
+  return grupos
+    .map((item) => mapearLocalSerper(item, lat, lng))
+    .filter(Boolean);
+}
+
+async function pesquisarLocalSerper(query, lat, lng, maxResultados = 5) {
+  if (!process.env.SERPER_API_KEY) return null;
+
+  const payloadBase = {
+    q: query,
+    gl: 'br',
+    hl: 'pt-br',
+    location: `${lat},${lng}`,
+    num: Math.max(maxResultados, 5),
+  };
+
+  const endpoints = ['places', 'maps', 'search'];
+  const queries = [
+    query,
+    `${query} perto de mim`,
+    `${query} google maps`,
+  ];
+
+  const resultados = [];
+  const existentes = new Set();
+
+  for (const endpoint of endpoints) {
+    for (const q of queries) {
+      try {
+        const data = await serperRequest(endpoint, { ...payloadBase, q });
+        const locais = extrairLocaisSerper(data, lat, lng);
+        console.log(`[LOCAL][SERPER] endpoint=${endpoint} query="${q}" itens=${locais.length}`);
+
+        for (const local of locais) {
+          const chave = normalizarChaveLocal(local.titulo, local.mapsLink);
+          if (existentes.has(chave)) continue;
+          resultados.push(local);
+          existentes.add(chave);
+          if (resultados.length >= maxResultados + 6) break;
+        }
+
+        if (resultados.length >= maxResultados) break;
+      } catch (err) {
+        console.log(`[LOCAL][SERPER] endpoint=${endpoint} falhou: ${err.message}`);
+      }
+    }
+
+    if (resultados.length >= maxResultados) break;
+  }
+
+  if (resultados.length === 0) {
+    return null;
+  }
+
+  ordenarPorDistancia(resultados);
+  return removerCampoDistanciaInterna(resultados.slice(0, maxResultados));
+}
+
 async function pesquisarWeb(query, maxResultados = 5) {
   if (!process.env.BRAVE_SEARCH_API_KEY) {
     console.error('[SEARCH] BRAVE_SEARCH_API_KEY nao configurada. Pesquisa desabilitada.');
@@ -340,90 +532,31 @@ async function pesquisarWeb(query, maxResultados = 5) {
 }
 
 async function pesquisarLocal(query, lat, lng, maxResultados = 5) {
-  if (!process.env.BRAVE_SEARCH_API_KEY) {
-    console.error('[LOCAL] BRAVE_SEARCH_API_KEY nao configurada. Busca local desabilitada.');
+  if (!process.env.SERPER_API_KEY) {
+    console.error('[LOCAL] SERPER_API_KEY nao configurada. Busca local desabilitada.');
     return null;
   }
 
   try {
-    const queryLocal = `${query} perto de mim`;
-    const resultados = [];
-    const existentes = new Set();
-
-    const queriesLocations = [query, queryLocal];
-    for (const qLoc of queriesLocations) {
-      console.log(`[LOCAL] Brave locations: "${qLoc}" (lat: ${lat}, lng: ${lng})`);
-      const dataLocations = await braveSearch(qLoc, maxResultados + 8, {
-        lat,
-        lng,
-        result_filter: 'locations',
-      });
-
-      const viaLocations = extrairLocaisDeLocations(dataLocations, lat, lng);
-      console.log(`[LOCAL] locations retornou ${viaLocations.length} itens para query="${qLoc}"`);
-      for (const local of viaLocations) {
-        const chave = normalizarChaveLocal(local.titulo, local.mapsLink);
-        if (existentes.has(chave)) continue;
-        resultados.push(local);
-        existentes.add(chave);
-        if (resultados.length >= maxResultados + 6) break;
-      }
-      if (resultados.length >= maxResultados) break;
+    const viaSerper = await pesquisarLocalSerper(query, lat, lng, maxResultados);
+    if (viaSerper && viaSerper.length > 0) {
+      console.log(`[LOCAL] ${viaSerper.length} locais retornados via Serper.`);
+      return viaSerper;
     }
 
-    if (resultados.length === 0) {
-      console.log('[LOCAL] Nenhum local em locations. Tentando fallback web maps-only...');
-    }
-
-    if (resultados.length < maxResultados) {
-      const queriesWebMaps = [
-        `${queryLocal} site:google.com/maps`,
-        `${query} google maps`,
-        `${queryLocal} maps`,
-      ];
-
-      for (const qWeb of queriesWebMaps) {
-        const dataWeb = await braveSearch(qWeb, maxResultados + 12, {
-          lat,
-          lng,
-          result_filter: 'web',
-        });
-
-        const viaWebMaps = extrairLocaisDeWebMaps(dataWeb, lat, lng);
-        console.log(`[LOCAL] web maps-only retornou ${viaWebMaps.length} itens para query="${qWeb}"`);
-        for (const local of viaWebMaps) {
-          const chave = normalizarChaveLocal(local.titulo, local.mapsLink);
-          if (existentes.has(chave)) continue;
-          resultados.push(local);
-          existentes.add(chave);
-          if (resultados.length >= maxResultados + 6) break;
-        }
-        if (resultados.length >= maxResultados) break;
-      }
-    }
-
-    if (resultados.length === 0) {
-      const buscaDiretaMaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&center=${lat},${lng}`;
-      console.log('[LOCAL] Nenhum local encontrado (locations + web maps-only). Retornando link de busca direta.');
-      return [{
-        titulo: `Buscar "${query}" no Google Maps`,
-        descricao: 'Nao consegui listar locais agora, mas este link abre a busca no mapa na sua regiao.',
-        url: buscaDiretaMaps,
-        endereco: '',
-        telefone: '',
-        avaliacao: '',
-        mapsLink: buscaDiretaMaps,
-        distancia: '',
-        avaliacoesRecentes: [],
-      }];
-    }
-
-    ordenarPorDistancia(resultados);
-
-    const finais = removerCampoDistanciaInterna(resultados.slice(0, maxResultados));
-
-    console.log(`[LOCAL] ${finais.length} locais retornados (locations + fallback maps-only).`);
-    return finais.length > 0 ? finais : null;
+    const buscaDiretaMaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&center=${lat},${lng}`;
+    console.log('[LOCAL] Serper sem resultados. Retornando link de busca direta.');
+    return [{
+      titulo: `Buscar "${query}" no Google Maps`,
+      descricao: 'Nao consegui listar locais agora, mas este link abre a busca no mapa na sua regiao.',
+      url: buscaDiretaMaps,
+      endereco: '',
+      telefone: '',
+      avaliacao: '',
+      mapsLink: buscaDiretaMaps,
+      distancia: '',
+      avaliacoesRecentes: [],
+    }];
   } catch (err) {
     console.error('[LOCAL] Erro ao pesquisar:', err.message);
     return null;

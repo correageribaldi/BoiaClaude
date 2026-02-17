@@ -11,7 +11,8 @@ Assistente pessoal para WhatsApp com foco em:
 - Canal: `whatsapp-web.js` + `puppeteer-core`
 - Banco de dados: PostgreSQL (`pg`)
 - IA: OpenAI (interpretacao de mensagem, audio, imagem e extrato)
-- Busca web/local: Brave Search API
+- Busca web: Brave Search API
+- Busca local: Serper API
 - Agendamento: `node-cron`
 - Graficos: `chart.js` + `chartjs-node-canvas`
 
@@ -33,7 +34,7 @@ Observacao importante:
 - Leitura de imagem (boleto/nota/cupom) e transacao assistida
 - Transcricao de audio
 - Busca na internet e busca local por geolocalizacao
-- Busca local prioriza `locations` da API Brave, com fallback web restrito a links Google Maps
+- Busca local usa Serper; se sem resultado, retorna link direto de busca no Google Maps
 - Contatos compartilhados (master + secundarios)
 - Analise financeira (inclui fluxo 50/30/20)
 
@@ -44,7 +45,8 @@ Copie `.env.example` para `.env` e configure:
 - `DATABASE_URL` (obrigatorio)
 - `OPENAI_API_KEY` (obrigatorio para IA)
 - `OPENAI_MODEL` (opcional)
-- `BRAVE_SEARCH_API_KEY` (obrigatorio para pesquisa web/local)
+- `BRAVE_SEARCH_API_KEY` (obrigatorio para pesquisa web)
+- `SERPER_API_KEY` (obrigatorio para busca local)
 - `CHROMIUM_PATH` (opcional, recomendado para Linux server)
 - `DEBUG_SHARED_CONTACTS=1` (opcional para debug de vinculos)
 
@@ -155,7 +157,7 @@ src/
 |- handlers.js     # regra de negocio principal e fluxos conversacionais
 |- database.js     # acesso PostgreSQL, schema e consultas
 |- ai.js           # integracao OpenAI e prompts
-|- search.js       # integracao Brave Search (web/local)
+|- search.js       # integracao Serper (local) + Brave Search (web)
 |- lembretes.js    # jobs cron de lembretes
 |- charts.js       # geracao de graficos
 |- formatters.js   # formatacao de mensagens

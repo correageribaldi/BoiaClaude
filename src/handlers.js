@@ -2164,8 +2164,8 @@ async function handleBuscaLocal(usuarioId, resultado) {
     return 'Não entendi o que tu quer buscar por perto. Tenta reformular? 🤔';
   }
 
-  if (!process.env.BRAVE_SEARCH_API_KEY) {
-    return '🔍 A busca local está desabilitada no momento.\n\n_O administrador precisa configurar a BRAVE_SEARCH_API_KEY._';
+  if (!process.env.SERPER_API_KEY) {
+    return '🔍 A busca local está desabilitada no momento.\n\n_O administrador precisa configurar a SERPER_API_KEY._';
   }
 
   const loc = obterLocalizacao(usuarioId);
