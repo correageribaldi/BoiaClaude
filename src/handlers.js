@@ -1331,57 +1331,49 @@ async function handleDataPendenteResposta(usuarioId, texto, pendente) {
 
   let dataFinal = null;
 
-  // Se a IA retornou uma transação com data, resolver (dia da semana, referência relativa, etc.)
-  if (resultado && resultado.data) {
-    dataFinal = resolverData(resultado.data);
+  // 1. Detectar dia da semana diretamente no texto do usuário (mais confiável que a IA)
+  const diaDetectado = extrairDiaSemanaDoTexto(lower);
+  if (diaDetectado) {
+    dataFinal = resolverData(diaDetectado);
+  }
+
+  // 2. Tentar resolverData direto no texto (hoje, amanhã, ontem, DD/MM/YYYY, etc.)
+  if (!dataFinal) {
+    dataFinal = resolverData(lower);
+  }
+
+  // 3. Se a IA retornou uma data, resolver
+  if (!dataFinal && resultado && resultado.data) {
+    // Sobrescrever com dia da semana do texto se houver
+    const diaIA = extrairDiaSemanaDoTexto((resultado.data || '').toLowerCase());
+    dataFinal = resolverData(diaIA || resultado.data);
     // Fallback: tentar parse DD/MM/YYYY
     if (!dataFinal && resultado.data.includes('/')) {
       dataFinal = parseData(resultado.data);
     }
   }
 
-  // Fallback: tentar extrair "dia X" manualmente
+  // 4. Fallback: tentar extrair "dia X" manualmente
   if (!dataFinal) {
     const matchDia = lower.match(/dia\s+(\d{1,2})/);
     if (matchDia) {
       const dia = parseInt(matchDia[1]);
       if (dia >= 1 && dia <= 31) {
-        const hoje = new Date();
-        const diaHoje = hoje.getDate();
-        let mes = hoje.getMonth();
-        let ano = hoje.getFullYear();
-        // Se o dia já passou neste mês, vai pro próximo
-        if (dia < diaHoje) {
+        const hojeISO = dateParaISO(new Date());
+        const [anoH, mesH, diaH] = hojeISO.split('-').map(Number);
+        let mes = mesH;
+        let ano = anoH;
+        if (dia < diaH) {
           mes += 1;
-          if (mes > 11) { mes = 0; ano += 1; }
+          if (mes > 12) { mes = 1; ano += 1; }
         }
-        dataFinal = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+        dataFinal = `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
       }
     }
   }
 
-  // Fallback: palavras comuns
   if (!dataFinal) {
-    const hoje = new Date();
-    if (lower === 'hoje') {
-      dataFinal = dateParaISO(hoje);
-    } else if (lower === 'amanhã' || lower === 'amanha') {
-      const amanha = new Date(hoje);
-      amanha.setDate(amanha.getDate() + 1);
-      dataFinal = dateParaISO(amanha);
-    } else if (lower.includes('semana que vem') || lower.includes('proxima semana') || lower.includes('próxima semana')) {
-      const prox = new Date(hoje);
-      prox.setDate(prox.getDate() + 7);
-      dataFinal = dateParaISO(prox);
-    } else if (lower.includes('mês que vem') || lower.includes('mes que vem') || lower.includes('próximo mês') || lower.includes('proximo mes')) {
-      const prox = new Date(hoje);
-      prox.setMonth(prox.getMonth() + 1);
-      dataFinal = dateParaISO(prox);
-    }
-  }
-
-  if (!dataFinal) {
-    return 'Não consegui entender a data 😅\n\nMe diz de um jeito mais direto:\n_Ex: "dia 20", "amanhã", "semana que vem", "dia 5 do mês que vem"_\n\n_Ou manda "cancelar" pra desistir._';
+    return 'Não consegui entender a data 😅\n\nMe diz de um jeito mais direto:\n_Ex: "sexta-feira", "dia 20", "amanhã", "semana que vem"_\n\n_Ou manda "cancelar" pra desistir._';
   }
 
   const { tipo, valor, descricao, categoria } = pendente;
