@@ -363,6 +363,50 @@ function extrairLinkMapsBruto(url, profundidade = 0) {
   }
 }
 
+function normalizarUrlHttp(url) {
+  if (!url) return null;
+  const texto = String(url).trim();
+  if (!texto) return null;
+
+  try {
+    const u = new URL(texto);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString();
+    return null;
+  } catch (_) {
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(texto)) return null;
+    try {
+      const u = new URL(`https://${texto}`);
+      return u.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+function ehLinkMaps(url) {
+  return !!extrairLinkMapsBruto(url);
+}
+
+function extrairSiteOficial(item, mapsLink) {
+  const candidatos = [
+    item.website,
+    item.site,
+    item.officialWebsite,
+    item.url,
+    item.link,
+  ];
+
+  for (const candidato of candidatos) {
+    const normalizado = normalizarUrlHttp(candidato);
+    if (!normalizado) continue;
+    if (ehLinkMaps(normalizado)) continue;
+    if (mapsLink && normalizado === mapsLink) continue;
+    return normalizado;
+  }
+
+  return '';
+}
+
 function extrairCoordenadasDeUrl(url) {
   if (!url) return null;
 
@@ -408,6 +452,7 @@ function extrairLocaisDeLocations(data, lat, lng) {
         titulo,
         descricao: loc.description || '',
         url: loc.url || '',
+        site: '',
         endereco,
         telefone,
         avaliacao: formatarAvaliacaoBrave(loc.rating),
@@ -437,6 +482,7 @@ function extrairLocaisDeWebMaps(data, lat, lng) {
         titulo: titulo || 'Local no Google Maps',
         descricao,
         url: mapsLink,
+        site: '',
         endereco: '',
         telefone: '',
         avaliacao: '',
@@ -540,6 +586,7 @@ function mapearLocalSerper(item, lat, lng) {
 
   const coordsDoLink = extrairCoordenadasDeUrl(mapsLink);
   const coords = coordsDoItem || coordsDoLink;
+  const site = extrairSiteOficial(item, mapsLink);
 
   const distanciaTextoSerper = typeof item.distance === 'string' ? item.distance : '';
   const distanciaMetrosTexto = parseDistanciaTexto(distanciaTextoSerper);
@@ -559,6 +606,7 @@ function mapearLocalSerper(item, lat, lng) {
     titulo,
     descricao: item.snippet || item.description || item.category || '',
     url: mapsLink,
+    site,
     endereco,
     telefone,
     avaliacao,
@@ -706,6 +754,7 @@ async function pesquisarLocal(query, lat, lng, maxResultados = 15) {
       titulo: `Buscar "${query}" no Google Maps`,
       descricao: 'Nao consegui listar locais agora, mas este link abre a busca no mapa na sua regiao.',
       url: buscaDiretaMaps,
+      site: '',
       endereco: '',
       telefone: '',
       avaliacao: '',
