@@ -2193,13 +2193,12 @@ async function handleBuscaLocal(usuarioId, resultado) {
     if (r.avaliacao || r.endereco) msg += '\n';
     if (r.telefone) msg += `📞 ${r.telefone}\n`;
     if (r.site) msg += `🌐 ${r.site}\n`;
-    if (r.fotosLink) msg += `📸 Ver fotos do local: ${r.fotosLink}\n`;
     if (r.distancia) msg += `📏 ${r.distancia}\n`;
     if (r.descricao) {
       const desc = r.descricao.length > 120 ? r.descricao.substring(0, 120) + '...' : r.descricao;
       msg += `${desc}\n`;
     }
-    msg += `🗺️ ${r.mapsLink}\n\n`;
+    msg += `🗺️ Abrir no Maps: ${r.mapsLink}\n\n`;
   }
 
   msg += '_📍 Sua localização fica salva por 30 min. Pode pedir mais buscas!_';
