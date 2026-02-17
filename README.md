@@ -1,22 +1,53 @@
-# BoiaClaude - Assistente Financeiro WhatsApp
+# Cronos (BoiaClaude) - Assistente Financeiro no WhatsApp
 
-Bot para controle financeiro pessoal via WhatsApp. Cadastre despesas e receitas, visualize resumos mensais e anuais, tudo direto pelo WhatsApp.
+Assistente pessoal para WhatsApp com foco em:
+- gestao financeira (despesas, receitas, saldo, pendencias, limites)
+- organizacao da rotina (lembretes unicos, recorrentes e agenda)
+- operacao compartilhada entre usuario master e contatos vinculados
 
-## Funcionalidades
+## Stack Atual
 
-- Cadastro de **despesas** e **receitas** com valor, descrição, categoria e data
-- **Resumo mensal** com totais e breakdown por categoria
-- **Resumo anual** com saldo por mês
-- **Listagem** dos últimos lançamentos
-- **Exclusão** de lançamentos
-- Dados armazenados localmente em SQLite
+- Runtime: Node.js 18+
+- Canal: `whatsapp-web.js` + `puppeteer-core`
+- Banco de dados: PostgreSQL (`pg`)
+- IA: OpenAI (interpretacao de mensagem, audio, imagem e extrato)
+- Busca web/local: Brave Search API
+- Agendamento: `node-cron`
+- Graficos: `chart.js` + `chartjs-node-canvas`
 
-## Pré-requisitos
+Observacao importante:
+- O projeto **nao usa SQLite**.
+- O schema e as migracoes basicas sao inicializados em `src/database.js`.
 
-- Node.js 18+
-- Google Chrome ou Chromium instalado (necessário para whatsapp-web.js)
+## Principais Funcionalidades
 
-## Instalação
+- Cadastro de despesas e receitas (pagas ou pendentes)
+- Consulta por filtros (tipo, categoria, descricao, periodo)
+- Resumo mensal e anual
+- Lista de lancamentos por tipo e periodo
+- Agenda consolidada (financas + lembretes + recorrentes)
+- Lembretes unicos e recorrentes
+- Liquidacao de pendencias (pagar/receber)
+- Limite por categoria com alertas
+- Importacao de extrato CSV com categorizacao por IA
+- Leitura de imagem (boleto/nota/cupom) e transacao assistida
+- Transcricao de audio
+- Busca na internet e busca local por geolocalizacao
+- Contatos compartilhados (master + secundarios)
+- Analise financeira (inclui fluxo 50/30/20)
+
+## Variaveis de Ambiente
+
+Copie `.env.example` para `.env` e configure:
+
+- `DATABASE_URL` (obrigatorio)
+- `OPENAI_API_KEY` (obrigatorio para IA)
+- `OPENAI_MODEL` (opcional)
+- `BRAVE_SEARCH_API_KEY` (obrigatorio para pesquisa web/local)
+- `CHROMIUM_PATH` (opcional, recomendado para Linux server)
+- `DEBUG_SHARED_CONTACTS=1` (opcional para debug de vinculos)
+
+## Instalacao
 
 ```bash
 git clone https://github.com/correageribaldi/BoiaClaude.git
@@ -24,52 +55,94 @@ cd BoiaClaude
 npm install
 ```
 
-## Uso
+## Execucao
 
 ```bash
 npm start
 ```
 
-Na primeira execução, um QR Code aparecerá no terminal. Escaneie-o com o WhatsApp:
+Na primeira execucao sera exibido um QR Code para conectar o WhatsApp.
 
-1. Abra o WhatsApp no celular
-2. Vá em **Dispositivos conectados** > **Conectar dispositivo**
-3. Escaneie o QR Code
+## Comandos e Intencoes Suportadas
 
-Após conectar, envie **ajuda** para o número conectado para ver os comandos.
+### Financeiro (direto)
 
-## Comandos
+- `despesa 50 almoco alimentacao`
+- `receita 3000 salario`
+- `lista`
+- `lista despesas`
+- `lista receitas`
+- `lista despesas amanha`
+- `lista receitas semana que vem`
+- `resumo`
+- `resumo 02/2026`
+- `resumo anual`
+- `saldo`
+- `pendentes`
+- `pagar 12`
+- `receber 7`
+- `excluir 5`
 
-| Comando | Descrição | Exemplo |
-|---------|-----------|---------|
-| `despesa <valor> <descrição> [categoria] [data]` | Registrar despesa | `despesa 50 Almoço Alimentação` |
-| `receita <valor> <descrição> [categoria] [data]` | Registrar receita | `receita 3000 Salário Salário` |
-| `resumo` | Resumo do mês atual | `resumo` |
-| `resumo <mês>` | Resumo de um mês | `resumo 01` |
-| `resumo anual` | Resumo do ano | `resumo anual` |
-| `lista` | Últimos 10 lançamentos | `lista` |
-| `lista despesas` | Últimas despesas | `lista despesas` |
-| `lista receitas` | Últimas receitas | `lista receitas` |
-| `excluir <id>` | Excluir lançamento | `excluir 5` |
-| `categorias` | Ver categorias | `categorias` |
-| `ajuda` | Ver todos os comandos | `ajuda` |
+### Limites
 
-## Categorias padrão
+- `definir limite alimentacao 1200`
+- `listar limites`
+- `remover limite alimentacao`
 
-Alimentação, Transporte, Moradia, Saúde, Educação, Lazer, Vestuário, Salário, Freelance, Investimentos, Outros
+### Lembretes e agenda
 
-## Estrutura
+- `me lembre daqui 30 minutos de ligar pro cliente`
+- `me lembra amanha as 8 de pagar internet`
+- `me lembra toda semana as 9 de fechar relatorio`
+- `lembretes`
+- `lembretes recorrentes`
+- `cancelar lembrete #10`
+- `cancelar recorrente #R4`
+- `agenda`
+- `agenda amanha`
+- `agenda semana`
+- `agenda mes`
 
-```
+### Conta compartilhada (master e secundarios)
+
+- `adicionar contato 5511999998888`
+- enviar contato anexado (vCard)
+- `contatos`
+- `remover contato`
+
+### IA e assistente
+
+- Linguagem natural para registrar/consultar financas
+- Audio para transacao e comandos
+- Imagem de boleto/nota/cupom
+- Importacao de extrato CSV
+- Busca web/local com localizacao
+
+## Arquitetura do Codigo
+
+```text
 src/
-├── index.js        # Entry point, conexão WhatsApp
-├── handlers.js     # Parser de comandos e lógica
-├── database.js     # Camada de dados SQLite
-└── formatters.js   # Formatação de mensagens
+|- index.js        # bootstrap do app, eventos WhatsApp, roteamento de mensagens
+|- handlers.js     # regra de negocio principal e fluxos conversacionais
+|- database.js     # acesso PostgreSQL, schema e consultas
+|- ai.js           # integracao OpenAI e prompts
+|- search.js       # integracao Brave Search
+|- lembretes.js    # jobs cron de lembretes
+|- charts.js       # geracao de graficos
+|- formatters.js   # formatacao de mensagens
 ```
 
-## Tecnologias
+## Fluxo Base de Processamento
 
-- [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) - Conexão WhatsApp
-- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - Banco de dados
-- [qrcode-terminal](https://github.com/gtanner/qrcode-terminal) - QR Code no terminal
+1. Mensagem chega no `src/index.js`.
+2. O bot identifica tipo (texto, audio, imagem, csv, localizacao, vcard).
+3. `src/handlers.js` decide o fluxo (comando direto ou IA).
+4. Persistencia/leitura ocorre via `src/database.js` (PostgreSQL).
+5. Resposta e eventuais notificacoes sao enviadas ao usuario no WhatsApp.
+
+## Observacoes Operacionais
+
+- Para servidor Linux, defina `CHROMIUM_PATH` para o binario valido do Chromium.
+- O bot foi pensado para execucao continua (ex: PM2/systemd).
+- A autenticacao WhatsApp fica em `.wwebjs_auth/` e `.wwebjs_cache/`.
+
