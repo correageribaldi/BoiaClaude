@@ -122,28 +122,42 @@ const charts = require('./charts');
 // Estado temporário para confirmações pendentes (expira em 5 min)
 const confirmacoesPendentes = new Map();
 
-// Estado para transações aguardando data (expira em 5 min)
-const dataPendente = new Map();
+// Estado para transações com dados incompletos (expira em 5 min)
+const transacaoPendente = new Map();
 
-function salvarDataPendente(usuarioId, dados) {
-  dataPendente.set(usuarioId, {
+function salvarTransacaoPendente(usuarioId, dados) {
+  transacaoPendente.set(usuarioId, {
     ...dados,
     expiraEm: Date.now() + 5 * 60 * 1000,
   });
 }
 
-function obterDataPendente(usuarioId) {
-  const dados = dataPendente.get(usuarioId);
+function obterTransacaoPendente(usuarioId) {
+  const dados = transacaoPendente.get(usuarioId);
   if (!dados) return null;
   if (Date.now() > dados.expiraEm) {
-    dataPendente.delete(usuarioId);
+    transacaoPendente.delete(usuarioId);
     return null;
   }
   return dados;
 }
 
-function limparDataPendente(usuarioId) {
-  dataPendente.delete(usuarioId);
+function limparTransacaoPendente(usuarioId) {
+  transacaoPendente.delete(usuarioId);
+}
+
+// Verifica o que falta e pergunta o próximo campo
+function perguntarProximoCampo(pendente) {
+  const { descricao, tipo } = pendente;
+  const acao = tipo === 'receita' ? 'recebimento' : 'pagamento';
+
+  if (!pendente.valor) {
+    return { campo: 'valor', msg: `💰 Qual o valor ${tipo === 'receita' ? 'desse recebimento' : 'desse pagamento'} de *${descricao}*?` };
+  }
+  if (!pendente.data) {
+    return { campo: 'data', msg: `📅 Pra que dia é ${tipo === 'receita' ? 'esse recebimento' : 'esse pagamento'} de *${descricao}*?\n\n_Ex: "sexta-feira", "dia 20", "amanhã", "hoje"_` };
+  }
+  return null; // tudo preenchido
 }
 
 // Lembretes aguardando horário (expira em 5 min)
@@ -587,10 +601,10 @@ async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
 
-  // Verificar se há transação aguardando data
-  const pendDate = obterDataPendente(usuarioId);
-  if (pendDate) {
-    return await handleDataPendenteResposta(usuarioId, msg, pendDate);
+  // Verificar se há transação com dados incompletos
+  const txPendente = obterTransacaoPendente(usuarioId);
+  if (txPendente) {
+    return await handleTransacaoPendenteResposta(usuarioId, msg, txPendente);
   }
 
   // Verificar se há confirmação pendente de imagem
@@ -1233,29 +1247,43 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     if (diaDetectadoTx) {
       resultado.data = diaDetectadoTx;
     }
-    const { tipo, valor, descricao, categoria, data, status } = resultado;
-
-    if (!tipo || !valor || !descricao) {
-      return `Não consegui extrair todas as informações. Tente ser mais específico.\n\nExemplo: _"gastei 50 reais no almoço"_`;
-    }
-
-    if (valor <= 0) {
-      return `❌ O valor precisa ser positivo.`;
-    }
-
-    // Resolver data: dia da semana, referências relativas, DD/MM/YYYY, YYYY-MM-DD
-    let dataFinal = resolverData(data);
-    // Fallback: tentar parse DD/MM/YYYY
-    if (!dataFinal && data && data.includes('/')) {
-      dataFinal = parseData(data);
-    }
-
+    const { tipo, descricao, categoria, status } = resultado;
+    const valor = resultado.valor && resultado.valor > 0 ? resultado.valor : null;
     const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
 
-    // Se é pendente e não tem data, perguntar pro usuário
-    if (statusFinal === 'pendente' && !dataFinal) {
-      salvarDataPendente(usuarioId, { tipo, valor, descricao, categoria });
-      return `Anotei! *${descricao}* no valor de *${fmt.formatarMoeda(valor)}* 👍\n\nPra que dia tu quer que eu programe ${tipo === 'receita' ? 'esse recebimento' : 'esse pagamento'}?\n\n_Ex: "sexta-feira", "dia 20", "amanhã", "semana que vem"_`;
+    // Resolver data
+    let dataFinal = resolverData(resultado.data);
+    if (!dataFinal && resultado.data && resultado.data.includes('/')) {
+      dataFinal = parseData(resultado.data);
+    }
+
+    // Se a descrição não foi identificada, pedir mais info
+    if (!tipo || !descricao) {
+      return `Não consegui extrair todas as informações. Tente ser mais específico.\n\nExemplo: _"gastei 50 reais no almoço"_ ou _"pagar aluguel sexta 1500"_`;
+    }
+
+    // Se falta valor ou data (em pendente), iniciar fluxo de perguntas
+    const faltaValor = !valor;
+    const faltaData = statusFinal === 'pendente' && !dataFinal;
+
+    if (faltaValor || faltaData) {
+      const pendente = {
+        tipo,
+        valor: valor || null,
+        descricao,
+        categoria: categoria || 'Outros',
+        data: dataFinal || null,
+        status: statusFinal,
+      };
+
+      const proximo = perguntarProximoCampo(pendente);
+      if (proximo) {
+        salvarTransacaoPendente(usuarioId, pendente);
+        let intro = `Anotei! *${descricao}*`;
+        if (valor) intro += ` no valor de *${fmt.formatarMoeda(valor)}*`;
+        if (dataFinal) intro += ` para *${fmt.formatarData(dataFinal)}*`;
+        return `${intro} 👍\n\n${proximo.msg}`;
+      }
     }
 
     return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
@@ -1313,68 +1341,105 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
   return msg;
 }
 
-async function handleDataPendenteResposta(usuarioId, texto, pendente) {
+// Extrai valor de um texto (ex: "150", "R$ 1.200,50", "mil reais", "50 reais")
+function extrairValorDoTexto(texto) {
+  const t = texto.replace(/\s+/g, ' ').trim();
+
+  // R$ 1.200,50 ou 1200,50 ou 1200.50
+  const matchMoeda = t.match(/R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})/);
+  if (matchMoeda) {
+    return parseFloat(matchMoeda[1].replace(/\./g, '').replace(',', '.'));
+  }
+
+  // Número com vírgula como decimal (50,90)
+  const matchVirgula = t.match(/(\d+),(\d{1,2})/);
+  if (matchVirgula) {
+    return parseFloat(`${matchVirgula[1]}.${matchVirgula[2]}`);
+  }
+
+  // Número simples (150, 1200)
+  const matchNum = t.match(/(\d+(?:\.\d+)?)/);
+  if (matchNum) {
+    return parseFloat(matchNum[1]);
+  }
+
+  return null;
+}
+
+// Extrai data de um texto usando todas as estratégias
+function extrairDataDoTexto(texto) {
+  const lower = texto.toLowerCase().trim();
+
+  // 1. Dia da semana
+  const dia = extrairDiaSemanaDoTexto(lower);
+  if (dia) return resolverData(dia);
+
+  // 2. resolverData direto (hoje, amanhã, ontem, YYYY-MM-DD, DD/MM/YYYY)
+  const resolvido = resolverData(lower);
+  if (resolvido) return resolvido;
+
+  // 3. "dia X"
+  const matchDia = lower.match(/dia\s+(\d{1,2})/);
+  if (matchDia) {
+    const d = parseInt(matchDia[1]);
+    if (d >= 1 && d <= 31) {
+      const hojeISO = dateParaISO(new Date());
+      const [anoH, mesH, diaH] = hojeISO.split('-').map(Number);
+      let mes = mesH;
+      let ano = anoH;
+      if (d < diaH) {
+        mes += 1;
+        if (mes > 12) { mes = 1; ano += 1; }
+      }
+      return `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+
+  return null;
+}
+
+async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
   const lower = texto.toLowerCase().trim();
 
   // Cancelar
-  if (lower === 'cancelar' || lower === 'deixa' || lower === 'esquece') {
-    limparDataPendente(usuarioId);
+  if (lower === 'cancelar' || lower === 'deixa' || lower === 'esquece' || lower === '0') {
+    limparTransacaoPendente(usuarioId);
     return '❌ Cancelado! Não salvei nada.';
   }
 
-  // Usar a IA para interpretar a data
-  const resultado = await interpretarMensagem(texto);
-
-  let dataFinal = null;
-
-  // 1. Detectar dia da semana diretamente no texto do usuário (mais confiável que a IA)
-  const diaDetectado = extrairDiaSemanaDoTexto(lower);
-  if (diaDetectado) {
-    dataFinal = resolverData(diaDetectado);
-  }
-
-  // 2. Tentar resolverData direto no texto (hoje, amanhã, ontem, DD/MM/YYYY, etc.)
-  if (!dataFinal) {
-    dataFinal = resolverData(lower);
-  }
-
-  // 3. Se a IA retornou uma data, resolver
-  if (!dataFinal && resultado && resultado.data) {
-    // Sobrescrever com dia da semana do texto se houver
-    const diaIA = extrairDiaSemanaDoTexto((resultado.data || '').toLowerCase());
-    dataFinal = resolverData(diaIA || resultado.data);
-    // Fallback: tentar parse DD/MM/YYYY
-    if (!dataFinal && resultado.data.includes('/')) {
-      dataFinal = parseData(resultado.data);
+  // Preencher campo que está faltando
+  if (!pendente.valor) {
+    // Aguardando valor
+    const valor = extrairValorDoTexto(texto);
+    if (!valor || valor <= 0) {
+      return '❌ Não entendi o valor. Me diz só o número:\n\n_Ex: "150", "R$ 1.200,50", "50 reais"_\n\n_Ou manda "cancelar" pra desistir._';
     }
-  }
+    pendente.valor = valor;
 
-  // 4. Fallback: tentar extrair "dia X" manualmente
-  if (!dataFinal) {
-    const matchDia = lower.match(/dia\s+(\d{1,2})/);
-    if (matchDia) {
-      const dia = parseInt(matchDia[1]);
-      if (dia >= 1 && dia <= 31) {
-        const hojeISO = dateParaISO(new Date());
-        const [anoH, mesH, diaH] = hojeISO.split('-').map(Number);
-        let mes = mesH;
-        let ano = anoH;
-        if (dia < diaH) {
-          mes += 1;
-          if (mes > 12) { mes = 1; ano += 1; }
-        }
-        dataFinal = `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
-      }
+    // Verificar se a data também veio junto na mesma resposta
+    const dataJunto = extrairDataDoTexto(texto);
+    if (dataJunto && !pendente.data) {
+      pendente.data = dataJunto;
     }
+  } else if (!pendente.data) {
+    // Aguardando data - também tentar extrair valor caso user mande tudo junto
+    const dataExtraida = extrairDataDoTexto(texto);
+    if (!dataExtraida) {
+      return 'Não consegui entender a data 😅\n\nMe diz de um jeito mais direto:\n_Ex: "sexta-feira", "dia 20", "amanhã", "hoje"_\n\n_Ou manda "cancelar" pra desistir._';
+    }
+    pendente.data = dataExtraida;
   }
 
-  if (!dataFinal) {
-    return 'Não consegui entender a data 😅\n\nMe diz de um jeito mais direto:\n_Ex: "sexta-feira", "dia 20", "amanhã", "semana que vem"_\n\n_Ou manda "cancelar" pra desistir._';
+  // Verificar se ainda falta algo
+  const proximo = perguntarProximoCampo(pendente);
+  if (proximo) {
+    salvarTransacaoPendente(usuarioId, pendente);
+    return proximo.msg;
   }
 
-  const { tipo, valor, descricao, categoria } = pendente;
-  limparDataPendente(usuarioId);
-  return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, 'pendente');
+  // Tudo completo! Salvar
+  limparTransacaoPendente(usuarioId);
+  return await salvarTransacao(usuarioId, pendente.tipo, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, pendente.status || 'pendente');
 }
 
 async function handleMensagemIA(usuarioId, texto) {
