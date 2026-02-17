@@ -19,6 +19,30 @@ const DIAS_SEMANA = {
   sabado: 6, sábado: 6, 'sab': 6, 'sáb': 6,
 };
 
+// Detecta menção a dia da semana no texto do usuário e retorna o nome normalizado
+function extrairDiaSemanaDoTexto(texto) {
+  const t = texto.toLowerCase();
+  // Ordem importa: checar nomes completos primeiro, depois abreviados
+  const padroes = [
+    { regex: /segunda[\s-]?feira/, nome: 'segunda' },
+    { regex: /ter[cç]a[\s-]?feira/, nome: 'terca' },
+    { regex: /quarta[\s-]?feira/, nome: 'quarta' },
+    { regex: /quinta[\s-]?feira/, nome: 'quinta' },
+    { regex: /sexta[\s-]?feira/, nome: 'sexta' },
+    { regex: /s[aá]bado/, nome: 'sabado' },
+    { regex: /domingo/, nome: 'domingo' },
+    { regex: /\bsegunda\b/, nome: 'segunda' },
+    { regex: /\bter[cç]a\b/, nome: 'terca' },
+    { regex: /\bquarta\b/, nome: 'quarta' },
+    { regex: /\bquinta\b/, nome: 'quinta' },
+    { regex: /\bsexta\b/, nome: 'sexta' },
+  ];
+  for (const p of padroes) {
+    if (p.regex.test(t)) return p.nome;
+  }
+  return null;
+}
+
 // Converte nome de dia da semana ou referência relativa em YYYY-MM-DD
 function resolverData(valor) {
   if (!valor) return null;
@@ -1098,6 +1122,12 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Lembrete único
   if (resultado.acao === 'lembrete') {
+    // Detectar dia da semana no texto original e sobrescrever data da IA (que erra o cálculo)
+    const diaDetectado = extrairDiaSemanaDoTexto(lower);
+    if (diaDetectado) {
+      console.log(`[LEMBRETE] dia da semana detectado no texto: "${diaDetectado}" (sobrescrevendo IA: "${resultado.data}")`);
+      resultado.data = diaDetectado;
+    }
     return await handleLembrete(usuarioId, resultado);
   }
 
@@ -1118,6 +1148,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Agenda - visão geral do dia/semana/mês
   if (resultado.acao === 'agenda') {
+    // Detectar dia da semana no texto e sobrescrever periodo da IA
+    const diaDetectadoAg = extrairDiaSemanaDoTexto(lower);
+    if (diaDetectadoAg) {
+      resultado.periodo = diaDetectadoAg;
+    }
     return await handleAgenda(usuarioId, resultado.periodo || 'hoje');
   }
 
@@ -1192,6 +1227,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
 
   // Transação via IA
   if (resultado.acao === 'transacao') {
+    // Detectar dia da semana no texto e sobrescrever data da IA
+    const diaDetectadoTx = extrairDiaSemanaDoTexto(lower);
+    if (diaDetectadoTx && resultado.data) {
+      resultado.data = diaDetectadoTx;
+    }
     const { tipo, valor, descricao, categoria, data, status } = resultado;
 
     if (!tipo || !valor || !descricao) {
