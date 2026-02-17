@@ -319,6 +319,59 @@ function obterLocalizacao(usuarioId) {
   return dados;
 }
 
+function normalizarTextoBuscaLocal(texto) {
+  return (texto || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function textoIndicaBuscaLocal(texto) {
+  const t = normalizarTextoBuscaLocal(texto);
+  if (!t) return false;
+
+  return /\b(perto de mim|aqui perto|nas proximidades|na regiao|por aqui|nearby|perto|proxim[oa]s?)\b/.test(t);
+}
+
+function textoCurtoPodeSerBuscaLocal(texto) {
+  const t = normalizarTextoBuscaLocal(texto).trim();
+  if (!t) return false;
+  if (t.length > 80) return false;
+
+  if (/\b(preco|cotacao|noticia|noticias|historia|significado|como|quando|por que|porque|quem|o que|tempo|clima|receita)\b/.test(t)) {
+    return false;
+  }
+
+  const palavras = t.split(/\s+/).filter(Boolean);
+  return palavras.length <= 6;
+}
+
+function limparMarcadoresDeProximidade(texto) {
+  if (!texto) return '';
+
+  const limpo = normalizarTextoBuscaLocal(texto)
+    .replace(/\b(perto de mim|aqui perto|nas proximidades|na regiao|por aqui|nearby)\b/g, ' ')
+    .replace(/\b(perto|proximo|proxima|proximos|proximas)\b/g, ' ')
+    .replace(/\b(me mostra|procura|pesquisa|buscar|quero|tem|algum|alguma)\b/g, ' ')
+    .replace(/[?!.,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return limpo;
+}
+
+function montarResultadoBuscaLocal(resultado, textoOriginal) {
+  const queryTexto = limparMarcadoresDeProximidade(textoOriginal);
+  const queryFallback = (resultado?.query || resultado?.pergunta || textoOriginal || '').trim();
+  const query = queryTexto || queryFallback;
+
+  return {
+    acao: 'busca_local',
+    query,
+    pergunta: resultado?.pergunta || query,
+  };
+}
+
 function salvarConfirmacao(usuarioId, dados) {
   confirmacoesPendentes.set(usuarioId, {
     ...dados,
@@ -1398,12 +1451,22 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   // Pesquisa na internet
   if (resultado.acao === 'pesquisa') {
+    const temLocalizacaoRecente = !!obterLocalizacao(usuarioId);
+    const deveForcarBuscaLocal = textoIndicaBuscaLocal(textoOriginal)
+      || (temLocalizacaoRecente && textoCurtoPodeSerBuscaLocal(textoOriginal));
+
+    if (deveForcarBuscaLocal) {
+      const resultadoLocal = montarResultadoBuscaLocal(resultado, textoOriginal);
+      console.log(`[BUSCA LOCAL] Forcando busca_local (acao original: pesquisa) query="${resultadoLocal.query}"`);
+      return await handleBuscaLocal(usuarioId, resultadoLocal);
+    }
+
     return await handlePesquisa(resultado);
   }
 
   // Busca local (por localização)
   if (resultado.acao === 'busca_local') {
-    return await handleBuscaLocal(usuarioId, resultado);
+    return await handleBuscaLocal(usuarioId, montarResultadoBuscaLocal(resultado, textoOriginal));
   }
 
   // Definir limite de gastos
@@ -2100,8 +2163,8 @@ async function handleBuscaLocal(usuarioId, resultado) {
     return 'Não entendi o que tu quer buscar por perto. Tenta reformular? 🤔';
   }
 
-  if (!process.env.GOOGLE_MAPS_API_KEY) {
-    return '🔍 A busca local está desabilitada no momento.\n\n_O administrador precisa configurar a GOOGLE_MAPS_API_KEY._';
+  if (!process.env.BRAVE_SEARCH_API_KEY) {
+    return '🔍 A busca local está desabilitada no momento.\n\n_O administrador precisa configurar a BRAVE_SEARCH_API_KEY._';
   }
 
   const loc = obterLocalizacao(usuarioId);
@@ -2128,19 +2191,10 @@ async function handleBuscaLocal(usuarioId, resultado) {
     if (r.endereco) msg += `📍 ${r.endereco}`;
     if (r.avaliacao || r.endereco) msg += '\n';
     if (r.telefone) msg += `📞 ${r.telefone}\n`;
+    if (r.distancia) msg += `📏 ${r.distancia}\n`;
     if (r.descricao) {
       const desc = r.descricao.length > 120 ? r.descricao.substring(0, 120) + '...' : r.descricao;
       msg += `${desc}\n`;
-    }
-    if (Array.isArray(r.avaliacoesRecentes) && r.avaliacoesRecentes.length > 0) {
-      msg += '🗣️ *Últimas avaliações:*\n';
-      for (const avaliacao of r.avaliacoesRecentes.slice(0, 3)) {
-        const nota = avaliacao.nota ? `⭐${avaliacao.nota}` : '⭐';
-        const textoAvaliacao = (avaliacao.texto || '').replace(/\s+/g, ' ').trim();
-        const resumo = textoAvaliacao.length > 90 ? `${textoAvaliacao.substring(0, 90)}...` : textoAvaliacao;
-        const tempo = avaliacao.tempoRelativo ? ` (${avaliacao.tempoRelativo})` : '';
-        msg += `- ${nota}${tempo}: ${resumo}\n`;
-      }
     }
     msg += `🗺️ ${r.mapsLink}\n\n`;
   }

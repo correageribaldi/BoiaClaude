@@ -68,81 +68,84 @@ function braveSearch(query, count = 5, opts = {}) {
   });
 }
 
-function googlePlacesRequest(path) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'maps.googleapis.com',
-      path,
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        try {
-          const body = Buffer.concat(chunks).toString();
-          const data = JSON.parse(body);
-          resolve(data);
-        } catch (err) {
-          reject(new Error(`Erro ao parsear resposta Google Places: ${err.message}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.setTimeout(10000, () => {
-      req.destroy();
-      reject(new Error('Timeout na busca Google Places'));
-    });
-    req.end();
-  });
+function toNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function formatarAvaliacaoGoogle(rating, total) {
-  if (!rating) return '';
-  if (!total) return `${rating}/5`;
-  return `${rating}/5 (${total} avaliacoes)`;
-}
+function formatarEndereco(valor) {
+  if (!valor) return '';
+  if (typeof valor === 'string') return valor;
 
-function extrairAvaliacoesRecentes(reviews, max = 3) {
-  if (!Array.isArray(reviews) || reviews.length === 0) return [];
-
-  const ordenadas = [...reviews]
-    .filter((r) => r && r.text)
-    .sort((a, b) => (b.time || 0) - (a.time || 0))
-    .slice(0, max);
-
-  return ordenadas.map((r) => ({
-    autor: r.author_name || 'Cliente',
-    nota: r.rating || null,
-    texto: r.text || '',
-    tempoRelativo: r.relative_time_description || '',
-  }));
-}
-
-async function buscarDetalhesGooglePlace(placeId, apiKey) {
-  if (!placeId) return null;
-
-  const params = new URLSearchParams({
-    place_id: placeId,
-    language: 'pt-BR',
-    reviews_sort: 'newest',
-    fields: 'place_id,name,formatted_address,formatted_phone_number,rating,user_ratings_total,reviews,url,geometry',
-    key: apiKey,
-  });
-
-  const path = `/maps/api/place/details/json?${params.toString()}`;
-  const data = await googlePlacesRequest(path);
-
-  if (!data || data.status !== 'OK' || !data.result) {
-    return null;
+  if (typeof valor === 'object') {
+    const partes = [
+      valor.streetAddress,
+      valor.addressLocality,
+      valor.addressRegion,
+      valor.postalCode,
+      valor.addressCountry,
+    ].filter(Boolean);
+    if (partes.length > 0) return partes.join(', ');
   }
 
-  return data.result;
+  return '';
+}
+
+function extrairCoordenadasLocal(local) {
+  if (!local || typeof local !== 'object') return null;
+
+  const candidatos = [
+    local.coordinates,
+    local.coordinate,
+    local.geo,
+    local.location,
+    local.latitude != null || local.longitude != null ? local : null,
+  ].filter(Boolean);
+
+  for (const c of candidatos) {
+    const lat = toNumber(c.lat ?? c.latitude);
+    const lng = toNumber(c.lng ?? c.lon ?? c.long ?? c.longitude);
+    if (lat != null && lng != null) {
+      return { lat, lng };
+    }
+  }
+
+  return null;
+}
+
+function calcularDistanciaMetros(lat1, lng1, lat2, lng2) {
+  const r = 6371000;
+  const toRad = (g) => (g * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return r * c;
+}
+
+function formatarDistancia(metros) {
+  if (!Number.isFinite(metros)) return '';
+  if (metros < 1000) return `${Math.round(metros)} m`;
+  return `${(metros / 1000).toFixed(1)} km`;
+}
+
+function formatarAvaliacaoBrave(rating) {
+  if (rating == null) return '';
+
+  if (typeof rating === 'number') {
+    return `${rating}/5`;
+  }
+
+  if (typeof rating === 'object') {
+    const valor = toNumber(rating.ratingValue ?? rating.value ?? rating.rating);
+    const total = toNumber(rating.ratingCount ?? rating.reviewCount ?? rating.count);
+    if (valor == null) return '';
+    if (total == null) return `${valor}/5`;
+    return `${valor}/5 (${total} avaliacoes)`;
+  }
+
+  return '';
 }
 
 async function pesquisarWeb(query, maxResultados = 5) {
@@ -185,76 +188,70 @@ async function pesquisarWeb(query, maxResultados = 5) {
 }
 
 async function pesquisarLocal(query, lat, lng, maxResultados = 5) {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-
-  if (!apiKey) {
-    console.error('[LOCAL] GOOGLE_MAPS_API_KEY nao configurada. Busca local desabilitada.');
+  if (!process.env.BRAVE_SEARCH_API_KEY) {
+    console.error('[LOCAL] BRAVE_SEARCH_API_KEY nao configurada. Busca local desabilitada.');
     return null;
   }
 
   try {
-    const params = new URLSearchParams({
-      query,
-      location: `${lat},${lng}`,
-      radius: '8000',
-      language: 'pt-BR',
-      region: 'br',
-      key: apiKey,
+    const queryLocal = `${query} perto de mim`;
+    console.log(`[LOCAL] Brave local: "${queryLocal}" (lat: ${lat}, lng: ${lng})`);
+
+    const data = await braveSearch(queryLocal, maxResultados + 5, {
+      lat,
+      lng,
+      result_filter: 'locations',
     });
 
-    console.log(`[LOCAL] Google Places Text Search: "${query}" (lat: ${lat}, lng: ${lng})`);
-
-    const path = `/maps/api/place/textsearch/json?${params.toString()}`;
-    const data = await googlePlacesRequest(path);
-
-    if (!data || (data.status !== 'OK' && data.status !== 'ZERO_RESULTS')) {
-      console.error(`[LOCAL] Google Places retornou status invalido: ${data?.status || 'desconhecido'}`);
+    if (!data || !data.locations || !Array.isArray(data.locations.results) || data.locations.results.length === 0) {
+      console.log('[LOCAL] Nenhum local encontrado no bloco locations.');
       return null;
     }
 
-    if (!Array.isArray(data.results) || data.results.length === 0) {
-      return null;
-    }
+    const resultados = data.locations.results
+      .map((loc) => {
+        const titulo = loc.title || loc.name || '';
+        const endereco = formatarEndereco(loc.postal_address || loc.address || loc.location?.address);
+        const telefone = loc.phone || '';
+        const coordenadas = extrairCoordenadasLocal(loc);
 
-    const base = data.results.slice(0, maxResultados);
+        const distanciaMetros = coordenadas
+          ? calcularDistanciaMetros(lat, lng, coordenadas.lat, coordenadas.lng)
+          : null;
 
-    const resultados = await Promise.all(base.map(async (place) => {
-      const placeId = place.place_id || null;
-      const details = placeId ? await buscarDetalhesGooglePlace(placeId, apiKey) : null;
+        const mapsLink = coordenadas
+          ? `https://maps.google.com/?q=${coordenadas.lat},${coordenadas.lng}`
+          : `https://maps.google.com/?q=${encodeURIComponent(`${titulo} ${endereco}`.trim())}`;
 
-      const nome = details?.name || place.name || '';
-      const endereco = details?.formatted_address || place.formatted_address || place.vicinity || '';
-      const telefone = details?.formatted_phone_number || '';
-      const rating = details?.rating || place.rating || null;
-      const totalAvaliacoes = details?.user_ratings_total || place.user_ratings_total || null;
-      const reviews = extrairAvaliacoesRecentes(details?.reviews || [], 3);
+        return {
+          titulo,
+          descricao: loc.description || '',
+          url: loc.url || '',
+          endereco,
+          telefone,
+          avaliacao: formatarAvaliacaoBrave(loc.rating),
+          mapsLink,
+          distancia: formatarDistancia(distanciaMetros),
+          distanciaMetros,
+          avaliacoesRecentes: [],
+        };
+      })
+      .filter((r) => r.titulo);
 
-      const latPlace = details?.geometry?.location?.lat || place.geometry?.location?.lat || null;
-      const lngPlace = details?.geometry?.location?.lng || place.geometry?.location?.lng || null;
+    resultados.sort((a, b) => {
+      if (a.distanciaMetros == null && b.distanciaMetros == null) return 0;
+      if (a.distanciaMetros == null) return 1;
+      if (b.distanciaMetros == null) return -1;
+      return a.distanciaMetros - b.distanciaMetros;
+    });
 
-      let mapsLink = '';
-      if (placeId) {
-        mapsLink = `https://www.google.com/maps/place/?q=place_id:${placeId}`;
-      } else if (latPlace != null && lngPlace != null) {
-        mapsLink = `https://maps.google.com/?q=${latPlace},${lngPlace}`;
-      } else {
-        mapsLink = `https://maps.google.com/?q=${encodeURIComponent(nome)}`;
-      }
+    const finais = resultados.slice(0, maxResultados).map((r) => {
+      const { distanciaMetros, ...resto } = r;
+      return resto;
+    });
 
-      return {
-        titulo: nome,
-        descricao: Array.isArray(place.types) ? place.types.slice(0, 3).join(', ') : '',
-        url: details?.url || '',
-        endereco,
-        telefone,
-        avaliacao: formatarAvaliacaoGoogle(rating, totalAvaliacoes),
-        mapsLink,
-        avaliacoesRecentes: reviews,
-      };
-    }));
-
-    console.log(`[LOCAL] ${resultados.length} resultados via Google Places.`);
-    return resultados.length > 0 ? resultados : null;
+    console.log(`[LOCAL] ${finais.length} locais retornados (somente locations).`);
+    return finais.length > 0 ? finais : null;
   } catch (err) {
     console.error('[LOCAL] Erro ao pesquisar:', err.message);
     return null;

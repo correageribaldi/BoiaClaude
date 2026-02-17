@@ -11,8 +11,7 @@ Assistente pessoal para WhatsApp com foco em:
 - Canal: `whatsapp-web.js` + `puppeteer-core`
 - Banco de dados: PostgreSQL (`pg`)
 - IA: OpenAI (interpretacao de mensagem, audio, imagem e extrato)
-- Busca web: Brave Search API
-- Busca local: Google Maps Places API
+- Busca web/local: Brave Search API
 - Agendamento: `node-cron`
 - Graficos: `chart.js` + `chartjs-node-canvas`
 
@@ -33,7 +32,8 @@ Observacao importante:
 - Importacao de extrato CSV com categorizacao por IA
 - Leitura de imagem (boleto/nota/cupom) e transacao assistida
 - Transcricao de audio
-- Busca na internet e busca local por geolocalizacao (Google Maps com endereco exato, estrelas e avaliacoes)
+- Busca na internet e busca local por geolocalizacao
+- Busca local prioriza somente resultados do bloco local (`locations`) da API Brave
 - Contatos compartilhados (master + secundarios)
 - Analise financeira (inclui fluxo 50/30/20)
 
@@ -44,8 +44,7 @@ Copie `.env.example` para `.env` e configure:
 - `DATABASE_URL` (obrigatorio)
 - `OPENAI_API_KEY` (obrigatorio para IA)
 - `OPENAI_MODEL` (opcional)
-- `BRAVE_SEARCH_API_KEY` (obrigatorio para pesquisa web)
-- `GOOGLE_MAPS_API_KEY` (obrigatorio para busca local)
+- `BRAVE_SEARCH_API_KEY` (obrigatorio para pesquisa web/local)
 - `CHROMIUM_PATH` (opcional, recomendado para Linux server)
 - `DEBUG_SHARED_CONTACTS=1` (opcional para debug de vinculos)
 
@@ -156,7 +155,7 @@ src/
 |- handlers.js     # regra de negocio principal e fluxos conversacionais
 |- database.js     # acesso PostgreSQL, schema e consultas
 |- ai.js           # integracao OpenAI e prompts
-|- search.js       # integracao Brave Search (web) + Google Places (local)
+|- search.js       # integracao Brave Search (web/local)
 |- lembretes.js    # jobs cron de lembretes
 |- charts.js       # geracao de graficos
 |- formatters.js   # formatacao de mensagens
