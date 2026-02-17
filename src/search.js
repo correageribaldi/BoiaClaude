@@ -121,6 +121,90 @@ function serperRequest(endpoint, payload) {
   });
 }
 
+const cacheReverseGeocode = new Map();
+
+function chaveCacheCoordenadas(lat, lng) {
+  const a = Number(lat).toFixed(3);
+  const b = Number(lng).toFixed(3);
+  return `${a},${b}`;
+}
+
+function formatarLocalizacaoPadrao(lat, lng) {
+  return `${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}, Brasil`;
+}
+
+async function reverseGeocodeNominatim(lat, lng) {
+  const key = chaveCacheCoordenadas(lat, lng);
+  const cached = cacheReverseGeocode.get(key);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.location;
+  }
+
+  return new Promise((resolve) => {
+    const params = new URLSearchParams({
+      format: 'jsonv2',
+      lat: String(lat),
+      lon: String(lng),
+      zoom: '14',
+      addressdetails: '1',
+      'accept-language': 'pt-BR',
+    });
+
+    const options = {
+      hostname: 'nominatim.openstreetmap.org',
+      path: `/reverse?${params.toString()}`,
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'CronosAssistente/1.0 (busca-local)',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        try {
+          const raw = Buffer.concat(chunks).toString();
+          const data = raw ? JSON.parse(raw) : {};
+          const addr = data.address || {};
+          const cidade = addr.city || addr.town || addr.village || addr.municipality || addr.county || '';
+          const estado = addr.state || addr.region || '';
+          const pais = addr.country || '';
+
+          let location = [cidade, estado, pais].filter(Boolean).join(', ');
+          if (!location && data.display_name) {
+            location = String(data.display_name)
+              .split(',')
+              .slice(0, 3)
+              .map((p) => p.trim())
+              .filter(Boolean)
+              .join(', ');
+          }
+
+          if (location) {
+            cacheReverseGeocode.set(key, {
+              location,
+              expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+            });
+            resolve(location);
+            return;
+          }
+        } catch (_) {}
+
+        resolve(null);
+      });
+    });
+
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
 function toNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -442,20 +526,28 @@ function extrairLocaisSerper(data, lat, lng) {
 async function pesquisarLocalSerper(query, lat, lng, maxResultados = 5) {
   if (!process.env.SERPER_API_KEY) return null;
 
+  const locationTexto = await reverseGeocodeNominatim(lat, lng);
+  const locationFallback = formatarLocalizacaoPadrao(lat, lng);
+  const locationFinal = locationTexto || locationFallback;
+  const cidade = locationFinal.split(',')[0]?.trim() || '';
+
   const payloadBase = {
     q: query,
     gl: 'br',
     hl: 'pt-br',
-    location: `${lat},${lng}`,
+    location: locationFinal,
     num: Math.max(maxResultados, 5),
+    autocorrect: true,
+    page: 1,
   };
 
   const endpoints = ['places', 'maps', 'search'];
-  const queries = [
-    query,
-    `${query} perto de mim`,
-    `${query} google maps`,
-  ];
+  const queries = [query];
+  if (cidade) queries.push(`${query} em ${cidade}`);
+  queries.push(`${query} perto de mim`);
+  queries.push(`${query} google maps`);
+
+  console.log(`[LOCAL][SERPER] location="${locationFinal}" (coords=${lat},${lng})`);
 
   const resultados = [];
   const existentes = new Set();

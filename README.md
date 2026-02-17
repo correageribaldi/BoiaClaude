@@ -35,6 +35,7 @@ Observacao importante:
 - Transcricao de audio
 - Busca na internet e busca local por geolocalizacao
 - Busca local usa Serper; se sem resultado, retorna link direto de busca no Google Maps
+- Busca local usa geocodificacao reversa (lat/lng -> cidade) para enviar `location` textual ao Serper
 - Contatos compartilhados (master + secundarios)
 - Analise financeira (inclui fluxo 50/30/20)
 
