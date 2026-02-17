@@ -8,6 +8,17 @@ function dateParaISO(d) {
   return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
 }
 
+function normalizarTextoBusca(texto) {
+  if (!texto) return '';
+  return String(texto)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\bamanh[^\s]*\b/g, 'amanha')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Mapa de nomes de dias da semana → número (0=dom, 1=seg, ..., 6=sab)
 const DIAS_SEMANA = {
   domingo: 0, dom: 0,
@@ -21,7 +32,7 @@ const DIAS_SEMANA = {
 
 // Detecta menção a dia da semana no texto do usuário e retorna o nome normalizado
 function extrairDiaSemanaDoTexto(texto) {
-  const t = texto.toLowerCase();
+  const t = normalizarTextoBusca(texto);
   // Ordem importa: checar nomes completos primeiro, depois abreviados
   const padroes = [
     { regex: /segunda[\s-]?feira/, nome: 'segunda' },
@@ -46,7 +57,7 @@ function extrairDiaSemanaDoTexto(texto) {
 // Converte nome de dia da semana ou referência relativa em YYYY-MM-DD
 function resolverData(valor) {
   if (!valor) return null;
-  const v = valor.toLowerCase().trim();
+  const v = normalizarTextoBusca(valor);
 
   console.log(`[resolverData] entrada: "${valor}" → normalizado: "${v}"`);
 
@@ -69,7 +80,7 @@ function resolverData(valor) {
 
   // Referências relativas
   if (v === 'hoje') return hojeISO;
-  if (v === 'amanha' || v === 'amanhã') {
+  if (v === 'amanha') {
     const d = new Date(hoje);
     d.setDate(d.getDate() + 1);
     return dateParaISO(d);
@@ -86,7 +97,7 @@ function resolverData(valor) {
   }
 
   // "dia 20" ou "dia 20 do proximo mes"
-  const diaProxMes = v.match(/^dia\s+(\d{1,2})\s+do\s+pr[oó]ximo\s+m[eê]s$/);
+  const diaProxMes = v.match(/^dia\s+(\d{1,2})\s+do\s+proximo\s+mes$/);
   if (diaProxMes) {
     const diaAlvo = parseInt(diaProxMes[1], 10);
     if (diaAlvo >= 1 && diaAlvo <= 31) {
@@ -407,7 +418,7 @@ function normalizarDataConsulta(valor, campo, pergunta) {
 }
 
 function extrairDataEspecificaNoTexto(texto) {
-  const t = (texto || '').toLowerCase();
+  const t = normalizarTextoBusca(texto);
   if (!t) return null;
 
   const isoMatch = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
@@ -421,7 +432,7 @@ function extrairDataEspecificaNoTexto(texto) {
     if (isDataIsoValida(dataBr)) return dataBr;
   }
 
-  const diaProxMes = t.match(/\bdia\s+(\d{1,2})\s+do\s+pr[oó]ximo\s+m[eê]s\b/);
+  const diaProxMes = t.match(/\bdia\s+(\d{1,2})\s+do\s+proximo\s+mes\b/);
   if (diaProxMes) {
     const data = resolverData(`dia ${diaProxMes[1]} do proximo mes`);
     if (isDataIsoValida(data)) return data;
@@ -435,7 +446,7 @@ function extrairDataEspecificaNoTexto(texto) {
 
   if (/\banteontem\b/.test(t)) return resolverData('anteontem');
   if (/\bontem\b/.test(t)) return resolverData('ontem');
-  if (/\bamanh[ãa]\b/.test(t)) return resolverData('amanha');
+  if (/\bamanha\b/.test(t)) return resolverData('amanha');
   if (/\bhoje\b/.test(t)) return resolverData('hoje');
 
   const diaSemana = extrairDiaSemanaDoTexto(t);
@@ -448,10 +459,10 @@ function extrairDataEspecificaNoTexto(texto) {
 }
 
 function textoIndicaDataUnica(texto) {
-  const t = (texto || '').toLowerCase();
+  const t = normalizarTextoBusca(texto);
   if (!t) return false;
 
-  if (/\bhoje\b|\bamanh[ãa]\b|\bontem\b|\banteontem\b/.test(t)) return true;
+  if (/\bhoje\b|\bamanha\b|\bontem\b|\banteontem\b/.test(t)) return true;
   if (/\b\d{4}-\d{2}-\d{2}\b/.test(t)) return true;
   if (/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/.test(t)) return true;
   if (/\bdia\s+\d{1,2}\b/.test(t)) return true;
@@ -460,26 +471,63 @@ function textoIndicaDataUnica(texto) {
   return false;
 }
 
-function extrairPeriodoLista(texto) {
-  const t = (texto || '').toLowerCase();
+function intervaloSemana(offsetSemanas = 0) {
+  const hojeISO = dateParaISO(new Date());
+  const [ano, mes, dia] = hojeISO.split('-').map(Number);
+  const base = new Date(ano, mes - 1, dia, 12, 0, 0);
+  const dow = base.getDay(); // 0=dom, 1=seg
+  const diffSegunda = dow === 0 ? -6 : 1 - dow;
+
+  const inicio = new Date(base);
+  inicio.setDate(base.getDate() + diffSegunda + (offsetSemanas * 7));
+  const fim = new Date(inicio);
+  fim.setDate(inicio.getDate() + 6);
+
+  return { dataInicio: dateParaISO(inicio), dataFim: dateParaISO(fim) };
+}
+
+function intervaloMes(offsetMeses = 0) {
+  const hojeISO = dateParaISO(new Date());
+  const [ano, mes] = hojeISO.split('-').map(Number);
+  const primeiro = new Date(ano, (mes - 1) + offsetMeses, 1, 12, 0, 0);
+  const ultimo = new Date(primeiro.getFullYear(), primeiro.getMonth() + 1, 0, 12, 0, 0);
+  return { dataInicio: dateParaISO(primeiro), dataFim: dateParaISO(ultimo) };
+}
+
+function extrairPeriodoNaturalNoTexto(texto) {
+  const t = normalizarTextoBusca(texto);
   if (!t) return null;
 
   const dataUnica = extrairDataEspecificaNoTexto(t);
   if (dataUnica) {
-    return { dataInicio: dataUnica, dataFim: dataUnica, rotulo: fmt.formatarData(dataUnica) };
+    return { dataInicio: dataUnica, dataFim: dataUnica, rotulo: fmt.formatarData(dataUnica), dataUnica: true };
   }
 
-  if (t.includes('semana')) {
-    const p = calcularPeriodo('semana');
-    return { dataInicio: p.dataInicio, dataFim: p.dataFim, rotulo: 'esta semana' };
+  if (t.includes('semana que vem') || t.includes('proxima semana')) {
+    const p = intervaloSemana(1);
+    return { ...p, rotulo: 'semana que vem', dataUnica: false };
   }
 
-  if (/\bm[eê]s\b/.test(t)) {
-    const p = calcularPeriodo('mes');
-    return { dataInicio: p.dataInicio, dataFim: p.dataFim, rotulo: 'este mes' };
+  if (t.includes('esta semana') || t.includes('essa semana') || t.includes('nessa semana') || t.includes('nesta semana') || t === 'semana') {
+    const p = intervaloSemana(0);
+    return { ...p, rotulo: 'esta semana', dataUnica: false };
+  }
+
+  if (t.includes('mes que vem') || t.includes('proximo mes')) {
+    const p = intervaloMes(1);
+    return { ...p, rotulo: 'proximo mes', dataUnica: false };
+  }
+
+  if (t.includes('este mes') || t.includes('esse mes') || t.includes('nesse mes') || t.includes('neste mes') || t === 'mes') {
+    const p = intervaloMes(0);
+    return { ...p, rotulo: 'este mes', dataUnica: false };
   }
 
   return null;
+}
+
+function extrairPeriodoLista(texto) {
+  return extrairPeriodoNaturalNoTexto(texto);
 }
 
 function normalizarNumeroContato(input) {
@@ -1931,6 +1979,12 @@ async function handleCancelarRecorrente(usuarioId, msg) {
 async function handleConsulta(usuarioId, consulta, textoOriginal = '') {
   let dataInicioNormalizada = normalizarDataConsulta(consulta.dataInicio, 'dataInicio', consulta.pergunta);
   let dataFimNormalizada = normalizarDataConsulta(consulta.dataFim, 'dataFim', consulta.pergunta);
+
+  const periodoNoTexto = extrairPeriodoNaturalNoTexto(textoOriginal);
+  if (periodoNoTexto) {
+    if (!dataInicioNormalizada) dataInicioNormalizada = periodoNoTexto.dataInicio;
+    if (!dataFimNormalizada) dataFimNormalizada = periodoNoTexto.dataFim;
+  }
 
   const dataNoTexto = extrairDataEspecificaNoTexto(textoOriginal);
   if (dataNoTexto) {
