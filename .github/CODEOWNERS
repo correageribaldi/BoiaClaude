@@ -1,0 +1,13 @@
+# Owners padrao do repositorio
+* @correageribaldi
+
+# Areas criticas
+/src/index.js @correageribaldi
+/src/handlers.js @correageribaldi
+/src/database.js @correageribaldi
+/src/ai.js @correageribaldi
+
+# Documentacao e governanca
+/README.md @correageribaldi
+/CONTRIBUTING.md @correageribaldi
+/.github/* @correageribaldi
