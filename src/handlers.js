@@ -85,6 +85,44 @@ function resolverData(valor) {
     return dateParaISO(d);
   }
 
+  // "dia 20" ou "dia 20 do proximo mes"
+  const diaProxMes = v.match(/^dia\s+(\d{1,2})\s+do\s+pr[oó]ximo\s+m[eê]s$/);
+  if (diaProxMes) {
+    const diaAlvo = parseInt(diaProxMes[1], 10);
+    if (diaAlvo >= 1 && diaAlvo <= 31) {
+      let anoAlvo = anoH;
+      let mesAlvo = mesH + 1;
+      if (mesAlvo > 12) {
+        mesAlvo = 1;
+        anoAlvo += 1;
+      }
+      const ultimoDiaMes = new Date(anoAlvo, mesAlvo, 0).getDate();
+      if (diaAlvo <= ultimoDiaMes) {
+        return `${anoAlvo}-${String(mesAlvo).padStart(2, '0')}-${String(diaAlvo).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  const diaMes = v.match(/^dia\s+(\d{1,2})$/);
+  if (diaMes) {
+    const diaAlvo = parseInt(diaMes[1], 10);
+    if (diaAlvo >= 1 && diaAlvo <= 31) {
+      let anoAlvo = anoH;
+      let mesAlvo = mesH;
+      if (diaAlvo < diaH) {
+        mesAlvo += 1;
+        if (mesAlvo > 12) {
+          mesAlvo = 1;
+          anoAlvo += 1;
+        }
+      }
+      const ultimoDiaMes = new Date(anoAlvo, mesAlvo, 0).getDate();
+      if (diaAlvo <= ultimoDiaMes) {
+        return `${anoAlvo}-${String(mesAlvo).padStart(2, '0')}-${String(diaAlvo).padStart(2, '0')}`;
+      }
+    }
+  }
+
   // Dia da semana → próxima ocorrência
   const diaSemanaAlvo = DIAS_SEMANA[v];
   if (diaSemanaAlvo !== undefined) {
@@ -365,6 +403,82 @@ function normalizarDataConsulta(valor, campo, pergunta) {
   }
 
   console.warn(`[CONSULTA] Ignorando ${campo} invalida da IA: "${valor}" (pergunta="${pergunta || ''}")`);
+  return null;
+}
+
+function extrairDataEspecificaNoTexto(texto) {
+  const t = (texto || '').toLowerCase();
+  if (!t) return null;
+
+  const isoMatch = t.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (isoMatch && isDataIsoValida(isoMatch[1])) {
+    return isoMatch[1];
+  }
+
+  const brMatch = t.match(/\b(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/);
+  if (brMatch) {
+    const dataBr = parseData(brMatch[1]);
+    if (isDataIsoValida(dataBr)) return dataBr;
+  }
+
+  const diaProxMes = t.match(/\bdia\s+(\d{1,2})\s+do\s+pr[oó]ximo\s+m[eê]s\b/);
+  if (diaProxMes) {
+    const data = resolverData(`dia ${diaProxMes[1]} do proximo mes`);
+    if (isDataIsoValida(data)) return data;
+  }
+
+  const diaMes = t.match(/\bdia\s+(\d{1,2})\b/);
+  if (diaMes) {
+    const data = resolverData(`dia ${diaMes[1]}`);
+    if (isDataIsoValida(data)) return data;
+  }
+
+  if (/\banteontem\b/.test(t)) return resolverData('anteontem');
+  if (/\bontem\b/.test(t)) return resolverData('ontem');
+  if (/\bamanh[ãa]\b/.test(t)) return resolverData('amanha');
+  if (/\bhoje\b/.test(t)) return resolverData('hoje');
+
+  const diaSemana = extrairDiaSemanaDoTexto(t);
+  if (diaSemana) {
+    const data = resolverData(diaSemana);
+    if (isDataIsoValida(data)) return data;
+  }
+
+  return null;
+}
+
+function textoIndicaDataUnica(texto) {
+  const t = (texto || '').toLowerCase();
+  if (!t) return false;
+
+  if (/\bhoje\b|\bamanh[ãa]\b|\bontem\b|\banteontem\b/.test(t)) return true;
+  if (/\b\d{4}-\d{2}-\d{2}\b/.test(t)) return true;
+  if (/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/.test(t)) return true;
+  if (/\bdia\s+\d{1,2}\b/.test(t)) return true;
+  if (extrairDiaSemanaDoTexto(t)) return true;
+
+  return false;
+}
+
+function extrairPeriodoLista(texto) {
+  const t = (texto || '').toLowerCase();
+  if (!t) return null;
+
+  const dataUnica = extrairDataEspecificaNoTexto(t);
+  if (dataUnica) {
+    return { dataInicio: dataUnica, dataFim: dataUnica, rotulo: fmt.formatarData(dataUnica) };
+  }
+
+  if (t.includes('semana')) {
+    const p = calcularPeriodo('semana');
+    return { dataInicio: p.dataInicio, dataFim: p.dataFim, rotulo: 'esta semana' };
+  }
+
+  if (/\bm[eê]s\b/.test(t)) {
+    const p = calcularPeriodo('mes');
+    return { dataInicio: p.dataInicio, dataFim: p.dataFim, rotulo: 'este mes' };
+  }
+
   return null;
 }
 
@@ -877,7 +991,25 @@ async function handleLista(usuarioId, msg) {
   if (lower.includes('despesa')) tipo = 'despesa';
   else if (lower.includes('receita')) tipo = 'receita';
 
-  const transacoes = await db.listarTransacoes(usuarioId, tipo, 10);
+  const periodo = extrairPeriodoLista(lower);
+  let transacoes;
+
+  if (periodo) {
+    transacoes = await db.consultarTransacoes(usuarioId, {
+      tipo,
+      dataInicio: periodo.dataInicio,
+      dataFim: periodo.dataFim,
+      limite: 50,
+    });
+
+    if (transacoes.length === 0) {
+      const alvo = tipo ? ` de ${tipo}s` : '';
+      return `📋 Nenhum lançamento${alvo} encontrado para ${periodo.rotulo}.`;
+    }
+  } else {
+    transacoes = await db.listarTransacoes(usuarioId, tipo, 10);
+  }
+
   return fmt.formatarListaTransacoes(transacoes);
 }
 
@@ -1203,7 +1335,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   // Consulta - buscar no banco e formatar resultado
   if (resultado.acao === 'consulta') {
-    return await handleConsulta(usuarioId, resultado);
+    return await handleConsulta(usuarioId, resultado, textoOriginal);
   }
 
   // Conversa casual - resposta humana e natural
@@ -1796,9 +1928,20 @@ async function handleCancelarRecorrente(usuarioId, msg) {
   return `✅ Lembrete recorrente #R${id} cancelado!\n\n_"${resultado.mensagem}"_`;
 }
 
-async function handleConsulta(usuarioId, consulta) {
-  const dataInicioNormalizada = normalizarDataConsulta(consulta.dataInicio, 'dataInicio', consulta.pergunta);
-  const dataFimNormalizada = normalizarDataConsulta(consulta.dataFim, 'dataFim', consulta.pergunta);
+async function handleConsulta(usuarioId, consulta, textoOriginal = '') {
+  let dataInicioNormalizada = normalizarDataConsulta(consulta.dataInicio, 'dataInicio', consulta.pergunta);
+  let dataFimNormalizada = normalizarDataConsulta(consulta.dataFim, 'dataFim', consulta.pergunta);
+
+  const dataNoTexto = extrairDataEspecificaNoTexto(textoOriginal);
+  if (dataNoTexto) {
+    if (!dataInicioNormalizada) dataInicioNormalizada = dataNoTexto;
+    if (!dataFimNormalizada) dataFimNormalizada = dataNoTexto;
+  }
+
+  if (textoIndicaDataUnica(textoOriginal)) {
+    if (dataInicioNormalizada && !dataFimNormalizada) dataFimNormalizada = dataInicioNormalizada;
+    if (!dataInicioNormalizada && dataFimNormalizada) dataInicioNormalizada = dataFimNormalizada;
+  }
 
   if (consulta.dataInicio && !dataInicioNormalizada) {
     return 'Nao consegui entender a data inicial da consulta. Tente novamente com um periodo mais claro, como "hoje", "amanha" ou "10/03/2026".';
