@@ -407,6 +407,21 @@ function extrairSiteOficial(item, mapsLink) {
   return '';
 }
 
+function construirLinkFotosLocal(item, mapsLink, titulo, endereco) {
+  if (item?.placeId) {
+    const q = encodeURIComponent(titulo || endereco || 'local');
+    const pid = encodeURIComponent(item.placeId);
+    return `https://www.google.com/maps/search/?api=1&query=${q}&query_place_id=${pid}&hl=pt-BR`;
+  }
+
+  if (mapsLink) {
+    return mapsLink;
+  }
+
+  const q = encodeURIComponent(`${titulo || ''} ${endereco || ''}`.trim() || 'local');
+  return `https://www.google.com/search?tbm=isch&q=${q}`;
+}
+
 function extrairCoordenadasDeUrl(url) {
   if (!url) return null;
 
@@ -453,6 +468,7 @@ function extrairLocaisDeLocations(data, lat, lng) {
         descricao: loc.description || '',
         url: loc.url || '',
         site: '',
+        fotosLink: mapsLink,
         endereco,
         telefone,
         avaliacao: formatarAvaliacaoBrave(loc.rating),
@@ -483,6 +499,7 @@ function extrairLocaisDeWebMaps(data, lat, lng) {
         descricao,
         url: mapsLink,
         site: '',
+        fotosLink: mapsLink,
         endereco: '',
         telefone: '',
         avaliacao: '',
@@ -587,6 +604,7 @@ function mapearLocalSerper(item, lat, lng) {
   const coordsDoLink = extrairCoordenadasDeUrl(mapsLink);
   const coords = coordsDoItem || coordsDoLink;
   const site = extrairSiteOficial(item, mapsLink);
+  const fotosLink = construirLinkFotosLocal(item, mapsLink, titulo, endereco);
 
   const distanciaTextoSerper = typeof item.distance === 'string' ? item.distance : '';
   const distanciaMetrosTexto = parseDistanciaTexto(distanciaTextoSerper);
@@ -607,6 +625,7 @@ function mapearLocalSerper(item, lat, lng) {
     descricao: item.snippet || item.description || item.category || '',
     url: mapsLink,
     site,
+    fotosLink,
     endereco,
     telefone,
     avaliacao,
@@ -755,6 +774,7 @@ async function pesquisarLocal(query, lat, lng, maxResultados = 15) {
       descricao: 'Nao consegui listar locais agora, mas este link abre a busca no mapa na sua regiao.',
       url: buscaDiretaMaps,
       site: '',
+      fotosLink: buscaDiretaMaps,
       endereco: '',
       telefone: '',
       avaliacao: '',

@@ -38,6 +38,7 @@ Observacao importante:
 - Busca local usa geocodificacao reversa (lat/lng -> rua/bairro/cidade) para enviar `location` textual ao Serper
 - Busca local ordena por proximidade e retorna ate 15 resultados (com filtro configuravel por `LOCAL_MAX_DISTANCE_KM`)
 - Busca local inclui link do site oficial do estabelecimento quando disponivel
+- Busca local inclui link `Ver fotos do local` para abrir o local no Google Maps
 - Contatos compartilhados (master + secundarios)
 - Analise financeira (inclui fluxo 50/30/20)
 
