@@ -156,17 +156,42 @@ function limparTituloMaps(titulo) {
     .trim();
 }
 
+function extrairLinkMapsBruto(url, profundidade = 0) {
+  if (!url || profundidade > 2) return null;
+
+  const texto = String(url).trim();
+  if (!texto) return null;
+
+  try {
+    const u = new URL(texto);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+
+    if (host === 'maps.app.goo.gl' || host === 'goo.gl') return u.toString();
+    if (host.startsWith('maps.google.')) return u.toString();
+    if (host === 'google.com' || host.endsWith('.google.com')) {
+      if (path.includes('/maps')) return u.toString();
+
+      for (const chave of ['url', 'q', 'u', 'dest', 'destination', 'redirect']) {
+        const valor = u.searchParams.get(chave);
+        if (!valor) continue;
+        const candidato = extrairLinkMapsBruto(valor, profundidade + 1);
+        if (candidato) return candidato;
+      }
+    }
+
+    const match = texto.match(/https?:\/\/[^"'\s]*google\.[^"'\s]*\/maps[^"'\s]*/i);
+    if (match) return match[0];
+    return null;
+  } catch (_) {
+    const match = texto.match(/https?:\/\/[^"'\s]*google\.[^"'\s]*\/maps[^"'\s]*/i);
+    return match ? match[0] : null;
+  }
+}
+
 function urlEhGoogleMaps(url) {
   if (!url) return false;
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    if (host === 'maps.app.goo.gl') return true;
-    if (host.endsWith('google.com') && u.pathname.toLowerCase().includes('/maps')) return true;
-    return false;
-  } catch (_) {
-    return false;
-  }
+  return !!extrairLinkMapsBruto(url);
 }
 
 function extrairCoordenadasDeUrl(url) {
@@ -230,18 +255,19 @@ function extrairLocaisDeWebMaps(data, lat, lng) {
   if (!data || !data.web || !Array.isArray(data.web.results)) return [];
 
   return data.web.results
-    .filter((r) => urlEhGoogleMaps(r.url))
     .map((r) => {
+      const mapsLink = extrairLinkMapsBruto(r.url);
+      if (!mapsLink) return null;
+
       const titulo = limparTituloMaps(r.title);
       const descricao = r.description || r.extra_snippets?.[0] || '';
-      const mapsLink = r.url;
-      const coords = extrairCoordenadasDeUrl(r.url);
+      const coords = extrairCoordenadasDeUrl(mapsLink);
       const distanciaMetros = coords ? calcularDistanciaMetros(lat, lng, coords.lat, coords.lng) : null;
 
       return {
         titulo: titulo || 'Local no Google Maps',
         descricao,
-        url: r.url,
+        url: mapsLink,
         endereco: '',
         telefone: '',
         avaliacao: '',
@@ -250,7 +276,8 @@ function extrairLocaisDeWebMaps(data, lat, lng) {
         distanciaMetros,
         avaliacoesRecentes: [],
       };
-    });
+    })
+    .filter(Boolean);
 }
 
 function normalizarChaveLocal(titulo, mapsLink) {
@@ -320,31 +347,50 @@ async function pesquisarLocal(query, lat, lng, maxResultados = 5) {
 
   try {
     const queryLocal = `${query} perto de mim`;
-    console.log(`[LOCAL] Brave local: "${queryLocal}" (lat: ${lat}, lng: ${lng})`);
+    const resultados = [];
+    const existentes = new Set();
 
-    const dataLocations = await braveSearch(queryLocal, maxResultados + 8, {
-      lat,
-      lng,
-      result_filter: 'locations',
-    });
+    const queriesLocations = [query, queryLocal];
+    for (const qLoc of queriesLocations) {
+      console.log(`[LOCAL] Brave locations: "${qLoc}" (lat: ${lat}, lng: ${lng})`);
+      const dataLocations = await braveSearch(qLoc, maxResultados + 8, {
+        lat,
+        lng,
+        result_filter: 'locations',
+      });
 
-    const resultados = extrairLocaisDeLocations(dataLocations, lat, lng);
+      const viaLocations = extrairLocaisDeLocations(dataLocations, lat, lng);
+      console.log(`[LOCAL] locations retornou ${viaLocations.length} itens para query="${qLoc}"`);
+      for (const local of viaLocations) {
+        const chave = normalizarChaveLocal(local.titulo, local.mapsLink);
+        if (existentes.has(chave)) continue;
+        resultados.push(local);
+        existentes.add(chave);
+        if (resultados.length >= maxResultados + 6) break;
+      }
+      if (resultados.length >= maxResultados) break;
+    }
 
     if (resultados.length === 0) {
       console.log('[LOCAL] Nenhum local em locations. Tentando fallback web maps-only...');
     }
 
     if (resultados.length < maxResultados) {
-      const queryMaps = `${queryLocal} site:google.com/maps`;
-      const dataWeb = await braveSearch(queryMaps, maxResultados + 12, {
-        lat,
-        lng,
-        result_filter: 'web',
-      });
+      const queriesWebMaps = [
+        `${queryLocal} site:google.com/maps`,
+        `${query} google maps`,
+        `${queryLocal} maps`,
+      ];
 
-      const viaWebMaps = extrairLocaisDeWebMaps(dataWeb, lat, lng);
-      if (viaWebMaps.length > 0) {
-        const existentes = new Set(resultados.map((r) => normalizarChaveLocal(r.titulo, r.mapsLink)));
+      for (const qWeb of queriesWebMaps) {
+        const dataWeb = await braveSearch(qWeb, maxResultados + 12, {
+          lat,
+          lng,
+          result_filter: 'web',
+        });
+
+        const viaWebMaps = extrairLocaisDeWebMaps(dataWeb, lat, lng);
+        console.log(`[LOCAL] web maps-only retornou ${viaWebMaps.length} itens para query="${qWeb}"`);
         for (const local of viaWebMaps) {
           const chave = normalizarChaveLocal(local.titulo, local.mapsLink);
           if (existentes.has(chave)) continue;
@@ -352,12 +398,24 @@ async function pesquisarLocal(query, lat, lng, maxResultados = 5) {
           existentes.add(chave);
           if (resultados.length >= maxResultados + 6) break;
         }
+        if (resultados.length >= maxResultados) break;
       }
     }
 
     if (resultados.length === 0) {
-      console.log('[LOCAL] Nenhum local encontrado (locations + web maps-only).');
-      return null;
+      const buscaDiretaMaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&center=${lat},${lng}`;
+      console.log('[LOCAL] Nenhum local encontrado (locations + web maps-only). Retornando link de busca direta.');
+      return [{
+        titulo: `Buscar "${query}" no Google Maps`,
+        descricao: 'Nao consegui listar locais agora, mas este link abre a busca no mapa na sua regiao.',
+        url: buscaDiretaMaps,
+        endereco: '',
+        telefone: '',
+        avaliacao: '',
+        mapsLink: buscaDiretaMaps,
+        distancia: '',
+        avaliacoesRecentes: [],
+      }];
     }
 
     ordenarPorDistancia(resultados);
