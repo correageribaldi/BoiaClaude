@@ -1083,7 +1083,8 @@ async function handleLiquidar(usuarioId, msg) {
     `📂 ${transacao.categoria}`;
 }
 
-async function processarResultadoIA(usuarioId, resultado, fallbackMsg) {
+async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOriginal) {
+  const lower = (textoOriginal || '').toLowerCase();
   if (!resultado) {
     if (fallbackMsg) return fallbackMsg;
     const usuario = await db.buscarUsuario(usuarioId);
@@ -1405,7 +1406,7 @@ async function handleMensagemIA(usuarioId, texto) {
     }
   }
 
-  return await processarResultadoIA(usuarioId, resultado);
+  return await processarResultadoIA(usuarioId, resultado, null, texto);
 }
 
 async function handleImageMessage(usuarioId, base64Data, mimetype) {
