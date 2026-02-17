@@ -353,6 +353,7 @@ function limparMarcadoresDeProximidade(texto) {
     .replace(/\b(perto de mim|aqui perto|nas proximidades|na regiao|por aqui|nearby)\b/g, ' ')
     .replace(/\b(perto|proximo|proxima|proximos|proximas)\b/g, ' ')
     .replace(/\b(me mostra|procura|pesquisa|buscar|quero|tem|algum|alguma)\b/g, ' ')
+    .replace(/\b(boa|boas|bom|bons|melhor|melhores)\b/g, ' ')
     .replace(/[?!.,;:]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

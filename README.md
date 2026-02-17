@@ -33,7 +33,7 @@ Observacao importante:
 - Leitura de imagem (boleto/nota/cupom) e transacao assistida
 - Transcricao de audio
 - Busca na internet e busca local por geolocalizacao
-- Busca local prioriza somente resultados do bloco local (`locations`) da API Brave
+- Busca local prioriza `locations` da API Brave, com fallback web restrito a links Google Maps
 - Contatos compartilhados (master + secundarios)
 - Analise financeira (inclui fluxo 50/30/20)
 
