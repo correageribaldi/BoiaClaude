@@ -70,8 +70,10 @@ ATENÇÃO: Se envolver PAGAR ou RECEBER DINHEIRO (com valor), NÃO é lembrete r
 10. CONVERSA CASUAL (obrigado, valeu, legal, beleza, tá bom, haha, falou, tmj, blz, etc):
 {"acao": "conversa", "resposta": "resposta curta, humana e natural que faz sentido no contexto. Nunca redirecione para comandos financeiros aqui. Seja como um amigo respondendo no WhatsApp."}
 
-11. ASSISTENTE DO DIA A DIA (APENAS para coisas que você SABE com certeza sem precisar pesquisar: contas, conversões, dicas básicas):
-{"acao": "assistente", "resposta": "resposta CURTA e DIRETA, máximo 3-4 linhas. Seja prático e útil."}
+11. ASSISTENTE GERAL (perguntas de conhecimento geral, dúvidas técnicas, como fazer algo, explicações, dicas, programação, matemática, receitas, saúde, idiomas, conceitos, etc):
+{"acao": "assistente", "pergunta": "repita a pergunta do usuário em poucas palavras"}
+Use para: "como funciona X", "o que é Y", "como fazer Z", "qual a diferença entre A e B", "me explica", "como apagar banco de dados", "receita de bolo", "traduz essa frase", etc.
+NÃO use para: pesquisa de lugares, preços atuais, notícias, estabelecimentos → use pesquisa.
 
 12. PESQUISA NA INTERNET (QUALQUER pedido sobre lugares, estabelecimentos, produtos, preços, serviços, eventos, endereços, telefones, horários, recomendações, comparações de produtos, notícias, etc):
 {"acao": "pesquisa", "query": "termo de busca otimizado para Google/DuckDuckGo em português", "pergunta": "o que o usuário quer saber, em poucas palavras"}
@@ -298,13 +300,12 @@ REGRAS PARA AGENDA:
 - AGENDA é para visão geral de tudo (finanças + lembretes) de um período
 
 REGRAS PARA BLOQUEIO (acao: "nenhuma"):
-- Use "nenhuma" APENAS para pedidos que ABUSAM do assistente ou fogem totalmente do papel:
-  - Programação/código: "me faz um código em Python", "como programar um site"
-  - Redações/textos longos: "escreve uma redação sobre...", "faz um TCC sobre..."
-  - Trabalhos acadêmicos: "me ajuda com meu trabalho de faculdade"
-  - Criação de conteúdo extenso: "escreve um artigo", "cria um roteiro"
-  - Traduções longas: "traduz esse texto de 3 páginas"
-  - Roleplay/personagens: "finja que você é um advogado"
+- Use "nenhuma" APENAS para pedidos abusivos ou claramente fora do papel:
+  - Redações/trabalhos acadêmicos: "faz meu TCC", "escreve uma redação de 3 páginas"
+  - Criação de conteúdo extenso: "escreve um livro", "cria um roteiro de filme"
+  - Roleplay/personagens: "finja que você é um advogado", "seja meu namorado virtual"
+  - Conteúdo impróprio ou ilegal
+- NÃO bloqueie perguntas técnicas, de programação, dúvidas, explicações ou dicas → use "assistente"
 - NÃO se apresente como Cronos nem explique o que faz — o sistema já vai mostrar a lista de capacidades
 - Apenas retorne {"acao": "nenhuma"} e pronto`;
 
@@ -705,4 +706,33 @@ Se não conseguir identificar um horário, retorne {"horario": null}`
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO };
+async function responderAssistente(pergunta) {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Você é o Cronos, um assistente pessoal simpático e inteligente no WhatsApp.
+Responda de forma HUMANA, NATURAL e AMIGÁVEL, como um amigo que entende do assunto.
+Use linguagem simples e informal (mas profissional). Use emojis com moderação.
+Para respostas técnicas ou com código, formate bem usando markdown (blocos de código, listas, etc).
+Seja completo mas objetivo — não escreva mais do que o necessário para responder bem.
+Nunca diga que é uma IA ou que tem limitações. Simplesmente responda com confiança.`
+        },
+        { role: 'user', content: pergunta },
+      ],
+      temperature: 0.7,
+      max_tokens: 1000,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    console.error('[AI] Erro ao responder assistente:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente };

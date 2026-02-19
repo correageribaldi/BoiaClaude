@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -1447,7 +1447,10 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   // Assistente do dia a dia - respostas rápidas e práticas
   if (resultado.acao === 'assistente') {
-    return resultado.resposta;
+    // Segunda chamada dedicada com prompt conversacional e sem limite curto de tokens
+    const pergunta = resultado.pergunta || textoOriginal;
+    const resposta = await responderAssistente(pergunta);
+    return resposta || '❌ Não consegui processar sua pergunta. Tente de novo!';
   }
 
   // Pesquisa na internet
