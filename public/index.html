@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cronos — Painel Financeiro</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ── Tela de acesso negado ─────────────────────────────────────────────── -->
+<div id="tela-login" class="hidden">
+  <div class="login-box">
+    <div class="login-logo">💸</div>
+    <h1>Cronos Financeiro</h1>
+    <p>Para acessar seu painel, envie <strong>meu painel</strong> para o bot no WhatsApp e clique no link gerado.</p>
+  </div>
+</div>
+
+<!-- ── App principal ─────────────────────────────────────────────────────── -->
+<div id="app" class="hidden">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <span class="header-logo">💸</span>
+      <span class="header-title">Cronos</span>
+    </div>
+    <div class="header-user" id="header-user"></div>
+  </header>
+
+  <!-- Conteúdo -->
+  <main class="main-content">
+
+    <!-- ── Visão Geral ─────────────────────────────────────────────────── -->
+    <section id="tab-dashboard" class="tab-content active">
+      <div class="section-header">
+        <h2>Visão Geral</h2>
+        <div class="month-nav">
+          <button class="btn-icon" id="dash-prev">‹</button>
+          <span id="dash-mes-label">—</span>
+          <button class="btn-icon" id="dash-next">›</button>
+        </div>
+      </div>
+
+      <div class="cards-grid" id="dash-cards">
+        <div class="card card-neutral"><div class="card-label">Saldo Atual</div><div class="card-value" id="c-saldo">—</div></div>
+        <div class="card card-green"><div class="card-label">Receitas Pagas</div><div class="card-value" id="c-receitas">—</div></div>
+        <div class="card card-red"><div class="card-label">Despesas Pagas</div><div class="card-value" id="c-despesas">—</div></div>
+        <div class="card card-orange"><div class="card-label">A Pagar</div><div class="card-value" id="c-pendentes">—</div></div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-card">
+          <h3>Despesas por Categoria</h3>
+          <div class="chart-wrap"><canvas id="chart-categorias"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <h3>Receitas vs Despesas (últimos 6 meses)</h3>
+          <div class="chart-wrap"><canvas id="chart-mensal"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Transações ──────────────────────────────────────────────────── -->
+    <section id="tab-transactions" class="tab-content hidden">
+      <div class="section-header">
+        <h2>Transações</h2>
+        <div class="month-nav">
+          <button class="btn-icon" id="tx-prev">‹</button>
+          <span id="tx-mes-label">—</span>
+          <button class="btn-icon" id="tx-next">›</button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="filter-tabs">
+          <button class="filter-tab active" data-filter="">Todas</button>
+          <button class="filter-tab" data-filter="pago">Pagas</button>
+          <button class="filter-tab" data-filter="pendente">A Pagar</button>
+          <button class="filter-tab" data-filter-tipo="receita">Receitas</button>
+          <button class="filter-tab" data-filter-tipo="despesa">Despesas</button>
+        </div>
+        <input class="search-input" id="tx-search" type="text" placeholder="Buscar por descrição..." />
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="tx-table">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Descrição</th>
+              <th>Categoria</th>
+              <th class="text-right">Valor</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tx-tbody"></tbody>
+        </table>
+        <div id="tx-empty" class="empty-state hidden">Nenhuma transação encontrada.</div>
+      </div>
+
+      <div class="pagination" id="tx-pagination"></div>
+    </section>
+
+    <!-- ── Categorias ──────────────────────────────────────────────────── -->
+    <section id="tab-categories" class="tab-content hidden">
+      <div class="section-header"><h2>Minhas Categorias</h2></div>
+
+      <div class="create-bar">
+        <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova categoria..." maxlength="50" />
+        <button class="btn btn-primary" id="cat-criar">+ Criar</button>
+      </div>
+
+      <div class="cat-grid" id="cat-grid"></div>
+    </section>
+
+    <!-- ── Agenda ──────────────────────────────────────────────────────── -->
+    <section id="tab-agenda" class="tab-content hidden">
+      <div class="section-header">
+        <h2>Minha Agenda</h2>
+        <div class="month-nav">
+          <button class="btn-icon" id="ag-prev">‹</button>
+          <span id="ag-mes-label">—</span>
+          <button class="btn-icon" id="ag-next">›</button>
+        </div>
+      </div>
+
+      <div id="ag-list"></div>
+      <div id="ag-empty" class="empty-state hidden">Nenhum lembrete neste mês.</div>
+    </section>
+
+  </main>
+
+  <!-- Bottom nav -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="dashboard">
+      <span class="nav-icon">📊</span>
+      <span class="nav-label">Visão Geral</span>
+    </button>
+    <button class="nav-btn" data-tab="transactions">
+      <span class="nav-icon">💳</span>
+      <span class="nav-label">Transações</span>
+    </button>
+    <button class="nav-btn" data-tab="categories">
+      <span class="nav-icon">🏷️</span>
+      <span class="nav-label">Categorias</span>
+    </button>
+    <button class="nav-btn" data-tab="agenda">
+      <span class="nav-icon">📅</span>
+      <span class="nav-label">Agenda</span>
+    </button>
+  </nav>
+
+</div><!-- /#app -->
+
+<script src="/js/app.js"></script>
+</body>
+</html>

@@ -252,6 +252,22 @@ async function initTables() {
       ON contatos_compartilhados(contato_id);
   `);
 
+  // Tabela de tokens para o painel web
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS painel_tokens (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      expira_em TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_painel_tokens_token
+      ON painel_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_painel_tokens_usuario
+      ON painel_tokens(usuario_id);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -916,6 +932,51 @@ async function obterVinculoSecundario(usuarioId) {
   return result.rows[0] || null;
 }
 
+// === PAINEL WEB ===
+
+async function gerarTokenPainel(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const { randomBytes } = require('crypto');
+  const token = randomBytes(48).toString('hex');
+  await pool.query(
+    `INSERT INTO painel_tokens (usuario_id, token, expira_em)
+     VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+    [uid, token]
+  );
+  return token;
+}
+
+async function verificarTokenPainel(token) {
+  if (!token || typeof token !== 'string' || token.length > 200) return null;
+  const result = await pool.query(
+    `SELECT usuario_id FROM painel_tokens
+     WHERE token = $1 AND expira_em > NOW()
+     LIMIT 1`,
+    [token]
+  );
+  if (!result.rows[0]) return null;
+  return { usuarioId: result.rows[0].usuario_id };
+}
+
+async function limparTokensExpirados() {
+  await pool.query(`DELETE FROM painel_tokens WHERE expira_em < NOW()`);
+}
+
+async function criarCategoria(nome) {
+  await pool.query(
+    'INSERT INTO categorias (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING',
+    [nome.trim()]
+  );
+}
+
+async function excluirCategoria(nome) {
+  const result = await pool.query(
+    'DELETE FROM categorias WHERE nome = $1 RETURNING nome',
+    [nome]
+  );
+  return result.rows[0] || null;
+}
+
 async function removerContatoCompartilhado(usuarioId, contatoId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const variantesContato = gerarVariantesContatoId(contatoId);
@@ -974,4 +1035,9 @@ module.exports = {
   obterVinculoSecundario,
   removerContatoCompartilhado,
   resolverUsuarioPrincipal,
+  gerarTokenPainel,
+  verificarTokenPainel,
+  limparTokensExpirados,
+  criarCategoria,
+  excluirCategoria,
 };

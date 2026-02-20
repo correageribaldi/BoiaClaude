@@ -5,6 +5,7 @@ const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessag
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const { iniciarLembretes } = require('./lembretes');
+const { iniciarWebServer } = require('./webserver');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
@@ -261,6 +262,9 @@ async function start() {
     console.error('❌ Erro ao conectar no PostgreSQL:', err.message);
     process.exit(1);
   }
+
+  // Iniciar servidor web (painel financeiro)
+  iniciarWebServer();
 
   if (process.env.OPENAI_API_KEY) {
     console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');

@@ -869,6 +869,18 @@ ${ajudaMsg()}
 _Aproveite!_`;
 }
 
+async function handleMeuPainel(usuarioId) {
+  try {
+    const token = await db.gerarTokenPainel(usuarioId);
+    const baseUrl = (process.env.PAINEL_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const url = `${baseUrl}/painel?token=${token}`;
+    return `🖥️ *Seu painel financeiro pessoal está pronto!*\n\n${url}\n\n_Link válido por 7 dias. Digite "meu painel" para gerar um novo a qualquer momento._ 🔒`;
+  } catch (err) {
+    console.error('[PAINEL] Erro ao gerar token:', err.message);
+    return `Ops, tive um problema ao gerar o link do painel. Tenta novamente!`;
+  }
+}
+
 // Palavras que indicam que o usuário confirmou pagamento/recebimento
 const PALAVRAS_PAGAMENTO_CONFIRMADO = [
   'paguei', 'ja paguei', 'já paguei', 'pago', 'já pago', 'ja pago',
@@ -981,6 +993,11 @@ async function handleMessage(usuarioId, texto) {
   // Comando: finanças em dia (texto direto)
   if (lower === 'finanças em dia' || lower === 'financas em dia' || lower === '1') {
     return await iniciarPontoZero(usuarioId);
+  }
+
+  // Comando: painel web
+  if (lower === 'meu painel' || lower === 'painel' || lower === 'dashboard') {
+    return await handleMeuPainel(usuarioId);
   }
 
   // Comando: ajuda / menu / help
