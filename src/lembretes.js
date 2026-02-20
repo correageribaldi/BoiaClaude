@@ -1,6 +1,10 @@
 const cron = require('node-cron');
 const db = require('./database');
 const fmt = require('./formatters');
+// Importação lazy para evitar dependência circular (handlers importa db, lembretes importa handlers)
+function getHandlers() {
+  return require('./handlers');
+}
 
 // Gera mensagens humanizadas por rodada
 function gerarMensagem(rodada, transacoes) {
@@ -80,6 +84,16 @@ async function executarRodada(client, rodada) {
       try {
         await client.sendMessage(usuarioId, mensagem);
         console.log(`[LEMBRETE] Rodada ${rodada}: enviado para ${usuarioId} (${aindaPendentes.length} contas)`);
+
+        // Registrar estado para capturar confirmação de pagamento do usuário
+        try {
+          const { registrarLembreteAtivo } = getHandlers();
+          const ids = aindaPendentes.map(t => t.id);
+          const info = aindaPendentes.map(t => ({ id: t.id, numero_usuario: t.numero_usuario, descricao: t.descricao, valor: t.valor, tipo: t.tipo }));
+          registrarLembreteAtivo(usuarioId, ids, info);
+        } catch (err) {
+          console.error(`[LEMBRETE] Erro ao registrar estado de confirmação:`, err.message);
+        }
 
         // Registrar cada lembrete enviado
         for (const t of aindaPendentes) {

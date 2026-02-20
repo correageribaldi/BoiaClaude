@@ -229,6 +229,32 @@ function obterLembretePendente(usuarioId) {
   return dados;
 }
 
+// Estado de confirmação de lembretes financeiros (aguardando resposta do usuário após rodada)
+// Expira em 4 horas (cobre o intervalo entre rodadas)
+const confirmacaoLembrete = new Map();
+
+function registrarLembreteAtivo(usuarioId, transacaoIds, transacoesInfo) {
+  confirmacaoLembrete.set(usuarioId, {
+    transacaoIds,    // array de IDs internos do banco (t.id)
+    transacoesInfo,  // array de { id, numero_usuario, descricao, valor, tipo } para mensagens
+    expiraEm: Date.now() + 4 * 60 * 60 * 1000,
+  });
+}
+
+function obterConfirmacaoLembrete(usuarioId) {
+  const dados = confirmacaoLembrete.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    confirmacaoLembrete.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparConfirmacaoLembrete(usuarioId) {
+  confirmacaoLembrete.delete(usuarioId);
+}
+
 // Estado do fluxo Finanças em Dia (expira em 30 min)
 const pontoZeroEstados = new Map();
 
@@ -843,9 +869,73 @@ ${ajudaMsg()}
 _Aproveite!_`;
 }
 
+// Palavras que indicam que o usuário confirmou pagamento/recebimento
+const PALAVRAS_PAGAMENTO_CONFIRMADO = [
+  'paguei', 'ja paguei', 'já paguei', 'pago', 'já pago', 'ja pago',
+  'sim', 'confirmado', 'feito', 'ok', 'okay', 'sim paguei',
+  'recebi', 'já recebi', 'ja recebi', 'recebido',
+  'foi', 'pronto', 'done', 'realizado', 'efetuado',
+  'acabei de pagar', 'acabei de receber',
+];
+
+async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
+  const normalizado = lower
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const confirmou = PALAVRAS_PAGAMENTO_CONFIRMADO.some(p =>
+    normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
+  );
+
+  if (!confirmou) {
+    // Usuário não confirmou — limpar estado para não bloquear fluxo normal
+    limparConfirmacaoLembrete(usuarioId);
+    // Processar como mensagem normal
+    return null;
+  }
+
+  // Marcar todas as transações do lembrete como pagas
+  const { transacaoIds, transacoesInfo } = estado;
+  limparConfirmacaoLembrete(usuarioId);
+
+  const pagas = [];
+  for (const id of transacaoIds) {
+    try {
+      const result = await db.liquidarTransacaoPorId(id);
+      if (result) pagas.push(result);
+    } catch (err) {
+      console.error(`[CONFIRMACAO_LEMBRETE] Erro ao liquidar transacao ${id}:`, err.message);
+    }
+  }
+
+  if (pagas.length === 0) {
+    return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
+  }
+
+  if (pagas.length === 1) {
+    const t = pagas[0];
+    const acao = t.tipo === 'despesa' ? 'pagamento' : 'recebimento';
+    return `✅ *${t.descricao}* marcada como ${acao === 'pagamento' ? 'paga' : 'recebida'}! Ótimo, tudo anotado aqui! 🎉`;
+  }
+
+  const lista = pagas.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
+  return `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo, tudo anotado! 🎉`;
+}
+
 async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
+
+  // Verificar se há confirmação de lembrete financeiro pendente
+  const confLembrete = obterConfirmacaoLembrete(usuarioId);
+  if (confLembrete) {
+    const resposta = await handleConfirmacaoLembrete(usuarioId, lower, confLembrete);
+    if (resposta !== null) return resposta;
+    // resposta null = não confirmou, seguir fluxo normal
+  }
 
   // Verificar se há transação com dados incompletos
   const txPendente = obterTransacaoPendente(usuarioId);
@@ -3319,4 +3409,4 @@ async function handleCSVImport(usuarioId, csvContent) {
   return msg;
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo };

@@ -476,6 +476,17 @@ async function liquidarTransacao(usuarioId, numeroUsuario) {
   return result.rows[0] || null;
 }
 
+// Liquidar por ID interno do banco (usado ao confirmar lembretes)
+async function liquidarTransacaoPorId(transacaoId) {
+  const result = await pool.query(
+    `UPDATE transacoes SET status = 'pago'
+     WHERE id = $1 AND status = 'pendente'
+     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data`,
+    [transacaoId]
+  );
+  return result.rows[0] || null;
+}
+
 async function listarPendentes(usuarioId, tipo) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -933,6 +944,7 @@ module.exports = {
   consultarTransacoes,
   consultarTotalTransacoes,
   liquidarTransacao,
+  liquidarTransacaoPorId,
   listarPendentes,
   calcularSaldos,
   buscarPendentesParaLembrete,
