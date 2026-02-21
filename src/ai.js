@@ -104,13 +104,28 @@ IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "li
 {"acao": "analise_financeira"}
 ATENÇÃO: Use quando o usuário quer uma ANÁLISE DETALHADA dos gastos pela regra 50/30/20 (necessidades/desejos/poupança). É diferente de "finanças em dia" (que é para CADASTRAR receitas/despesas manualmente).
 
-16c. ASSESSOR DE COMPRA / VIABILIDADE DE COMPRA (quero comprar, posso comprar, consigo comprar, vale a pena comprar, melhor forma de pagar, à vista ou parcelado):
-{"acao": "assessor_compra", "descricao": "nome do produto", "valor": 0.00, "parcelasSolicitadas": null}
-ATENÇÃO: Use quando o usuário quer saber SE e COMO comprar algo. Exemplos:
+16c. ASSESSOR DE COMPRA / VIABILIDADE DE COMPRA (quero comprar, posso comprar, consigo comprar, vale a pena comprar, melhor forma de pagar, à vista ou parcelado, quero pedir, posso pedir, quero fazer isso, posso fazer isso, devo comprar, tenho condições, cabe no orçamento):
+{"acao": "assessor_compra", "descricao": "nome do produto ou serviço", "valor": 0.00, "parcelasSolicitadas": null}
+
+REGRA PRINCIPAL — PRIORIDADE MÁXIMA:
+Se a mensagem contém QUALQUER palavra de DÚVIDA ou PEDIDO DE CONSELHO ("posso?", "consigo?", "vale a pena?", "devo?", "tenho condições?", "cabe no orçamento?", "o que você acha?", "me aconselha", "é uma boa?") combinada com uma compra, serviço ou gasto → É SEMPRE assessor_compra. NUNCA transacao.
+
+EXEMPLOS:
 - "quero comprar um celular de 2000 reais" → assessor_compra, descricao: "Celular", valor: 2000, parcelasSolicitadas: null
 - "consigo comprar uma TV de 3500 em 12x?" → assessor_compra, descricao: "TV", valor: 3500, parcelasSolicitadas: 12
 - "posso fazer uma compra de 800 reais à vista?" → assessor_compra, descricao: "compra", valor: 800, parcelasSolicitadas: 1
 - "vale a pena comprar um notebook agora?" → assessor_compra, descricao: "Notebook", valor: null, parcelasSolicitadas: null
+- "quero pedir um iFood posso?" → assessor_compra, descricao: "iFood", valor: null, parcelasSolicitadas: null
+- "posso pedir uma pizza de 80 reais?" → assessor_compra, descricao: "pizza", valor: 80, parcelasSolicitadas: null
+- "quero fazer uma viagem que custa 1500 reais amanhã, o que você acha?" → assessor_compra, descricao: "Viagem", valor: 1500, parcelasSolicitadas: null
+- "quero comprar um tênis de 300 reais no sábado, consigo?" → assessor_compra, descricao: "Tênis", valor: 300, parcelasSolicitadas: null
+- "tenho condições de fazer uma reforma de 5000 reais?" → assessor_compra, descricao: "Reforma", valor: 5000, parcelasSolicitadas: null
+
+COMO DIFERENCIAR DE TRANSAÇÃO:
+- Usuário PERGUNTA se pode/deve comprar (posso? consigo? vale a pena?) → assessor_compra
+- Usuário CONFIRMA que já comprou/pagou (comprei, gastei, paguei) → transacao
+- Usuário PEDE para registrar (anota, registra, lança) → transacao
+- Na DÚVIDA entre assessor_compra e transacao, prefira assessor_compra
 
 17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
@@ -170,6 +185,14 @@ REGRA DE OURO DO STATUS:
 - "me lembre de pagar", "me lembra de pagar", "não esquecer de pagar" → É TRANSAÇÃO com status "pendente", NÃO é lembrete!
 - "me lembre de receber", "não esquecer de cobrar" → É TRANSAÇÃO (receita) com status "pendente"
 - Na DÚVIDA, use "pago"
+
+ATENÇÃO — NÃO USE TRANSAÇÃO QUANDO:
+- O usuário está PEDINDO CONSELHO ou PERGUNTANDO SE PODE comprar algo:
+  - "quero comprar X posso?" → NÃO é transação → use assessor_compra
+  - "quero pedir um iFood consigo?" → NÃO é transação → use assessor_compra
+  - "quero fazer X que custa Y amanhã, o que você acha?" → NÃO é transação → use assessor_compra
+  - "posso fazer uma compra de X reais?" → NÃO é transação → use assessor_compra
+- A presença de data ou valor NÃO transforma um pedido de conselho em transação!
 
 REGRA IMPORTANTE - "ME LEMBRE" COM DINHEIRO:
 - Se o usuário diz "me lembre" + PAGAR/RECEBER/COBRAR + VALOR → use "transacao" com status "pendente"
