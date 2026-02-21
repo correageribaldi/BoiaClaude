@@ -6,19 +6,28 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// ── Middleware de autenticação ────────────────────────────────────────────────
-async function autenticar(req, res, next) {
-  const token =
-    req.query.token ||
-    (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+function getJwt() { return require('jsonwebtoken'); }
+function getBcrypt() { return require('bcrypt'); }
 
+function jwtSecret() {
+  const s = process.env.JWT_SECRET;
+  if (!s) throw new Error('JWT_SECRET não configurado no .env');
+  return s;
+}
+
+// ── Middleware de autenticação JWT ────────────────────────────────────────────
+async function autenticar(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
   if (!token) return res.status(401).json({ erro: 'Token ausente' });
 
-  const dados = await db.verificarTokenPainel(token).catch(() => null);
-  if (!dados) return res.status(401).json({ erro: 'Token inválido ou expirado' });
-
-  req.usuarioId = dados.usuarioId;
-  next();
+  try {
+    const payload = getJwt().verify(token, jwtSecret());
+    req.usuarioId = payload.usuarioId;
+    next();
+  } catch {
+    return res.status(401).json({ erro: 'Token inválido ou expirado' });
+  }
 }
 
 // ── Painel SPA ────────────────────────────────────────────────────────────────
@@ -27,13 +36,40 @@ app.get('/painel', (req, res) => {
 });
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-app.get('/api/auth/verify', async (req, res) => {
-  const token = req.query.token || '';
-  const dados = await db.verificarTokenPainel(token).catch(() => null);
-  if (!dados) return res.json({ valid: false });
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ erro: 'Usuário e senha obrigatórios' });
+  }
 
-  const usuario = await db.buscarUsuario(dados.usuarioId).catch(() => null);
-  res.json({ valid: true, nome: usuario?.nome || null });
+  try {
+    const usuario = await db.buscarUsuarioPainelPorUsername(username);
+    if (!usuario) return res.status(401).json({ erro: 'Usuário ou senha incorretos' });
+
+    const ok = await getBcrypt().compare(String(password), usuario.password_hash);
+    if (!ok) return res.status(401).json({ erro: 'Usuário ou senha incorretos' });
+
+    const token = getJwt().sign(
+      { usuarioId: usuario.usuario_id, username: usuario.username },
+      jwtSecret(),
+      { expiresIn: '30d' }
+    );
+
+    res.json({ token, username: usuario.username });
+  } catch (err) {
+    console.error('[WEB] /api/auth/login:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.get('/api/auth/me', autenticar, async (req, res) => {
+  try {
+    const usuario = await db.buscarUsuario(req.usuarioId).catch(() => null);
+    const painel = await db.buscarUsuarioPainelPorUserId(req.usuarioId).catch(() => null);
+    res.json({ usuarioId: req.usuarioId, nome: usuario?.nome || null, username: painel?.username || null });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -55,7 +91,6 @@ app.get('/api/dashboard', autenticar, async (req, res) => {
   }
 });
 
-// Resumo anual (gráfico de evolução)
 app.get('/api/resumo-anual', autenticar, async (req, res) => {
   try {
     const ano = parseInt(req.query.ano) || new Date().getFullYear();
@@ -115,8 +150,7 @@ app.delete('/api/transactions/:id', autenticar, async (req, res) => {
 // ── Categorias ────────────────────────────────────────────────────────────────
 app.get('/api/categories', autenticar, async (req, res) => {
   try {
-    const cats = await db.listarCategorias();
-    res.json(cats);
+    res.json(await db.listarCategorias());
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
@@ -155,8 +189,7 @@ app.get('/api/agenda', autenticar, async (req, res) => {
     const dataInicio = `${ano}-${mesStr}-01`;
     const dataFim = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
-    const lembretes = await db.buscarLembretesGeraisPorPeriodo(req.usuarioId, dataInicio, dataFim);
-    res.json(lembretes);
+    res.json(await db.buscarLembretesGeraisPorPeriodo(req.usuarioId, dataInicio, dataFim));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }

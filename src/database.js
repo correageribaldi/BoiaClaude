@@ -252,20 +252,20 @@ async function initTables() {
       ON contatos_compartilhados(contato_id);
   `);
 
-  // Tabela de tokens para o painel web
+  // Tabela de usuários do painel web (usuário/senha)
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS painel_tokens (
+    CREATE TABLE IF NOT EXISTS painel_usuarios (
       id SERIAL PRIMARY KEY,
-      usuario_id TEXT NOT NULL,
-      token TEXT NOT NULL UNIQUE,
-      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
-      expira_em TIMESTAMPTZ NOT NULL
+      usuario_id TEXT NOT NULL UNIQUE,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
-    CREATE INDEX IF NOT EXISTS idx_painel_tokens_token
-      ON painel_tokens(token);
-    CREATE INDEX IF NOT EXISTS idx_painel_tokens_usuario
-      ON painel_tokens(usuario_id);
+    CREATE INDEX IF NOT EXISTS idx_painel_usuarios_username
+      ON painel_usuarios(username);
+    CREATE INDEX IF NOT EXISTS idx_painel_usuarios_usuario_id
+      ON painel_usuarios(usuario_id);
   `);
 
   const categoriasPadrao = [
@@ -934,32 +934,39 @@ async function obterVinculoSecundario(usuarioId) {
 
 // === PAINEL WEB ===
 
-async function gerarTokenPainel(usuarioId) {
+async function criarUsuarioPainel(usuarioId, username, passwordHash) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const { randomBytes } = require('crypto');
-  const token = randomBytes(48).toString('hex');
   await pool.query(
-    `INSERT INTO painel_tokens (usuario_id, token, expira_em)
-     VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-    [uid, token]
+    `INSERT INTO painel_usuarios (usuario_id, username, password_hash)
+     VALUES ($1, $2, $3)`,
+    [uid, username.toLowerCase().trim(), passwordHash]
   );
-  return token;
 }
 
-async function verificarTokenPainel(token) {
-  if (!token || typeof token !== 'string' || token.length > 200) return null;
+async function buscarUsuarioPainelPorUsername(username) {
   const result = await pool.query(
-    `SELECT usuario_id FROM painel_tokens
-     WHERE token = $1 AND expira_em > NOW()
-     LIMIT 1`,
-    [token]
+    `SELECT id, usuario_id, username, password_hash
+     FROM painel_usuarios WHERE username = $1 LIMIT 1`,
+    [username.toLowerCase().trim()]
   );
-  if (!result.rows[0]) return null;
-  return { usuarioId: result.rows[0].usuario_id };
+  return result.rows[0] || null;
 }
 
-async function limparTokensExpirados() {
-  await pool.query(`DELETE FROM painel_tokens WHERE expira_em < NOW()`);
+async function buscarUsuarioPainelPorUserId(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, username FROM painel_usuarios WHERE usuario_id = $1 LIMIT 1`,
+    [uid]
+  );
+  return result.rows[0] || null;
+}
+
+async function usernameDisponivel(username) {
+  const result = await pool.query(
+    `SELECT id FROM painel_usuarios WHERE username = $1 LIMIT 1`,
+    [username.toLowerCase().trim()]
+  );
+  return result.rows.length === 0;
 }
 
 async function criarCategoria(nome) {
@@ -1035,9 +1042,10 @@ module.exports = {
   obterVinculoSecundario,
   removerContatoCompartilhado,
   resolverUsuarioPrincipal,
-  gerarTokenPainel,
-  verificarTokenPainel,
-  limparTokensExpirados,
+  criarUsuarioPainel,
+  buscarUsuarioPainelPorUsername,
+  buscarUsuarioPainelPorUserId,
+  usernameDisponivel,
   criarCategoria,
   excluirCategoria,
 };

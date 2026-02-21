@@ -444,6 +444,22 @@ function limparRemocaoContatoPendente(usuarioId) {
   removerContatoPendente.delete(usuarioId);
 }
 
+// Estado de cadastro do painel web (aguardando usuário/senha) — expira em 5 min
+const cadastroPainelEstados = new Map();
+
+function salvarCadastroPainel(usuarioId, dados) {
+  cadastroPainelEstados.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+}
+function obterCadastroPainel(usuarioId) {
+  const dados = cadastroPainelEstados.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { cadastroPainelEstados.delete(usuarioId); return null; }
+  return dados;
+}
+function limparCadastroPainel(usuarioId) {
+  cadastroPainelEstados.delete(usuarioId);
+}
+
 function parseValor(str) {
   const limpo = str.replace(/r\$\s*/i, '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
   const valor = parseFloat(limpo);
@@ -871,14 +887,105 @@ _Aproveite!_`;
 
 async function handleMeuPainel(usuarioId) {
   try {
-    const token = await db.gerarTokenPainel(usuarioId);
+    const conta = await db.buscarUsuarioPainelPorUserId(usuarioId);
     const baseUrl = (process.env.PAINEL_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
-    const url = `${baseUrl}/painel?token=${token}`;
-    return `🖥️ *Seu painel financeiro pessoal está pronto!*\n\n${url}\n\n_Link válido por 7 dias. Digite "meu painel" para gerar um novo a qualquer momento._ 🔒`;
+    const url = `${baseUrl}/painel`;
+
+    if (conta) {
+      return `🖥️ *Seu painel financeiro está disponível!*\n\n${url}\n\nFaça login com:\n👤 Usuário: *${conta.username}*\n🔑 Sua senha cadastrada\n\n_Esqueceu a senha? Digite "redefinir senha do painel"._`;
+    }
+
+    // Primeira vez — iniciar cadastro
+    salvarCadastroPainel(usuarioId, { etapa: 'aguardando_username' });
+    return `🖥️ *Vamos configurar seu acesso ao painel web!*\n\nPrimeiro, escolha um *nome de usuário* para o login:\n\n_(Somente letras, números e underline. Ex: "joao_silva")_`;
   } catch (err) {
-    console.error('[PAINEL] Erro ao gerar token:', err.message);
-    return `Ops, tive um problema ao gerar o link do painel. Tenta novamente!`;
+    console.error('[PAINEL] Erro ao verificar conta:', err.message);
+    return `Ops, tive um problema. Tenta novamente!`;
   }
+}
+
+async function handleRedefinirSenhaPainel(usuarioId) {
+  try {
+    const conta = await db.buscarUsuarioPainelPorUserId(usuarioId);
+    if (!conta) {
+      return `Você ainda não tem uma conta no painel. Digite *meu painel* para criar.`;
+    }
+    // Reutiliza o fluxo de cadastro, mas só para nova senha
+    salvarCadastroPainel(usuarioId, { etapa: 'aguardando_nova_senha', username: conta.username, redefinindo: true });
+    return `🔑 Redefinindo senha do painel.\n\nDigite sua *nova senha*:\n_(Mínimo 6 caracteres)_`;
+  } catch (err) {
+    return `Ops, erro ao processar. Tenta novamente!`;
+  }
+}
+
+async function handleCadastroPainel(usuarioId, msg, estado) {
+  const texto = msg.trim();
+
+  if (estado.etapa === 'aguardando_username') {
+    // Validar username
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(texto)) {
+      return `❌ Nome de usuário inválido.\n\nUse entre 3 e 20 caracteres: letras, números ou underline (_).\n\nTenta outro nome:`;
+    }
+    const disponivel = await db.usernameDisponivel(texto);
+    if (!disponivel) {
+      return `❌ O nome de usuário *${texto}* já está em uso.\n\nEscolha outro:`;
+    }
+    // Salvar username e pedir senha
+    salvarCadastroPainel(usuarioId, { etapa: 'aguardando_senha', username: texto.toLowerCase() });
+    return `✅ Ótimo! Usuário: *${texto.toLowerCase()}*\n\nAgora crie uma *senha* para o painel:\n\n_(Mínimo 6 caracteres. Não compartilhe com ninguém!)_`;
+  }
+
+  if (estado.etapa === 'aguardando_senha') {
+    if (texto.length < 6) {
+      return `❌ Senha muito curta. Use pelo menos 6 caracteres.\n\nTenta novamente:`;
+    }
+    if (texto.length > 100) {
+      return `❌ Senha muito longa. Use no máximo 100 caracteres.`;
+    }
+
+    try {
+      const bcrypt = require('bcrypt');
+      const hash = await bcrypt.hash(texto, 12);
+      await db.criarUsuarioPainel(usuarioId, estado.username, hash);
+      limparCadastroPainel(usuarioId);
+
+      const baseUrl = (process.env.PAINEL_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+      const url = `${baseUrl}/painel`;
+      return `🎉 *Conta criada com sucesso!*\n\n🖥️ Acesse seu painel:\n${url}\n\nFaça login com:\n👤 Usuário: *${estado.username}*\n🔑 A senha que você acabou de criar\n\n_Guarde bem sua senha! Para acessar novamente, basta digitar "meu painel"._`;
+    } catch (err) {
+      console.error('[PAINEL] Erro ao criar conta:', err.message);
+      limparCadastroPainel(usuarioId);
+      return `Ops, tive um erro ao criar sua conta. Tenta de novo digitando "meu painel".`;
+    }
+  }
+
+  if (estado.etapa === 'aguardando_nova_senha') {
+    if (texto.length < 6) {
+      return `❌ Senha muito curta. Use pelo menos 6 caracteres.\n\nTenta novamente:`;
+    }
+    if (texto.length > 100) {
+      return `❌ Senha muito longa. Use no máximo 100 caracteres.`;
+    }
+    try {
+      const bcrypt = require('bcrypt');
+      const hash = await bcrypt.hash(texto, 12);
+      // Atualizar hash diretamente
+      const { pool } = require('./database');
+      await pool.query(
+        `UPDATE painel_usuarios SET password_hash = $1 WHERE username = $2`,
+        [hash, estado.username]
+      );
+      limparCadastroPainel(usuarioId);
+      return `✅ *Senha do painel atualizada com sucesso!*\n\nFaça login com:\n👤 Usuário: *${estado.username}*\n🔑 Sua nova senha`;
+    } catch (err) {
+      console.error('[PAINEL] Erro ao redefinir senha:', err.message);
+      limparCadastroPainel(usuarioId);
+      return `Ops, erro ao atualizar a senha. Tenta novamente!`;
+    }
+  }
+
+  limparCadastroPainel(usuarioId);
+  return null;
 }
 
 // Palavras que indicam que o usuário confirmou pagamento/recebimento
@@ -941,6 +1048,13 @@ async function handleMessage(usuarioId, texto) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
 
+  // Verificar se está no fluxo de cadastro do painel web
+  const cadastroPainel = obterCadastroPainel(usuarioId);
+  if (cadastroPainel) {
+    const resposta = await handleCadastroPainel(usuarioId, msg, cadastroPainel);
+    if (resposta !== null) return resposta;
+  }
+
   // Verificar se há confirmação de lembrete financeiro pendente
   const confLembrete = obterConfirmacaoLembrete(usuarioId);
   if (confLembrete) {
@@ -998,6 +1112,11 @@ async function handleMessage(usuarioId, texto) {
   // Comando: painel web
   if (lower === 'meu painel' || lower === 'painel' || lower === 'dashboard') {
     return await handleMeuPainel(usuarioId);
+  }
+
+  // Comando: redefinir senha do painel
+  if (lower === 'redefinir senha do painel' || lower === 'redefinir senha painel' || lower === 'trocar senha do painel') {
+    return await handleRedefinirSenhaPainel(usuarioId);
   }
 
   // Comando: ajuda / menu / help

@@ -9,28 +9,44 @@
 </head>
 <body>
 
-<!-- ── Tela de acesso negado ─────────────────────────────────────────────── -->
+<!-- ── Tela de login ─────────────────────────────────────────────────────── -->
 <div id="tela-login" class="hidden">
   <div class="login-box">
     <div class="login-logo">💸</div>
     <h1>Cronos Financeiro</h1>
-    <p>Para acessar seu painel, envie <strong>meu painel</strong> para o bot no WhatsApp e clique no link gerado.</p>
+    <p class="login-sub">Faça login para acessar seu painel</p>
+
+    <form id="form-login" autocomplete="off">
+      <div class="input-group">
+        <label>Usuário</label>
+        <input id="login-user" type="text" placeholder="seu_usuario" autocomplete="username" />
+      </div>
+      <div class="input-group">
+        <label>Senha</label>
+        <input id="login-pass" type="password" placeholder="••••••" autocomplete="current-password" />
+      </div>
+      <div id="login-erro" class="login-erro hidden"></div>
+      <button type="submit" class="btn btn-primary btn-full" id="btn-login">Entrar</button>
+    </form>
+
+    <p class="login-hint">Não tem acesso? Envie <strong>meu painel</strong> no WhatsApp para criar sua conta.</p>
   </div>
 </div>
 
 <!-- ── App principal ─────────────────────────────────────────────────────── -->
 <div id="app" class="hidden">
 
-  <!-- Header -->
   <header class="header">
     <div class="header-left">
       <span class="header-logo">💸</span>
       <span class="header-title">Cronos</span>
     </div>
-    <div class="header-user" id="header-user"></div>
+    <div class="header-right">
+      <span class="header-user" id="header-user"></span>
+      <button class="btn-logout" id="btn-logout" title="Sair">⏏</button>
+    </div>
   </header>
 
-  <!-- Conteúdo -->
   <main class="main-content">
 
     <!-- ── Visão Geral ─────────────────────────────────────────────────── -->
@@ -44,7 +60,7 @@
         </div>
       </div>
 
-      <div class="cards-grid" id="dash-cards">
+      <div class="cards-grid">
         <div class="card card-neutral"><div class="card-label">Saldo Atual</div><div class="card-value" id="c-saldo">—</div></div>
         <div class="card card-green"><div class="card-label">Receitas Pagas</div><div class="card-value" id="c-receitas">—</div></div>
         <div class="card card-red"><div class="card-label">Despesas Pagas</div><div class="card-value" id="c-despesas">—</div></div>
@@ -57,7 +73,7 @@
           <div class="chart-wrap"><canvas id="chart-categorias"></canvas></div>
         </div>
         <div class="chart-card">
-          <h3>Receitas vs Despesas (últimos 6 meses)</h3>
+          <h3>Receitas vs Despesas</h3>
           <div class="chart-wrap"><canvas id="chart-mensal"></canvas></div>
         </div>
       </div>
@@ -134,7 +150,6 @@
 
   </main>
 
-  <!-- Bottom nav -->
   <nav class="bottom-nav">
     <button class="nav-btn active" data-tab="dashboard">
       <span class="nav-icon">📊</span>
@@ -154,7 +169,7 @@
     </button>
   </nav>
 
-</div><!-- /#app -->
+</div>
 
 <script src="/js/app.js"></script>
 </body>

@@ -3,49 +3,51 @@
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
-// ── Token & Auth ──────────────────────────────────────────────────────────────
-function getToken() {
-  const url = new URL(location.href);
-  const tokenUrl = url.searchParams.get('token');
-  if (tokenUrl) {
-    localStorage.setItem('cronos_token', tokenUrl);
-    url.searchParams.delete('token');
-    history.replaceState(null, '', url.pathname);
-  }
-  return localStorage.getItem('cronos_token');
-}
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function getJwt() { return localStorage.getItem('cronos_jwt'); }
+function setJwt(t) { localStorage.setItem('cronos_jwt', t); }
+function clearJwt() { localStorage.removeItem('cronos_jwt'); }
 
 async function verificarAuth() {
-  const token = getToken();
-  if (!token) { mostrarLogin(); return; }
+  const jwt = getJwt();
+  if (!jwt) { mostrarLogin(); return; }
 
   try {
-    const res = await api('/api/auth/verify?token=' + token);
-    if (!res.valid) { mostrarLogin(); return; }
-    document.getElementById('header-user').textContent = res.nome ? '👤 ' + res.nome : '';
+    const me = await api('/api/auth/me');
+    document.getElementById('header-user').textContent = me.username ? '👤 ' + me.username : '';
     document.getElementById('app').classList.remove('hidden');
     inicializar();
   } catch {
+    clearJwt();
     mostrarLogin();
   }
 }
 
 function mostrarLogin() {
   document.getElementById('tela-login').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  setTimeout(() => document.getElementById('login-user')?.focus(), 50);
+}
+
+function logout() {
+  clearJwt();
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('tela-login').classList.remove('hidden');
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pass').value = '';
+  document.getElementById('login-erro').classList.add('hidden');
 }
 
 // ── API helper ────────────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
-  const token = localStorage.getItem('cronos_token') || '';
-  const sep = path.includes('?') ? '&' : '?';
-  const url = path + sep + 'token=' + token;
+  const jwt = getJwt() || '';
+  const headers = { 'Content-Type': 'application/json' };
+  if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
 
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
-
+  const res = await fetch(path, { headers, ...opts });
   const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401) { clearJwt(); mostrarLogin(); throw new Error('Sessão expirada'); }
   if (!res.ok) throw new Error(data.erro || 'Erro ' + res.status);
   return data;
 }
@@ -93,42 +95,43 @@ const COR_CATEGORIA = [
 
 function renderChartCategorias(porCategoria) {
   const despesas = porCategoria.filter(r => r.tipo === 'despesa' && r.total > 0);
-  const ctx = document.getElementById('chart-categorias');
-  if (estado.charts.categorias) estado.charts.categorias.destroy();
+  const wrap = document.getElementById('chart-categorias')?.parentElement;
+  if (!wrap) return;
+
+  if (estado.charts.categorias) { estado.charts.categorias.destroy(); estado.charts.categorias = null; }
 
   if (!despesas.length) {
-    ctx.parentElement.innerHTML = '<div class="empty-state">Sem despesas no período.</div>';
+    wrap.innerHTML = '<div class="empty-state">Sem despesas no período.</div>';
     return;
   }
 
-  estado.charts.categorias = new Chart(ctx, {
+  // Recriar canvas se necessário
+  if (!document.getElementById('chart-categorias')) {
+    const canvas = document.createElement('canvas');
+    canvas.id = 'chart-categorias';
+    wrap.innerHTML = '';
+    wrap.appendChild(canvas);
+  }
+
+  estado.charts.categorias = new Chart(document.getElementById('chart-categorias'), {
     type: 'doughnut',
     data: {
       labels: despesas.map(r => r.categoria),
-      datasets: [{
-        data: despesas.map(r => r.total),
-        backgroundColor: COR_CATEGORIA,
-        borderWidth: 2,
-        borderColor: '#fff',
-      }],
+      datasets: [{ data: despesas.map(r => r.total), backgroundColor: COR_CATEGORIA, borderWidth: 2, borderColor: '#fff' }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
         legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 10 } },
-        tooltip: {
-          callbacks: {
-            label: ctx => ' ' + ctx.label + ': ' + fmtMoeda(ctx.raw),
-          },
-        },
+        tooltip: { callbacks: { label: ctx => ' ' + ctx.label + ': ' + fmtMoeda(ctx.raw) } },
       },
     },
   });
 }
 
 async function renderChartMensal() {
-  const { ano } = estado.dash;
+  const { ano, mes } = estado.dash;
   let resumo;
   try { resumo = await api('/api/resumo-anual?ano=' + ano); }
   catch { return; }
@@ -143,16 +146,20 @@ async function renderChartMensal() {
     else despesas[idx] = row.total;
   }
 
-  // Mostrar só últimos 6 meses com dados ou até o mês atual
-  const mesAtual = estado.dash.mes;
-  const start = Math.max(0, mesAtual - 6);
-  const end = mesAtual;
+  const start = Math.max(0, mes - 6);
+  const end = mes;
 
-  const ctx = document.getElementById('chart-mensal');
-  if (!ctx) return;
-  if (estado.charts.mensal) estado.charts.mensal.destroy();
+  const wrap = document.getElementById('chart-mensal')?.parentElement;
+  if (!wrap) return;
+  if (estado.charts.mensal) { estado.charts.mensal.destroy(); estado.charts.mensal = null; }
+  if (!document.getElementById('chart-mensal')) {
+    const canvas = document.createElement('canvas');
+    canvas.id = 'chart-mensal';
+    wrap.innerHTML = '';
+    wrap.appendChild(canvas);
+  }
 
-  estado.charts.mensal = new Chart(ctx, {
+  estado.charts.mensal = new Chart(document.getElementById('chart-mensal'), {
     type: 'bar',
     data: {
       labels: mesesLabels.slice(start, end),
@@ -168,9 +175,7 @@ async function renderChartMensal() {
         legend: { position: 'bottom', labels: { font: { size: 11 } } },
         tooltip: { callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + fmtMoeda(ctx.raw) } },
       },
-      scales: {
-        y: { ticks: { callback: v => 'R$' + (v / 1000).toFixed(0) + 'k', font: { size: 11 } } },
-      },
+      scales: { y: { ticks: { callback: v => 'R$' + (v / 1000).toFixed(0) + 'k', font: { size: 11 } } } },
     },
   });
 }
@@ -182,10 +187,9 @@ async function carregarDashboard() {
 
   let data;
   try { data = await api(`/api/dashboard?mes=${mes}&ano=${ano}`); }
-  catch (err) { toast('Erro ao carregar dashboard', 'error'); return; }
+  catch (err) { if (err.message !== 'Sessão expirada') toast('Erro ao carregar dashboard', 'error'); return; }
 
   const { resumo, saldos } = data;
-
   document.getElementById('c-saldo').textContent = fmtMoeda(saldos.saldoAtual);
   document.getElementById('c-receitas').textContent = fmtMoeda(saldos.receitasPagas);
   document.getElementById('c-despesas').textContent = fmtMoeda(saldos.despesasPagas);
@@ -205,18 +209,14 @@ async function carregarTransacoes() {
   const dataInicio = `${e.ano}-${mesStr}-01`;
   const dataFim = `${e.ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
-  const params = new URLSearchParams({
-    dataInicio,
-    dataFim,
-    limite: 200,
-  });
+  const params = new URLSearchParams({ dataInicio, dataFim, limite: 200 });
   if (e.filtroStatus) params.set('status', e.filtroStatus);
   if (e.filtroTipo) params.set('tipo', e.filtroTipo);
   if (e.busca) params.set('descricao', e.busca);
 
   let transacoes;
   try { transacoes = await api('/api/transactions?' + params); }
-  catch (err) { toast('Erro ao carregar transações', 'error'); return; }
+  catch (err) { if (err.message !== 'Sessão expirada') toast('Erro ao carregar transações', 'error'); return; }
 
   renderTabelaTransacoes(transacoes);
 }
@@ -227,8 +227,7 @@ function renderTabelaTransacoes(transacoes) {
   const POR_PAG = 20;
   const pagina = estado.tx.pagina;
   const total = transacoes.length;
-  const inicio = (pagina - 1) * POR_PAG;
-  const pagina_items = transacoes.slice(inicio, inicio + POR_PAG);
+  const pagina_items = transacoes.slice((pagina - 1) * POR_PAG, pagina * POR_PAG);
 
   tbody.innerHTML = '';
   empty.classList.add('hidden');
@@ -250,13 +249,12 @@ function renderTabelaTransacoes(transacoes) {
       <td><span class="badge badge-${t.status}">${t.status === 'pago' ? 'Pago' : 'A Pagar'}</span></td>
       <td style="white-space:nowrap">
         ${t.status === 'pendente' ? `<button class="action-btn" title="Marcar como pago" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
-        <button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id}, this)">🗑️</button>
+        <button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>
       </td>
     `;
     tbody.appendChild(tr);
   }
 
-  // Paginação
   const totalPags = Math.ceil(total / POR_PAG);
   const pag = document.getElementById('tx-pagination');
   pag.innerHTML = '';
@@ -276,21 +274,17 @@ async function pagarTransacao(id) {
     toast('✅ Marcada como paga!', 'success');
     carregarTransacoes();
     if (tabAtual === 'dashboard') carregarDashboard();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  } catch (err) { toast(err.message, 'error'); }
 }
 
-async function excluirTransacao(id, btn) {
+async function excluirTransacao(id) {
   if (!confirm('Deseja excluir esta transação?')) return;
   try {
     await api(`/api/transactions/${id}`, { method: 'DELETE' });
     toast('Transação excluída.', 'success');
     carregarTransacoes();
     if (tabAtual === 'dashboard') carregarDashboard();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ── Categorias ────────────────────────────────────────────────────────────────
@@ -306,21 +300,19 @@ async function carregarCategorias() {
     card.className = 'cat-card';
     card.innerHTML = `
       <span class="cat-nome">${esc(nome)}</span>
-      <button class="cat-del" title="Excluir" onclick="excluirCategoria('${esc(nome)}', this)">🗑️</button>
+      <button class="cat-del" title="Excluir" onclick="excluirCategoria('${esc(nome)}')">🗑️</button>
     `;
     grid.appendChild(card);
   }
 }
 
-async function excluirCategoria(nome, btn) {
+async function excluirCategoria(nome) {
   if (!confirm(`Excluir a categoria "${nome}"?`)) return;
   try {
     await api('/api/categories/' + encodeURIComponent(nome), { method: 'DELETE' });
     toast('Categoria excluída.', 'success');
     carregarCategorias();
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ── Agenda ────────────────────────────────────────────────────────────────────
@@ -353,15 +345,13 @@ async function carregarAgenda() {
   }
 }
 
-// ── Navegação entre abas ──────────────────────────────────────────────────────
+// ── Navegação ─────────────────────────────────────────────────────────────────
 let tabAtual = 'dashboard';
 
 function ativarTab(tab) {
   tabAtual = tab;
-
   document.querySelectorAll('.tab-content').forEach(s => s.classList.add('hidden'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-
   document.getElementById('tab-' + tab).classList.remove('hidden');
   document.querySelector(`.nav-btn[data-tab="${tab}"]`).classList.add('active');
 
@@ -373,37 +363,26 @@ function ativarTab(tab) {
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function inicializar() {
-  // Nav tabs
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => ativarTab(btn.dataset.tab));
   });
 
+  document.getElementById('btn-logout').addEventListener('click', logout);
+
   // Dashboard nav
   document.getElementById('dash-prev').addEventListener('click', () => {
-    const e = estado.dash;
-    e.mes--;
-    if (e.mes < 1) { e.mes = 12; e.ano--; }
-    carregarDashboard();
+    const e = estado.dash; e.mes--; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarDashboard();
   });
   document.getElementById('dash-next').addEventListener('click', () => {
-    const e = estado.dash;
-    e.mes++;
-    if (e.mes > 12) { e.mes = 1; e.ano++; }
-    carregarDashboard();
+    const e = estado.dash; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarDashboard();
   });
 
   // Transações nav
   document.getElementById('tx-prev').addEventListener('click', () => {
-    const e = estado.tx;
-    e.mes--; e.pagina = 1;
-    if (e.mes < 1) { e.mes = 12; e.ano--; }
-    carregarTransacoes();
+    const e = estado.tx; e.mes--; e.pagina = 1; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarTransacoes();
   });
   document.getElementById('tx-next').addEventListener('click', () => {
-    const e = estado.tx;
-    e.mes++; e.pagina = 1;
-    if (e.mes > 12) { e.mes = 1; e.ano++; }
-    carregarTransacoes();
+    const e = estado.tx; e.mes++; e.pagina = 1; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarTransacoes();
   });
 
   // Filtros transações
@@ -418,15 +397,10 @@ function inicializar() {
     });
   });
 
-  // Busca transações
   let buscaTimer;
   document.getElementById('tx-search').addEventListener('input', e => {
     clearTimeout(buscaTimer);
-    buscaTimer = setTimeout(() => {
-      estado.tx.busca = e.target.value.trim();
-      estado.tx.pagina = 1;
-      carregarTransacoes();
-    }, 350);
+    buscaTimer = setTimeout(() => { estado.tx.busca = e.target.value.trim(); estado.tx.pagina = 1; carregarTransacoes(); }, 350);
   });
 
   // Criar categoria
@@ -439,9 +413,7 @@ function inicializar() {
       input.value = '';
       toast('✅ Categoria criada!', 'success');
       carregarCategorias();
-    } catch (err) {
-      toast(err.message, 'error');
-    }
+    } catch (err) { toast(err.message, 'error'); }
   });
   document.getElementById('cat-nova').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('cat-criar').click();
@@ -449,30 +421,68 @@ function inicializar() {
 
   // Agenda nav
   document.getElementById('ag-prev').addEventListener('click', () => {
-    const e = estado.ag;
-    e.mes--;
-    if (e.mes < 1) { e.mes = 12; e.ano--; }
-    carregarAgenda();
+    const e = estado.ag; e.mes--; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarAgenda();
   });
   document.getElementById('ag-next').addEventListener('click', () => {
-    const e = estado.ag;
-    e.mes++;
-    if (e.mes > 12) { e.mes = 1; e.ano++; }
-    carregarAgenda();
+    const e = estado.ag; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarAgenda();
   });
 
-  // Carregar dashboard inicial
   carregarDashboard();
 }
 
+// ── Login form ────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('form-login');
+  const erroEl = document.getElementById('login-erro');
+  const btnLogin = document.getElementById('btn-login');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('login-user').value.trim();
+    const password = document.getElementById('login-pass').value;
+
+    if (!username || !password) {
+      erroEl.textContent = 'Preencha usuário e senha.';
+      erroEl.classList.remove('hidden');
+      return;
+    }
+
+    btnLogin.disabled = true;
+    btnLogin.textContent = 'Entrando...';
+    erroEl.classList.add('hidden');
+
+    try {
+      const data = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const res = await data.json();
+
+      if (!data.ok) {
+        erroEl.textContent = res.erro || 'Usuário ou senha incorretos.';
+        erroEl.classList.remove('hidden');
+        return;
+      }
+
+      setJwt(res.token);
+      document.getElementById('header-user').textContent = '👤 ' + res.username;
+      document.getElementById('tela-login').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      inicializar();
+    } catch {
+      erroEl.textContent = 'Erro de conexão. Tente novamente.';
+      erroEl.classList.remove('hidden');
+    } finally {
+      btnLogin.disabled = false;
+      btnLogin.textContent = 'Entrar';
+    }
+  });
+
+  verificarAuth();
+});
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 function esc(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
-// ── Iniciar ───────────────────────────────────────────────────────────────────
-verificarAuth();
