@@ -195,6 +195,27 @@ function limparTransacaoPendente(usuarioId) {
   transacaoPendente.delete(usuarioId);
 }
 
+// Estado do assessor de compra aguardando valor (expira em 5 min)
+const assessorCompraPendenteMap = new Map();
+
+function salvarAssessorCompra(usuarioId, dados) {
+  assessorCompraPendenteMap.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+}
+
+function obterAssessorCompra(usuarioId) {
+  const dados = assessorCompraPendenteMap.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    assessorCompraPendenteMap.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparAssessorCompra(usuarioId) {
+  assessorCompraPendenteMap.delete(usuarioId);
+}
+
 // Verifica o que falta e pergunta o próximo campo
 function perguntarProximoCampo(pendente) {
   const { descricao, tipo } = pendente;
@@ -1082,6 +1103,12 @@ async function handleMessage(usuarioId, texto) {
   const txPendente = obterTransacaoPendente(usuarioId);
   if (txPendente) {
     return await handleTransacaoPendenteResposta(usuarioId, msg, txPendente);
+  }
+
+  // Verificar se há assessor de compra aguardando valor
+  const assessorPendente = obterAssessorCompra(usuarioId);
+  if (assessorPendente) {
+    return await handleAssessorCompraContinuacao(usuarioId, msg, assessorPendente);
   }
 
   // Verificar se há confirmação pendente de imagem
@@ -3566,11 +3593,33 @@ async function handleCSVImport(usuarioId, csvContent) {
 }
 
 // ── Assessor de Compra ────────────────────────────────────────────────────────
+async function handleAssessorCompraContinuacao(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'deixa' || lower === 'esquece') {
+    limparAssessorCompra(usuarioId);
+    return '❌ Tudo bem, cancelado!';
+  }
+
+  const valor = extrairValorDoTexto(texto);
+  if (!valor || valor <= 0) {
+    return `❌ Não entendi o valor. Me diz quanto custa o *${estado.descricao}*:\n\n_Ex: "150", "R$ 1.200", "50 reais"_\n\n_Ou manda "cancelar" pra desistir._`;
+  }
+
+  limparAssessorCompra(usuarioId);
+  return await handleAssessorCompra(usuarioId, {
+    descricao: estado.descricao,
+    valor,
+    parcelasSolicitadas: estado.parcelasSolicitadas,
+  });
+}
+
 async function handleAssessorCompra(usuarioId, resultado) {
   const { descricao, valor: valorCompra, parcelasSolicitadas } = resultado;
 
   if (!valorCompra || valorCompra <= 0) {
-    return `💭 Pra te ajudar a avaliar a compra do *${descricao || 'item'}*, me diz o valor! Quanto custa?`;
+    salvarAssessorCompra(usuarioId, { descricao: descricao || 'item', parcelasSolicitadas: parcelasSolicitadas || null });
+    return `💭 Pra te ajudar a avaliar, me diz o valor! Quanto custa o *${descricao || 'item'}*?`;
   }
 
   try {
