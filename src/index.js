@@ -82,6 +82,13 @@ async function notificarContatosCompartilhados(usuarioPrincipalId, notificarCont
 }
 
 async function responderMensagem(msg, usuarioId, resposta) {
+  if (Array.isArray(resposta)) {
+    for (const parte of resposta) {
+      await msg.reply(parte);
+    }
+    return;
+  }
+
   if (typeof resposta === 'object' && resposta?.texto && resposta?.grafico) {
     await msg.reply(resposta.texto);
     const media = new MessageMedia('image/png', resposta.grafico.toString('base64'), 'grafico.png');

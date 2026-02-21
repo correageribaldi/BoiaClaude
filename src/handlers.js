@@ -885,14 +885,27 @@ ${ajudaMsg()}
 _Aproveite!_`;
 }
 
+function buildPainelUrl() {
+  const port = parseInt(process.env.PORT) || 3000;
+  let base = (process.env.PAINEL_BASE_URL || `http://localhost:${port}`).replace(/\/$/, '');
+  // Se a URL não tem porta explícita, adiciona a porta configurada
+  const hostPart = base.replace(/^https?:\/\//, '').split('/')[0];
+  if (!hostPart.includes(':')) {
+    base = `${base}:${port}`;
+  }
+  return `${base}/painel`;
+}
+
 async function handleMeuPainel(usuarioId) {
   try {
     const conta = await db.buscarUsuarioPainelPorUserId(usuarioId);
-    const baseUrl = (process.env.PAINEL_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
-    const url = `${baseUrl}/painel`;
+    const url = buildPainelUrl();
 
     if (conta) {
-      return `🖥️ *Seu painel financeiro está disponível!*\n\n${url}\n\nFaça login com:\n👤 Usuário: *${conta.username}*\n🔑 Sua senha cadastrada\n\n_Esqueceu a senha? Digite "redefinir senha do painel"._`;
+      return [
+        `🖥️ *Seu painel financeiro está disponível!*\n\nFaça login com:\n👤 Usuário: *${conta.username}*\n🔑 Sua senha cadastrada\n\n_Esqueceu a senha? Digite "redefinir senha do painel"._`,
+        url,
+      ];
     }
 
     // Primeira vez — iniciar cadastro
@@ -949,9 +962,11 @@ async function handleCadastroPainel(usuarioId, msg, estado) {
       await db.criarUsuarioPainel(usuarioId, estado.username, hash);
       limparCadastroPainel(usuarioId);
 
-      const baseUrl = (process.env.PAINEL_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
-      const url = `${baseUrl}/painel`;
-      return `🎉 *Conta criada com sucesso!*\n\n🖥️ Acesse seu painel:\n${url}\n\nFaça login com:\n👤 Usuário: *${estado.username}*\n🔑 A senha que você acabou de criar\n\n_Guarde bem sua senha! Para acessar novamente, basta digitar "meu painel"._`;
+      const url = buildPainelUrl();
+      return [
+        `🎉 *Conta criada com sucesso!*\n\nFaça login com:\n👤 Usuário: *${estado.username}*\n🔑 A senha que você acabou de criar\n\n_Guarde bem sua senha! Para acessar novamente, basta digitar "meu painel"._`,
+        url,
+      ];
     } catch (err) {
       console.error('[PAINEL] Erro ao criar conta:', err.message);
       limparCadastroPainel(usuarioId);
