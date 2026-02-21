@@ -122,10 +122,16 @@ EXEMPLOS:
 - "tenho condições de fazer uma reforma de 5000 reais?" → assessor_compra, descricao: "Reforma", valor: 5000, parcelasSolicitadas: null
 
 COMO DIFERENCIAR DE TRANSAÇÃO:
-- Usuário PERGUNTA se pode/deve comprar (posso? consigo? vale a pena?) → assessor_compra
-- Usuário CONFIRMA que já comprou/pagou (comprei, gastei, paguei) → transacao
+- Usuário PERGUNTA se pode/deve comprar (posso? consigo? vale a pena? o que você acha?) → assessor_compra
+- Usuário CONFIRMA que já comprou/pagou (comprei, gastei, paguei, recebi) → transacao (pago)
+- Usuário REGISTRA compra futura sem pedir conselho (vou comprar, vou pagar, preciso pagar) → transacao (pendente)
 - Usuário PEDE para registrar (anota, registra, lança) → transacao
-- Na DÚVIDA entre assessor_compra e transacao, prefira assessor_compra
+- Na DÚVIDA entre assessor_compra e transacao SEM sinal de dúvida → prefira transacao
+- Na DÚVIDA entre assessor_compra e transacao COM sinal de dúvida (? posso consigo vale a pena) → prefira assessor_compra
+- Exemplos de fronteira:
+  - "vou comprar um notebook amanhã" → transacao pendente (afirmação, sem dúvida)
+  - "quero comprar um notebook, vale a pena?" → assessor_compra (tem "vale a pena?")
+  - "vou pagar 200 de jaqueta dia 22" → transacao despesa pendente
 
 17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
@@ -149,8 +155,35 @@ REGRAS PARA SAUDAÇÃO:
 REGRAS PARA TRANSAÇÃO:
 - "tipo": "despesa" ou "receita"
 - "valor": número positivo (ex: 50.90)
-- "descricao": curta e clara
+- "descricao": curta e clara, SEM preposições iniciais. Extraia o nome limpo do produto/serviço.
+  - "de uma jaqueta" → "Jaqueta"
+  - "de internet" → "Internet"
+  - "do aluguel" → "Aluguel"
+  - "por um serviço de encanamento" → "Encanamento"
 - "categoria": uma das categorias listadas. Se não tiver certeza, use "Outros"
+
+COMO DETERMINAR O TIPO (despesa ou receita):
+- tipo = "despesa" (dinheiro SAINDO — usuário está PAGANDO por algo):
+  - Verbos: pagar, gastar, comprar, dever, adquirir, contratar, assinar
+  - Expressões: "tenho que pagar", "preciso pagar", "vou pagar", "conta de", "boleto de", "parcela de", "fatura de"
+  - REGRA CHAVE: "pagar X de Y" ou "pagar X por Y" → despesa, descrição = Y (o que está sendo pago)
+  - Exemplos:
+    - "tenho que pagar 200 de uma jaqueta" → despesa, descricao: "Jaqueta" ← a jaqueta É O QUE ESTÁ SENDO PAGO
+    - "tenho que pagar 200 reais dia 22 de uma jaqueta" → despesa, descricao: "Jaqueta"
+    - "preciso pagar 150 de internet" → despesa, descricao: "Internet"
+    - "pagar 300 de aluguel" → despesa, descricao: "Aluguel"
+    - "vou pagar 500 de um serviço" → despesa, descricao: "Serviço"
+- tipo = "receita" (dinheiro ENTRANDO — usuário está RECEBENDO algo):
+  - Verbos: receber, ganhar, entrar, cair, depositar, faturar, cobrar (de terceiros)
+  - Expressões: "vou receber", "meu salário", "freelance de", "me pagaram", "entrou no banco"
+  - Exemplos:
+    - "vou receber 500 do João" → receita
+    - "meu salário cai dia 5" → receita
+    - "ganhei 200 de freelance" → receita
+    - "me pagaram 300" → receita
+- ATENÇÃO: "de" em "pagar X DE Y" indica O PRODUTO/SERVIÇO, não a origem. NÃO é receita!
+  - "pagar 200 de jaqueta" = pagar PELA jaqueta → DESPESA, não receita
+  - "pagar 100 de energia" = pagar A energia → DESPESA, não receita
 - "data": use o formato YYYY-MM-DD. Para dias da semana, retorne o NOME do dia em vez de calcular a data (ex: "sabado", "segunda"). O sistema vai converter.
   - null = hoje (quando não mencionar data)
   - "ontem" = retorne "ontem"
