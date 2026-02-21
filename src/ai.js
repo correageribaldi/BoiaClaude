@@ -804,7 +804,7 @@ async function analisarViabilidadeCompra(dadosFinanceiros, valorCompra, descrica
   try {
     const {
       saldoAtual, despesasPendentes30d, receitasPendentes30d,
-      proximaReceita, surplusMedio, disponivel30dias, limites,
+      proximaReceita, surplusMedio, disponivelConservador, disponivelPrevisto, limites,
     } = dadosFinanceiros;
 
     const parcelasTexto = parcelasSolicitadas
@@ -826,24 +826,28 @@ Valor da compra: R$ ${valorCompra ? valorCompra.toFixed(2) : '(não informado)'}
 ${parcelasTexto}
 
 SITUAÇÃO FINANCEIRA ATUAL:
-- Saldo atual (já recebido - já pago): R$ ${saldoAtual.toFixed(2)}
-- Despesas pendentes nos próximos 30 dias: R$ ${despesasPendentes30d.toFixed(2)}
-- Receitas pendentes nos próximos 30 dias: R$ ${receitasPendentes30d.toFixed(2)}
-- Dinheiro livre após cobrir contas do mês: R$ ${disponivel30dias.toFixed(2)}
+- Saldo atual (dinheiro já no bolso): R$ ${saldoAtual.toFixed(2)}
+- Contas a pagar nos próximos 30 dias: R$ ${despesasPendentes30d.toFixed(2)}
+- Receitas a receber nos próximos 30 dias: R$ ${receitasPendentes30d.toFixed(2)}
+- Disponível conservador (só o que tem agora menos as contas): R$ ${disponivelConservador.toFixed(2)}
+- Disponível previsto (incluindo receitas que entram este mês): R$ ${disponivelPrevisto.toFixed(2)}
 - Superávit médio mensal (últimos 3 meses): R$ ${surplusMedio !== null ? surplusMedio.toFixed(2) : '(sem dados suficientes)'}
 ${proximaReceitaTexto}
 ${limiteTexto}
 
 REGRAS DE ANÁLISE (use internamente, não repita para o usuário):
-- À vista viável: disponivel30dias > valorCompra × 1.20 (margem de segurança de 20%)
+- Use o "disponível previsto" como base principal para a análise (é o número real do mês)
+- Use o "disponível conservador" só se as receitas pendentes ainda não chegaram e a compra é imediata
+- À vista viável: disponivelPrevisto > valorCompra × 1.20 (margem de segurança de 20%)
 - Parcela viável: valor_parcela ≤ surplusMedio × 0.35 (máximo 35% do superávit mensal)
 - Se surplusMedio for nulo ou negativo, parcelamento é de alto risco
 - 🟢 VERDE: compra cabe folgada | 🟡 AMARELO: possível mas exige cuidado | 🔴 VERMELHO: não recomendado agora
+- Se disponivelConservador for negativo mas disponivelPrevisto for positivo e alto: semáforo AMARELO (aguardar receita entrar)
 
 FORMATO DA RESPOSTA (WhatsApp, máx 12 linhas):
 1. Linha com semáforo: 🟢/🟡/🔴 + frase curta de diagnóstico
 2. ─────────────────
-3. *À Vista:* análise em 1-2 linhas com valores reais
+3. *À Vista:* análise em 1-2 linhas com o valor disponível PREVISTO (não o conservador)
 4. *Parcelado:* quantas parcelas cabem, valor máximo por parcela
 5. *Melhor momento:* quando comprar (referência à próxima receita se houver)
 6. Se há limite relevante, mencionar brevemente

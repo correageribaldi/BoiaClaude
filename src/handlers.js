@@ -3662,7 +3662,10 @@ async function handleAssessorCompra(usuarioId, resultado) {
       .filter(p => p.tipo === 'receita')
       .reduce((acc, p) => acc + p.valor, 0);
 
-    const disponivel30dias = saldos.saldoAtual - despesasPendentes30d;
+    // Conservador: só o que está no banco agora, menos as contas a pagar
+    const disponivelConservador = saldos.saldoAtual - despesasPendentes30d;
+    // Previsto: inclui receitas que entram nos próximos 30 dias
+    const disponivelPrevisto = saldos.saldoAtual + receitasPendentes30d - despesasPendentes30d;
 
     // Superávit médio real dos últimos 3 meses (receitas pagas - despesas pagas)
     const surplusPorMes = resumosMensais
@@ -3704,7 +3707,8 @@ async function handleAssessorCompra(usuarioId, resultado) {
       receitasPendentes30d,
       proximaReceita,
       surplusMedio,
-      disponivel30dias,
+      disponivelConservador,
+      disponivelPrevisto,
       limites: limitesRelevantes,
     };
 
