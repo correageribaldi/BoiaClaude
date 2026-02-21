@@ -104,6 +104,14 @@ IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "li
 {"acao": "analise_financeira"}
 ATENÇÃO: Use quando o usuário quer uma ANÁLISE DETALHADA dos gastos pela regra 50/30/20 (necessidades/desejos/poupança). É diferente de "finanças em dia" (que é para CADASTRAR receitas/despesas manualmente).
 
+16c. ASSESSOR DE COMPRA / VIABILIDADE DE COMPRA (quero comprar, posso comprar, consigo comprar, vale a pena comprar, melhor forma de pagar, à vista ou parcelado):
+{"acao": "assessor_compra", "descricao": "nome do produto", "valor": 0.00, "parcelasSolicitadas": null}
+ATENÇÃO: Use quando o usuário quer saber SE e COMO comprar algo. Exemplos:
+- "quero comprar um celular de 2000 reais" → assessor_compra, descricao: "Celular", valor: 2000, parcelasSolicitadas: null
+- "consigo comprar uma TV de 3500 em 12x?" → assessor_compra, descricao: "TV", valor: 3500, parcelasSolicitadas: 12
+- "posso fazer uma compra de 800 reais à vista?" → assessor_compra, descricao: "compra", valor: 800, parcelasSolicitadas: 1
+- "vale a pena comprar um notebook agora?" → assessor_compra, descricao: "Notebook", valor: null, parcelasSolicitadas: null
+
 17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
 
@@ -735,4 +743,73 @@ Nunca diga que é uma IA ou que tem limitações. Simplesmente responda com conf
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente };
+async function analisarViabilidadeCompra(dadosFinanceiros, valorCompra, descricao, parcelasSolicitadas) {
+  if (!process.env.OPENAI_API_KEY) return null;
+  try {
+    const {
+      saldoAtual, despesasPendentes30d, receitasPendentes30d,
+      proximaReceita, surplusMedio, disponivel30dias, limites,
+    } = dadosFinanceiros;
+
+    const parcelasTexto = parcelasSolicitadas
+      ? `O usuário perguntou especificamente sobre ${parcelasSolicitadas === 1 ? 'pagamento à vista' : `parcelamento em ${parcelasSolicitadas}x`}.`
+      : 'O usuário não especificou forma de pagamento preferida.';
+
+    const limiteTexto = limites.length > 0
+      ? `Limites de gastos ativos:\n${limites.map(l => `  - ${l.categoria}: limite R$ ${l.limite.toFixed(2)}, gasto R$ ${l.gastos.toFixed(2)}, restante R$ ${l.restante.toFixed(2)}`).join('\n')}`
+      : 'Nenhum limite de gastos configurado.';
+
+    const proximaReceitaTexto = proximaReceita
+      ? `Próxima receita esperada: ${proximaReceita.descricao} de R$ ${proximaReceita.valor.toFixed(2)} em ${proximaReceita.data}`
+      : 'Nenhuma receita pendente registrada.';
+
+    const prompt = `Você é o Cronos, assessor financeiro pessoal no WhatsApp. Seja direto, amigável e prático.
+
+O usuário quer comprar: *${descricao}*
+Valor da compra: R$ ${valorCompra ? valorCompra.toFixed(2) : '(não informado)'}
+${parcelasTexto}
+
+SITUAÇÃO FINANCEIRA ATUAL:
+- Saldo atual (já recebido - já pago): R$ ${saldoAtual.toFixed(2)}
+- Despesas pendentes nos próximos 30 dias: R$ ${despesasPendentes30d.toFixed(2)}
+- Receitas pendentes nos próximos 30 dias: R$ ${receitasPendentes30d.toFixed(2)}
+- Dinheiro livre após cobrir contas do mês: R$ ${disponivel30dias.toFixed(2)}
+- Superávit médio mensal (últimos 3 meses): R$ ${surplusMedio !== null ? surplusMedio.toFixed(2) : '(sem dados suficientes)'}
+${proximaReceitaTexto}
+${limiteTexto}
+
+REGRAS DE ANÁLISE (use internamente, não repita para o usuário):
+- À vista viável: disponivel30dias > valorCompra × 1.20 (margem de segurança de 20%)
+- Parcela viável: valor_parcela ≤ surplusMedio × 0.35 (máximo 35% do superávit mensal)
+- Se surplusMedio for nulo ou negativo, parcelamento é de alto risco
+- 🟢 VERDE: compra cabe folgada | 🟡 AMARELO: possível mas exige cuidado | 🔴 VERMELHO: não recomendado agora
+
+FORMATO DA RESPOSTA (WhatsApp, máx 12 linhas):
+1. Linha com semáforo: 🟢/🟡/🔴 + frase curta de diagnóstico
+2. ─────────────────
+3. *À Vista:* análise em 1-2 linhas com valores reais
+4. *Parcelado:* quantas parcelas cabem, valor máximo por parcela
+5. *Melhor momento:* quando comprar (referência à próxima receita se houver)
+6. Se há limite relevante, mencionar brevemente
+7. _Dica prática em itálico_
+
+Use linguagem informal brasileira. *Negrito* para valores e termos-chave. NUNCA repita todos os dados brutos de volta.`;
+
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Analise a viabilidade de comprar ${descricao}${valorCompra ? ` por R$ ${valorCompra.toFixed(2)}` : ''}.` },
+      ],
+      temperature: 0.5,
+      max_tokens: 600,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || null;
+  } catch (err) {
+    console.error('[AI] Erro ao analisar viabilidade de compra:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra };

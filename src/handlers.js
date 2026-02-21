@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -1618,6 +1618,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Análise financeira 50/30/20
   if (resultado.acao === 'analise_financeira') {
     return await iniciarAnaliseFinanceira(usuarioId);
+  }
+
+  // Assessor de compra / viabilidade de compra
+  if (resultado.acao === 'assessor_compra') {
+    return await handleAssessorCompra(usuarioId, resultado);
   }
 
   // Saudação - verificar se é usuário novo ou existente
@@ -3558,6 +3563,111 @@ async function handleCSVImport(usuarioId, csvContent) {
   msg += `\n_Dica: peça *"resumo"* pra ver o panorama completo!_`;
 
   return msg;
+}
+
+// ── Assessor de Compra ────────────────────────────────────────────────────────
+async function handleAssessorCompra(usuarioId, resultado) {
+  const { descricao, valor: valorCompra, parcelasSolicitadas } = resultado;
+
+  if (!valorCompra || valorCompra <= 0) {
+    return `💭 Pra te ajudar a avaliar a compra do *${descricao || 'item'}*, me diz o valor! Quanto custa?`;
+  }
+
+  try {
+    const agora = new Date();
+    const mesAtual = agora.getMonth() + 1;
+    const anoAtual = agora.getFullYear();
+
+    // Últimos 3 meses para cálculo do superávit médio
+    const resumoPromises = [];
+    for (let i = 1; i <= 3; i++) {
+      let m = mesAtual - i;
+      let a = anoAtual;
+      if (m <= 0) { m += 12; a -= 1; }
+      resumoPromises.push(db.resumoMensal(usuarioId, m, a));
+    }
+
+    const [saldos, pendentes, limites, ...resumosMensais] = await Promise.all([
+      db.calcularSaldos(usuarioId),
+      db.listarPendentes(usuarioId, null),
+      db.listarLimites(usuarioId),
+      ...resumoPromises,
+    ]);
+
+    // Filtra pendentes nos próximos 30 dias
+    const hoje = new Date();
+    const limite30d = new Date(hoje);
+    limite30d.setDate(limite30d.getDate() + 30);
+
+    const pendentes30d = pendentes.filter(p => {
+      if (!p.data) return false;
+      const d = new Date(p.data + 'T12:00:00');
+      return d >= hoje && d <= limite30d;
+    });
+
+    const despesasPendentes30d = pendentes30d
+      .filter(p => p.tipo === 'despesa')
+      .reduce((acc, p) => acc + p.valor, 0);
+
+    const receitasPendentes30d = pendentes30d
+      .filter(p => p.tipo === 'receita')
+      .reduce((acc, p) => acc + p.valor, 0);
+
+    const disponivel30dias = saldos.saldoAtual - despesasPendentes30d;
+
+    // Superávit médio real dos últimos 3 meses (receitas pagas - despesas pagas)
+    const surplusPorMes = resumosMensais
+      .map(resumo => {
+        let rec = 0, desp = 0;
+        for (const t of resumo.totais) {
+          if (t.tipo === 'receita' && t.status === 'pago') rec = t.total;
+          if (t.tipo === 'despesa' && t.status === 'pago') desp = t.total;
+        }
+        return rec - desp;
+      })
+      .filter(s => s !== 0);
+
+    const surplusMedio = surplusPorMes.length > 0
+      ? surplusPorMes.reduce((a, b) => a + b, 0) / surplusPorMes.length
+      : null;
+
+    // Próxima receita esperada (mais cedo)
+    const receitasOrdenadas = pendentes
+      .filter(p => p.tipo === 'receita' && p.data)
+      .sort((a, b) => new Date(a.data) - new Date(b.data));
+    const proximaReceita = receitasOrdenadas.length > 0
+      ? { descricao: receitasOrdenadas[0].descricao, valor: receitasOrdenadas[0].valor, data: fmt.formatarData(receitasOrdenadas[0].data) }
+      : null;
+
+    // Limites ativos nas categorias relevantes para compras
+    const categoriasCompra = ['Compras', 'Lazer', 'Outros'];
+    const limitesRelevantes = [];
+    for (const lim of limites) {
+      if (categoriasCompra.includes(lim.categoria)) {
+        const info = await db.verificarLimite(usuarioId, lim.categoria);
+        if (info) limitesRelevantes.push(info);
+      }
+    }
+
+    const dadosFinanceiros = {
+      saldoAtual: saldos.saldoAtual,
+      despesasPendentes30d,
+      receitasPendentes30d,
+      proximaReceita,
+      surplusMedio,
+      disponivel30dias,
+      limites: limitesRelevantes,
+    };
+
+    const analise = await analisarViabilidadeCompra(
+      dadosFinanceiros, valorCompra, descricao || 'item', parcelasSolicitadas || null
+    );
+
+    return analise || '❌ Não consegui analisar agora. Tente novamente em instantes!';
+  } catch (err) {
+    console.error('[ASSESSOR_COMPRA] Erro:', err.message);
+    return '❌ Ocorreu um erro ao analisar sua compra. Tente novamente!';
+  }
 }
 
 module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo };
