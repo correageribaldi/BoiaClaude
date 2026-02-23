@@ -763,33 +763,19 @@ async function vincularContatoPorNumero(usuarioId, numeroInformado) {
 
 function mensagemBoasVindas(nome) {
   const nomeExibir = nome || 'amigo(a)';
-  return `Fala ${nomeExibir}, aqui é o Cronos, teu Assistente Pessoal. 👋😄
+  return `Fala ${nomeExibir}, aqui é o *Cronos*! 👋
 
-A partir de agora eu vou te ajudar a organizar a vida, otimizar teu tempo e gerenciar teu dinheiro do jeito certo. E sim: eu também vou te lembrar de tudo que você me pedir (sem dó 😂).
+Sou teu assistente financeiro no WhatsApp. Receitas, despesas, saldo, contas do mês — tudo aqui na conversa, sem app, sem planilha.
 
-Pra ficar bem fácil, olha o que eu consigo fazer por aqui:
+Como você prefere começar?
 
-✅ *Finanças (bem prático)*
-• Registrar receitas e despesas
-• Organizar por categoria (mercado, gasolina, contas, lazer, etc.)
-• Montar um resumo do mês e te mostrar pra onde o dinheiro tá indo
-• Você pode mandar por texto, áudio, ou até foto de boleto/cupom/nota que eu registro pra você
+*1.* 🎯 *Organizar tudo agora*
+Respondo algumas perguntas rápidas e já monto teu financeiro completo — saldo atual, o que entra e o que sai todo mês.
 
-✅ *Tarefas e rotina*
-• Criar tarefas e compromissos
-• Definir horários e recorrência (todo dia, toda semana, datas específicas)
-• Te lembrar do jeito certo pra não ter desculpa… tipo "academia 10:00" — e eu vou cobrar 😅
+*2.* 📝 *Ir cadastrando aos poucos*
+Vai mandando o que gastar ou receber no dia a dia e eu vou organizando automaticamente.
 
-✅ *Organização do dia a dia*
-• Checklists, prioridades, lembretes rápidos
-• "Me ajuda a planejar meu dia" e eu te devolvo um plano simples e direto
-
-Agora me diz como você quer começar:
-*1.* 🎯 *Finanças em Dia* — Em 2 min eu organizo teu financeiro (saldo, contas a pagar/receber e gastos fixos)
-*2.* Criar teus primeiros lembretes/tarefas (tipo remédio, academia, contas)
-*3.* Ver tudo que eu posso fazer (eu te mando a lista completa)
-
-_Recomendo começar pelo *1* pra eu ter a visão completa das tuas finanças!_`;
+_Recomendo o *1* pra você já ter uma visão clara de como tá teu dinheiro!_ 💪`;
 }
 
 function foraDoEscopoMsg(nome) {
@@ -1149,6 +1135,11 @@ async function handleMessage(usuarioId, texto) {
   // Comando: finanças em dia (texto direto)
   if (lower === 'finanças em dia' || lower === 'financas em dia' || lower === '1') {
     return await iniciarPontoZero(usuarioId);
+  }
+
+  // Resposta ao menu de boas-vindas — opção 2: cadastrar aos poucos
+  if (lower === '2') {
+    return `Ótimo! É bem simples. 😊\n\nÉ só me contar o que você gastou ou recebeu, assim:\n\n_"gastei 50 de gasolina"_\n_"paguei 150 de conta de luz"_\n_"recebi 2000 de salário"_\n_"comprei R$ 80 no mercado"_\n\nPode mandar por texto, áudio ou foto de nota/boleto — eu registro e organizo tudo pra você!`;
   }
 
   // Comando: painel web
