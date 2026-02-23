@@ -2796,8 +2796,9 @@ function extrairDiaDoTexto(texto) {
 function proximoCampoFaltante(itemParcial, etapa) {
   if (!itemParcial.descricao) return 'descricao';
   if (!itemParcial.valor) return 'valor';
-  // Dia é obrigatório em tudo exceto receitas_variaveis
-  if (etapa !== 'receitas_variaveis' && !itemParcial.dia) return 'dia';
+  // Dia é obrigatório apenas para fixas (receitas e despesas); variáveis não exigem dia
+  const diaObrigatorio = etapa === 'receitas_fixas' || etapa === 'despesas_fixas';
+  if (diaObrigatorio && !itemParcial.dia) return 'dia';
   return null;
 }
 
@@ -2859,7 +2860,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
     estado.etapa === 'receitas_fixas'     ? 'receita fixa'      :
     estado.etapa === 'receitas_variaveis' ? 'receita variável'  :
     estado.etapa === 'despesas_fixas'     ? 'despesa fixa'      :
-                                           'despesa programada';
+                                           'despesa variável';
   const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
   return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
 }
@@ -2941,7 +2942,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
       if (item.tipo === 'nao') {
         estado.etapa = 'despesas_variaveis';
         salvarPontoZero(usuarioId, estado);
-        return `Beleza! Por último, tem alguma *despesa variável já programada*? São gastos que você já sabe que vai ter, mas que não são todo mês igual — consulta médica, salão de beleza, revisão do carro, viagem planejada...\n\nPode mandar tudo junto!\n_Ex: "Salão de beleza semana que vem R$ 180, consulta dia 15 R$ 250"_\n\n_Gastos do dia a dia como mercado e restaurante não entram aqui. Se não tem nenhum programado, manda "não"._`;
+        return `Ótimo! Agora as *despesas variáveis* — contas que chegam todo mês mas o valor muda (água, luz, gás, mercado, gasolina, etc.). Me diz o valor médio que você costuma pagar em cada uma.\n\nPode mandar tudo junto!\n_Ex: "Água R$ 80, Luz R$ 150, Mercado R$ 600"_\n\n_Se não tem nenhuma, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasFixas);
       if (res.ok) {
@@ -2967,8 +2968,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
       const res = coletarItens(item, estado.despesasVariaveis);
       if (res.ok) {
         salvarPontoZero(usuarioId, estado);
-        const mais = res.quantidade > 1 ? `${res.quantidade} despesas programadas anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa já programada ou pode fechar?`;
+        const mais = res.quantidade > 1 ? `${res.quantidade} despesas variáveis anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa variável ou pode fechar?`;
       }
       if (item.tipo === 'item' && item.descricao) {
         const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
@@ -2978,7 +2979,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(campoPendente, item.descricao);
         }
       }
-      return 'Não entendi 😅 Me diz o gasto, o valor e o dia.\n_Ex: "Salão de beleza R$ 180 dia 12"_\n_Ou manda "não" pra fechar._';
+      return 'Não entendi 😅 Me diz o gasto e o valor médio.\n_Ex: "Água R$ 80" ou "Luz R$ 150"_\n_Ou manda "não" pra fechar._';
     }
 
     default:
