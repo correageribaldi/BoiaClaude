@@ -1688,6 +1688,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     return await handleLembreteRecorrente(usuarioId, resultado);
   }
 
+  // Despesa ou receita recorrente (entra no fluxo financeiro)
+  if (resultado.acao === 'transacao_recorrente') {
+    return await handleTransacaoRecorrente(usuarioId, resultado);
+  }
+
   // Listar lembretes (únicos + recorrentes)
   if (resultado.acao === 'listar_lembretes') {
     return await handleListarTodosLembretes(usuarioId);
@@ -2230,6 +2235,66 @@ async function handleCancelarLembrete(usuarioId, msg) {
 }
 
 const NOMES_DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+async function handleTransacaoRecorrente(usuarioId, resultado) {
+  const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana } = resultado;
+
+  if (!valor || valor <= 0) {
+    return `❌ Preciso do valor para cadastrar a recorrência. Quanto é por ${frequencia === 'semanal' ? 'semana' : 'mês'}?`;
+  }
+  if (!descricao) {
+    return '❌ Preciso saber o nome dessa despesa/receita recorrente.';
+  }
+
+  try {
+    // Cria a transação pendente para a próxima ocorrência
+    const dataStr = calcularDataPendente(dia_mes || null);
+    await db.adicionarTransacao(
+      usuarioId, tipo || 'despesa', valor, descricao,
+      categoria || 'Outros', dataStr, 'pendente'
+    );
+
+    // Cria lembrete recorrente para registrar as ocorrências futuras no fluxo financeiro
+    const labelPagar = (tipo === 'despesa') ? '💸 Pagar' : '💰 Receber';
+    const diaLembrete = frequencia === 'semanal' ? null : (dia_mes ?? new Date().getDate());
+    const diaSemanLembrete = frequencia === 'semanal' ? (dia_semana ?? null) : null;
+    await db.criarLembreteRecorrente(
+      usuarioId,
+      `${labelPagar}: ${descricao} - ${fmt.formatarMoeda(valor)}`,
+      '09:00',
+      frequencia || 'mensal',
+      diaSemanLembrete,
+      diaLembrete,
+      null
+    );
+
+    const emoji = (tipo === 'despesa') ? '📉' : '📈';
+    const tipoLabel = (tipo === 'despesa') ? 'Despesa' : 'Receita';
+    let quando;
+    if (frequencia === 'semanal') {
+      if (dia_semana != null) {
+        const nomesDias = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+        quando = `toda ${nomesDias[dia_semana]}`;
+      } else {
+        quando = 'toda semana';
+      }
+    } else {
+      quando = dia_mes ? `todo mês no dia *${dia_mes}*` : 'todo mês';
+    }
+
+    let msg = `${emoji} *${tipoLabel} recorrente cadastrada!*\n\n`;
+    msg += `📋 *${descricao}* — ${fmt.formatarMoeda(valor)}\n`;
+    msg += `📅 Recorrência: ${quando}\n`;
+    if (categoria) msg += `🏷️ Categoria: ${categoria}\n`;
+    msg += `\n✅ Já está na sua *agenda financeira* como pendente.\n`;
+    msg += `_Te aviso todo mês para confirmar o pagamento!_`;
+
+    return msg;
+  } catch (err) {
+    console.error('[TRANSACAO_RECORRENTE] Erro:', err.message);
+    return '❌ Erro ao cadastrar a recorrência. Tente novamente!';
+  }
+}
 
 async function handleLembreteRecorrente(usuarioId, resultado) {
   const { horario, frequencia, dia_semana, dia_mes, duracao_meses, mensagem } = resultado;
