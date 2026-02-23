@@ -769,13 +769,11 @@ Sou teu assistente financeiro no WhatsApp. Receitas, despesas, saldo, contas do 
 
 Como você prefere começar?
 
-*1.* 🎯 *Organizar tudo agora*
-Respondo algumas perguntas rápidas e já monto teu financeiro completo — saldo atual, o que entra e o que sai todo mês.
+🎯 *Organizar tudo agora* — Respondo algumas perguntas rápidas e já monto teu financeiro completo (saldo, receitas e despesas do mês).
 
-*2.* 📝 *Ir cadastrando aos poucos*
-Vai mandando o que gastar ou receber no dia a dia e eu vou organizando automaticamente.
+📝 *Ir cadastrando aos poucos* — Vai mandando o que gastar ou receber no dia a dia e eu vou organizando automaticamente.
 
-_Recomendo o *1* pra você já ter uma visão clara de como tá teu dinheiro!_ 💪`;
+_Recomendo organizar tudo agora pra já ter uma visão clara de como tá teu dinheiro!_ 💪`;
 }
 
 function foraDoEscopoMsg(nome) {
@@ -1133,13 +1131,8 @@ async function handleMessage(usuarioId, texto) {
   }
 
   // Comando: finanças em dia (texto direto)
-  if (lower === 'finanças em dia' || lower === 'financas em dia' || lower === '1') {
+  if (lower === 'finanças em dia' || lower === 'financas em dia') {
     return await iniciarPontoZero(usuarioId);
-  }
-
-  // Resposta ao menu de boas-vindas — opção 2: cadastrar aos poucos
-  if (lower === '2') {
-    return `Ótimo! É bem simples. 😊\n\nÉ só me contar o que você gastou ou recebeu, assim:\n\n_"gastei 50 de gasolina"_\n_"paguei 150 de conta de luz"_\n_"recebi 2000 de salário"_\n_"comprei R$ 80 no mercado"_\n\nPode mandar por texto, áudio ou foto de nota/boleto — eu registro e organizo tudo pra você!`;
   }
 
   // Comando: painel web
@@ -1631,6 +1624,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Finanças em Dia - organizar finanças
   if (resultado.acao === 'financas_em_dia') {
     return await iniciarPontoZero(usuarioId);
+  }
+
+  // Cadastro livre - preferência por ir registrando aos poucos
+  if (resultado.acao === 'cadastro_livre') {
+    return `Ótimo! É bem simples. 😊\n\nÉ só me contar o que você gastou ou recebeu, assim:\n\n_"gastei 50 de gasolina"_\n_"paguei 150 de conta de luz"_\n_"recebi 2000 de salário"_\n_"comprei R$ 80 no mercado"_\n\nPode mandar por texto, áudio ou foto de nota/boleto — eu registro e organizo tudo pra você!`;
   }
 
   // Análise financeira 50/30/20

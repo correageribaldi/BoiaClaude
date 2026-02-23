@@ -106,7 +106,7 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
 {"acao": "agenda", "periodo": "hoje|amanha|semana|mes|YYYY-MM-DD"}
 
-16. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, opção 1, quero começar a organizar):
+16. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, quero começar a organizar, organizar tudo agora, quero organizar tudo, bora organizar, vou organizar tudo, quero começar pelo começo, me ajuda a organizar):
 {"acao": "financas_em_dia"}
 
 IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "limpar tudo" — esses são comandos de RESET que apagam tudo. "Finanças em dia" é para ORGANIZAR as finanças, não apagar.
@@ -114,6 +114,9 @@ IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "li
 16b. ANÁLISE FINANCEIRA / REGRA 50/30/20 (análise financeira, analisar meus gastos, regra 50 30 20, quero analisar meu extrato, diagnóstico financeiro, como estou gastando, quero ver onde estou gastando errado):
 {"acao": "analise_financeira"}
 ATENÇÃO: Use quando o usuário quer uma ANÁLISE DETALHADA dos gastos pela regra 50/30/20 (necessidades/desejos/poupança). É diferente de "finanças em dia" (que é para CADASTRAR receitas/despesas manualmente).
+
+16e. CADASTRO LIVRE / CADASTRAR AOS POUCOS (ir cadastrando aos poucos, prefiro cadastrar conforme for, vou mandando quando acontecer, prefiro ir registrando, quero registrar aos poucos, vou usando e cadastrando, prefiro começar mandando o que gastar):
+{"acao": "cadastro_livre"}
 
 16c. ASSESSOR DE COMPRA / VIABILIDADE DE COMPRA (quero comprar, posso comprar, consigo comprar, vale a pena comprar, melhor forma de pagar, à vista ou parcelado, quero pedir, posso pedir, quero fazer isso, posso fazer isso, devo comprar, tenho condições, cabe no orçamento):
 {"acao": "assessor_compra", "descricao": "nome do produto ou serviço", "valor": 0.00, "parcelasSolicitadas": null}
