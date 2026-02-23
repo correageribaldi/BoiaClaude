@@ -2776,7 +2776,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
       if (item.tipo === 'nao') {
         estado.etapa = 'despesas_variaveis';
         salvarPontoZero(usuarioId, estado);
-        return `Beleza! Por último, as *despesas variáveis* do mês — gastos que variam (supermercado, restaurante, farmácia, transporte, lazer...).\n\nPode mandar tudo junto!\n_Ex: "Supermercado R$ 600, transporte R$ 200 e lazer R$ 150"_\n\n_Se não tem mais nada, manda "não"._`;
+        return `Beleza! Por último, tem alguma *despesa variável já programada*? São gastos que você já sabe que vai ter, mas que não são todo mês igual — consulta médica, salão de beleza, revisão do carro, viagem planejada...\n\nPode mandar tudo junto!\n_Ex: "Salão de beleza semana que vem R$ 180, consulta dia 15 R$ 250"_\n\n_Gastos do dia a dia como mercado e restaurante não entram aqui. Se não tem nenhum programado, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasFixas);
       if (res.ok) {
@@ -2794,10 +2794,10 @@ async function handlePontoZero(usuarioId, texto, estado) {
       const res = coletarItens(item, estado.despesasVariaveis);
       if (res.ok) {
         salvarPontoZero(usuarioId, estado);
-        const mais = res.quantidade > 1 ? `${res.quantidade} despesas variáveis anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa variável ou pode fechar?`;
+        const mais = res.quantidade > 1 ? `${res.quantidade} despesas programadas anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa já programada ou pode fechar?`;
       }
-      return 'Não entendi 😅 Me diz o gasto, o valor e o dia se tiver.\n_Ex: "Supermercado R$ 500"_\n_Ou manda "não" pra fechar._';
+      return 'Não entendi 😅 Me diz o gasto, o valor e o dia.\n_Ex: "Salão de beleza R$ 180 dia 12"_\n_Ou manda "não" pra fechar._';
     }
 
     default:
