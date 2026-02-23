@@ -2694,18 +2694,35 @@ async function iniciarPontoZero(usuarioId) {
   salvarPontoZero(usuarioId, {
     etapa: 'saldo',
     saldoInicial: 0,
-    receitas: [],
-    despesas: [],
-    recorrentes: [],
+    receitasFixas: [],
+    receitasVariaveis: [],
+    despesasFixas: [],
+    despesasVariaveis: [],
   });
 
-  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm 2-3 min eu organizo teu financeiro e deixo tuas finanças em dia.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
+  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm poucos minutos organizo teu financeiro completo.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
+}
+
+function coletarItens(item, lista) {
+  if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
+    let msg = '';
+    for (const it of item.itens) {
+      lista.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
+      msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
+    }
+    return { ok: true, msg, quantidade: item.itens.length };
+  }
+  if (item.tipo === 'item' && item.valor) {
+    lista.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
+    const msg = `✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}`;
+    return { ok: true, msg, quantidade: 1 };
+  }
+  return { ok: false };
 }
 
 async function handlePontoZero(usuarioId, texto, estado) {
   const lower = texto.toLowerCase().trim();
 
-  // Cancelar a qualquer momento
   if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
     limparPontoZero(usuarioId);
     return '❌ Cancelado. Sem problemas! Quando quiser recomeçar é só me falar *"finanças em dia"*.';
@@ -2714,96 +2731,73 @@ async function handlePontoZero(usuarioId, texto, estado) {
   const item = await interpretarItemFinanceiro(texto);
 
   switch (estado.etapa) {
+
     case 'saldo': {
       if (item.tipo !== 'item' || !item.valor) {
         return 'Não consegui entender o valor 😅\n\nMe diz só o valor aproximado que tu tem disponível hoje.\n_Ex: "R$ 1.850" ou "uns 2 mil"_';
       }
       estado.saldoInicial = item.valor;
-      estado.etapa = 'receitas';
+      estado.etapa = 'receitas_fixas';
       salvarPontoZero(usuarioId, estado);
-      return `Perfeito ✅ Saldo atual: *${fmt.formatarMoeda(item.valor)}*\n\nAté o fim do mês, tu tem algo pra *receber*? (salário, freela, pix esperado)\n\n_Se não tem nada pra receber, manda "não"._`;
+      return `Perfeito ✅ Saldo atual: *${fmt.formatarMoeda(item.valor)}*\n\n📈 Agora me diz suas *receitas fixas* do mês — aquilo que entra todo mês no mesmo dia (salário, benefício, aluguel recebido...).\n\nPode mandar tudo de uma vez!\n_Ex: "Salário dia 5 R$ 3.000 e aluguel dia 10 R$ 800"_\n\n_Se não tem, manda "não"._`;
     }
 
-    case 'receitas': {
+    case 'receitas_fixas': {
       if (item.tipo === 'nao') {
-        estado.etapa = 'despesas';
+        estado.etapa = 'receitas_variaveis';
         salvarPontoZero(usuarioId, estado);
-        return 'Beleza! E *contas pra pagar* até o fim do mês? Me diz as principais (pode mandar várias de uma vez!).\n\n_Ex: "Internet dia 18, R$ 120 e cartão dia 25, R$ 980"_\n_Se não tem nenhuma, manda "não"._';
+        return `Beleza! E *receitas variáveis*? (freelas, bicos, vendas, comissões — o que entra mas não é todo mês igual)\n\n_Ex: "Freela dia 20 R$ 500 e venda R$ 200"_\n_Se não tem, manda "não"._`;
       }
-      if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
-        let msg = '';
-        for (const it of item.itens) {
-          estado.receitas.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
-          msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
-        }
+      const res = coletarItens(item, estado.receitasFixas);
+      if (res.ok) {
         salvarPontoZero(usuarioId, estado);
-        return `Anotado! ${item.itens.length} receitas registradas:\n\n${msg}\nTem mais alguma coisa pra receber ou fechou?`;
+        const mais = res.quantidade > 1 ? `${res.quantidade} receitas fixas anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma receita fixa ou pode passar pra frente?`;
       }
-      if (item.tipo === 'item' && item.valor) {
-        estado.receitas.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
-        salvarPontoZero(usuarioId, estado);
-        return `Anotado ✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}\n\nÉ só isso de recebimento ou tem mais alguma coisa pra entrar?`;
-      }
-      return 'Não entendi 😅 Me diz o que tu vai receber, o valor e o dia.\n_Ex: "Salário dia 28, R$ 3.000"_\n_Ou manda "não" se não tem nada pra receber._';
+      return 'Não entendi 😅 Me diz o que entra, o valor e o dia.\n_Ex: "Salário dia 5, R$ 3.000"_\n_Ou manda "não" se não tem._';
     }
 
-    case 'despesas': {
+    case 'receitas_variaveis': {
       if (item.tipo === 'nao') {
-        estado.etapa = 'recorrentes';
+        estado.etapa = 'despesas_fixas';
         salvarPontoZero(usuarioId, estado);
-        return 'Beleza! Agora me diz aquelas *contas que tu paga todo mês* (mesmo que seja pro próximo mês). Pode mandar várias de uma vez!\n_Ex: "aluguel dia 5 R$ 1500, internet dia 10 R$ 120 e academia dia 1 R$ 100"_\n\n_Se não tem nenhuma fixa, manda "não"._';
+        return `Ótimo! Agora as *despesas fixas* — contas que vêm todo mês (aluguel, internet, luz, escola, streaming, cartão fixo...).\n\nPode mandar várias de uma vez!\n_Ex: "Aluguel dia 5 R$ 1.500, internet dia 10 R$ 120 e academia dia 1 R$ 100"_\n\n_Se não tem, manda "não"._`;
       }
-      if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
-        let msg = '';
-        for (const it of item.itens) {
-          estado.despesas.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
-          msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
-        }
+      const res = coletarItens(item, estado.receitasVariaveis);
+      if (res.ok) {
         salvarPontoZero(usuarioId, estado);
-        return `Anotado! ${item.itens.length} despesas registradas:\n\n${msg}\nTem mais alguma despesa pendente ou por enquanto fechou?`;
+        const mais = res.quantidade > 1 ? `${res.quantidade} receitas variáveis anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma receita variável ou pode passar pra frente?`;
       }
-      if (item.tipo === 'item' && item.valor) {
-        estado.despesas.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
-        salvarPontoZero(usuarioId, estado);
-        return `Anotado ✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}\n\nTem mais alguma despesa pendente ou por enquanto fechou?`;
-      }
-      return 'Não entendi 😅 Me diz a conta, o valor e o dia de vencimento.\n_Ex: "Cartão dia 25, R$ 980"_\n_Ou manda "não" se não tem mais._';
+      return 'Não entendi 😅 Me diz o que entra, o valor e se tem data prevista.\n_Ex: "Freela R$ 500 dia 20"_\n_Ou manda "não" se não tem._';
     }
 
-    case 'recorrentes': {
+    case 'despesas_fixas': {
       if (item.tipo === 'nao') {
-        estado.etapa = 'painel';
+        estado.etapa = 'despesas_variaveis';
         salvarPontoZero(usuarioId, estado);
-        return 'Fechou! ✅\n\nQuer ver teu *painel financeiro* agora? Saldo, pendências e previsão até o fim do mês. 📊\n\n_Manda "sim" pra ver ou "cancelar" pra sair._';
+        return `Beleza! Por último, as *despesas variáveis* do mês — gastos que variam (supermercado, restaurante, farmácia, transporte, lazer...).\n\nPode mandar tudo junto!\n_Ex: "Supermercado R$ 600, transporte R$ 200 e lazer R$ 150"_\n\n_Se não tem mais nada, manda "não"._`;
       }
-      if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
-        let msg = '';
-        for (const it of item.itens) {
-          estado.recorrentes.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
-          msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}/mês${it.dia ? ` (dia ${it.dia})` : ''}\n`;
-        }
+      const res = coletarItens(item, estado.despesasFixas);
+      if (res.ok) {
         salvarPontoZero(usuarioId, estado);
-        return `Anotado! ${item.itens.length} contas fixas registradas:\n\n${msg}\nTem mais alguma conta mensal ou terminou por aqui?`;
+        const mais = res.quantidade > 1 ? `${res.quantidade} despesas fixas anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa fixa ou pode passar pra frente?`;
       }
-      if (item.tipo === 'item' && item.valor) {
-        estado.recorrentes.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
-        salvarPontoZero(usuarioId, estado);
-        return `Anotado ✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}/mês${item.dia ? ` (dia ${item.dia})` : ''}\n\nTem mais alguma conta mensal ou terminou por aqui?`;
-      }
-      return 'Não entendi 😅 Me diz a conta fixa, o valor e o dia.\n_Ex: "Aluguel dia 5, R$ 1.500"_\n_Ou manda "não" se terminou._';
+      return 'Não entendi 😅 Me diz a conta, o valor e o dia de vencimento.\n_Ex: "Aluguel dia 5, R$ 1.500"_\n_Ou manda "não" se não tem._';
     }
 
-    case 'painel': {
-      if (item.tipo === 'sim') {
+    case 'despesas_variaveis': {
+      if (item.tipo === 'nao') {
         return await finalizarPontoZero(usuarioId, estado);
       }
-      if (item.tipo === 'nao') {
-        // Salvar dados sem mostrar painel
-        await salvarDadosPontoZero(usuarioId, estado);
-        limparPontoZero(usuarioId);
-        return '✅ Tudo registrado! Teus lançamentos já estão no sistema.\n\nQuando quiser ver o resumo é só pedir: *"resumo"* ou *"agenda"* 💪';
+      const res = coletarItens(item, estado.despesasVariaveis);
+      if (res.ok) {
+        salvarPontoZero(usuarioId, estado);
+        const mais = res.quantidade > 1 ? `${res.quantidade} despesas variáveis anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa variável ou pode fechar?`;
       }
-      return 'Manda *"sim"* pra ver o painel ou *"não"* pra só salvar os dados.';
+      return 'Não entendi 😅 Me diz o gasto, o valor e o dia se tiver.\n_Ex: "Supermercado R$ 500"_\n_Ou manda "não" pra fechar._';
     }
 
     default:
@@ -2837,129 +2831,139 @@ function calcularDataPendente(dia) {
 }
 
 async function salvarDadosPontoZero(usuarioId, estado) {
-  // Salvar receitas como receitas pendentes
-  for (const r of estado.receitas) {
+  // Receitas fixas → receita pendente + lembrete recorrente mensal
+  for (const r of estado.receitasFixas || []) {
     const dataStr = calcularDataPendente(r.dia);
-    await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria, dataStr, 'pendente');
-  }
-
-  // Salvar despesas como despesas pendentes
-  for (const d of estado.despesas) {
-    const dataStr = calcularDataPendente(d.dia);
-    await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria, dataStr, 'pendente');
-  }
-
-  // Salvar recorrentes como despesas pendentes + criar lembrete recorrente
-  for (const r of estado.recorrentes) {
-    const dataStr = calcularDataPendente(r.dia);
-    await db.adicionarTransacao(usuarioId, 'despesa', r.valor, r.descricao, r.categoria, dataStr, 'pendente');
-
-    // Criar lembrete recorrente mensal
-    const horario = '09:00';
+    await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente');
     await db.criarLembreteRecorrente(
       usuarioId,
-      `💸 Pagar: ${r.descricao} - ${fmt.formatarMoeda(r.valor)}`,
-      horario,
-      'mensal',
-      null,
-      r.dia || 1,
-      null
+      `💰 Receber: ${r.descricao} - ${fmt.formatarMoeda(r.valor)}`,
+      '09:00', 'mensal', null, r.dia || 1, null
     );
+  }
+
+  // Receitas variáveis → receita pendente (sem lembrete recorrente)
+  for (const r of estado.receitasVariaveis || []) {
+    const dataStr = calcularDataPendente(r.dia);
+    await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente');
+  }
+
+  // Despesas fixas → despesa pendente + lembrete recorrente mensal
+  for (const d of estado.despesasFixas || []) {
+    const dataStr = calcularDataPendente(d.dia);
+    await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente');
+    await db.criarLembreteRecorrente(
+      usuarioId,
+      `💸 Pagar: ${d.descricao} - ${fmt.formatarMoeda(d.valor)}`,
+      '09:00', 'mensal', null, d.dia || 1, null
+    );
+  }
+
+  // Despesas variáveis → despesa pendente (sem lembrete recorrente)
+  for (const d of estado.despesasVariaveis || []) {
+    const dataStr = calcularDataPendente(d.dia);
+    await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente');
   }
 }
 
 async function finalizarPontoZero(usuarioId, estado) {
-  // Salvar tudo no banco
   await salvarDadosPontoZero(usuarioId, estado);
   limparPontoZero(usuarioId);
 
-  // Montar painel
   const hoje = new Date();
   const diaHoje = hoje.getDate();
   const nomesMes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const mesAtual = nomesMes[hoje.getMonth()];
   const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
+  const mmAtual = String(hoje.getMonth() + 1).padStart(2, '0');
 
-  // Separar itens futuros (ainda pendentes neste mês) dos passados (já incluídos no saldo)
-  // Se o dia já passou, o valor já está refletido no saldo informado pelo usuário
   const ehFuturo = (item) => !item.dia || item.dia >= diaHoje;
 
-  const receitasFuturas = estado.receitas.filter(ehFuturo);
-  const receitasPassadas = estado.receitas.filter(r => !ehFuturo(r));
-  const despesasFuturas = estado.despesas.filter(ehFuturo);
-  const despesasPassadas = estado.despesas.filter(d => !ehFuturo(d));
-  const recorrentesFuturos = estado.recorrentes.filter(ehFuturo);
-  const recorrentesPassados = estado.recorrentes.filter(r => !ehFuturo(r));
+  // Separar futuros (entram na projeção) dos passados (já no saldo)
+  const rfFixasFut  = (estado.receitasFixas    || []).filter(ehFuturo);
+  const rfVarFut    = (estado.receitasVariaveis || []).filter(ehFuturo);
+  const dfFixasFut  = (estado.despesasFixas     || []).filter(ehFuturo);
+  const dfVarFut    = (estado.despesasVariaveis || []).filter(ehFuturo);
 
-  // Projeção só com itens FUTUROS (do dia de hoje pra frente)
-  const totalReceitasFuturas = receitasFuturas.reduce((acc, r) => acc + r.valor, 0);
-  const totalDespesasFuturas = despesasFuturas.reduce((acc, d) => acc + d.valor, 0);
-  const totalRecorrentesFuturos = recorrentesFuturos.reduce((acc, r) => acc + r.valor, 0);
-  const previsaoFimMes = estado.saldoInicial + totalReceitasFuturas - totalDespesasFuturas - totalRecorrentesFuturos;
+  const rfFixasPass = (estado.receitasFixas    || []).filter(r => !ehFuturo(r));
+  const rfVarPass   = (estado.receitasVariaveis || []).filter(r => !ehFuturo(r));
+  const dfFixasPass = (estado.despesasFixas     || []).filter(d => !ehFuturo(d));
+  const dfVarPass   = (estado.despesasVariaveis || []).filter(d => !ehFuturo(d));
 
-  let msg = `📊 *FINANÇAS EM DIA - ${mesAtual.toUpperCase()}*\n\n`;
+  const soma = arr => arr.reduce((s, x) => s + x.valor, 0);
+  const totalRecFixasFut = soma(rfFixasFut);
+  const totalRecVarFut   = soma(rfVarFut);
+  const totalDespFixasFut = soma(dfFixasFut);
+  const totalDespVarFut   = soma(dfVarFut);
+  const totalRecFut  = totalRecFixasFut + totalRecVarFut;
+  const totalDespFut = totalDespFixasFut + totalDespVarFut;
+  const previsao = estado.saldoInicial + totalRecFut - totalDespFut;
 
-  // Saldo atual
-  msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n\n`;
+  let msg = `📊 *FINANÇAS EM DIA — ${mesAtual.toUpperCase()}*\n\n`;
+  msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n`;
+  msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  // Receitas futuras (entram na projeção)
-  if (receitasFuturas.length > 0) {
-    msg += `📈 *A receber (+${fmt.formatarMoeda(totalReceitasFuturas)}):*\n`;
-    for (const r of receitasFuturas) {
-      msg += `  🟢 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
+  // Receitas fixas
+  if (rfFixasFut.length > 0) {
+    msg += `📈 *Receitas Fixas a receber (+${fmt.formatarMoeda(totalRecFixasFut)}):*\n`;
+    for (const r of rfFixasFut) {
+      msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
     }
     msg += '\n';
   }
 
-  // Despesas futuras (entram na projeção)
-  if (despesasFuturas.length > 0) {
-    msg += `📉 *A pagar (-${fmt.formatarMoeda(totalDespesasFuturas)}):*\n`;
-    for (const d of despesasFuturas) {
-      msg += `  🔴 ${d.descricao} - ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
+  // Receitas variáveis
+  if (rfVarFut.length > 0) {
+    msg += `📈 *Receitas Variáveis a receber (+${fmt.formatarMoeda(totalRecVarFut)}):*\n`;
+    for (const r of rfVarFut) {
+      msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
     }
     msg += '\n';
   }
 
-  // Recorrentes futuros (entram na projeção)
-  if (recorrentesFuturos.length > 0) {
-    msg += `🔄 *Gastos fixos pendentes este mês (-${fmt.formatarMoeda(totalRecorrentesFuturos)}):*\n`;
-    for (const r of recorrentesFuturos) {
-      msg += `  🔴 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}/mês${r.dia ? ` (dia ${r.dia})` : ''}\n`;
+  // Despesas fixas
+  if (dfFixasFut.length > 0) {
+    msg += `📉 *Despesas Fixas a pagar (-${fmt.formatarMoeda(totalDespFixasFut)}):*\n`;
+    for (const d of dfFixasFut) {
+      msg += `  🔴 ${d.descricao} — ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
     }
     msg += '\n';
   }
 
-  // Itens já pagos/recebidos (não entram na projeção, só informativo)
-  const totalPassados = receitasPassadas.length + despesasPassadas.length + recorrentesPassados.length;
-  if (totalPassados > 0) {
-    msg += `✅ *Já contabilizado no saldo (dia já passou):*\n`;
-    for (const r of receitasPassadas) {
-      msg += `  🟢 ${r.descricao} - ${fmt.formatarMoeda(r.valor)} (dia ${r.dia}) ✔️\n`;
-    }
-    for (const d of despesasPassadas) {
-      msg += `  🔴 ${d.descricao} - ${fmt.formatarMoeda(d.valor)} (dia ${d.dia}) ✔️\n`;
-    }
-    for (const r of recorrentesPassados) {
-      msg += `  🔴 ${r.descricao} - ${fmt.formatarMoeda(r.valor)}/mês (dia ${r.dia}) ✔️\n`;
+  // Despesas variáveis
+  if (dfVarFut.length > 0) {
+    msg += `📉 *Despesas Variáveis (-${fmt.formatarMoeda(totalDespVarFut)}):*\n`;
+    for (const d of dfVarFut) {
+      msg += `  🔴 ${d.descricao} — ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
     }
     msg += '\n';
   }
 
-  // Linha separadora
+  // Itens já contabilizados no saldo (dia já passou)
+  const passados = [...rfFixasPass, ...rfVarPass, ...dfFixasPass, ...dfVarPass];
+  if (passados.length > 0) {
+    msg += `✅ *Já contabilizado no saldo (dias anteriores):*\n`;
+    for (const r of [...rfFixasPass, ...rfVarPass]) {
+      msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia}) ✔️\n`;
+    }
+    for (const d of [...dfFixasPass, ...dfVarPass]) {
+      msg += `  🔴 ${d.descricao} — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia}) ✔️\n`;
+    }
+    msg += '\n';
+  }
+
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  const emojiPrev = previsao >= 0 ? '✅' : '🚨';
+  msg += `${emojiPrev} *Previsão até ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}\n\n`;
 
-  // Previsão
-  const emoji = previsaoFimMes >= 0 ? '✅' : '🚨';
-  msg += `${emoji} *Previsão até ${ultimoDia}/${String(hoje.getMonth() + 1).padStart(2, '0')}:* ${fmt.formatarMoeda(previsaoFimMes)}\n\n`;
-
-  if (previsaoFimMes >= 0) {
-    msg += `Sobram *${fmt.formatarMoeda(previsaoFimMes)}* até o fim do mês! 💪\n`;
+  if (previsao >= 0) {
+    msg += `Sobram *${fmt.formatarMoeda(previsao)}* até o fim do mês! 💪\n`;
   } else {
-    msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsaoFimMes))}* pra fechar o mês.\n`;
+    msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsao))}* pra fechar o mês no azul.\n`;
   }
 
   msg += `\n_Tudo registrado! Agora é só ir usando o Cronos no dia a dia._ 🚀\n`;
-  msg += `_Dica: peça "resumo" ou "agenda" quando quiser acompanhar._`;
+  msg += `_Dica: peça *"resumo"* ou *"agenda"* quando quiser acompanhar._`;
 
   return msg;
 }
