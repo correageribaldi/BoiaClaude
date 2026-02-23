@@ -1315,13 +1315,41 @@ async function handleResumo(usuarioId, msg) {
     return fmt.formatarResumoAnual(resumo);
   }
 
-  const partes = lower.split(/\s+/);
+  const norm = normalizarTextoBusca(lower);
+  const hoje = new Date();
   let mes, ano;
 
-  if (partes[1]) {
-    const subPartes = partes[1].split('/');
-    mes = parseInt(subPartes[0]);
-    if (subPartes[1]) ano = parseInt(subPartes[1]);
+  // "mês que vem" / "próximo mês" / "proximo mes"
+  if (norm.includes('mes que vem') || norm.includes('proximo mes')) {
+    const proximo = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
+    mes = proximo.getMonth() + 1;
+    ano = proximo.getFullYear();
+  } else {
+    // Nome de mês por extenso ("março", "abril", etc.)
+    const MESES_NOME_R = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+    const nomeMesEncontrado = Object.keys(MESES_NOME_R).find(n => norm.includes(n));
+    if (nomeMesEncontrado) {
+      mes = MESES_NOME_R[nomeMesEncontrado];
+      // Ano explícito no texto (ex: "2027") ou inferir
+      const anoMatch = norm.match(/\b(20\d{2})\b/);
+      if (anoMatch) {
+        ano = parseInt(anoMatch[1]);
+      } else {
+        // Se o mês já passou este ano, assume próximo ano
+        ano = mes < (hoje.getMonth() + 1) ? hoje.getFullYear() + 1 : hoje.getFullYear();
+      }
+    } else {
+      // Fallback: formato numérico "resumo 3" ou "resumo 3/2026"
+      const partes = lower.split(/\s+/);
+      if (partes[1]) {
+        const subPartes = partes[1].split('/');
+        const mesNum = parseInt(subPartes[0]);
+        if (!isNaN(mesNum)) {
+          mes = mesNum;
+          if (subPartes[1]) ano = parseInt(subPartes[1]);
+        }
+      }
+    }
   }
 
   const resumo = await db.resumoMensal(usuarioId, mes, ano);
@@ -1774,8 +1802,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
       return fmt.formatarPendentes(pendentes);
     }
     if (resultado.dica === 'resumo') {
-      // Chamar handleResumo para gerar gráfico também
-      return await handleResumo(usuarioId, 'resumo');
+      // Chamar handleResumo com a mensagem original para capturar mês/período
+      return await handleResumo(usuarioId, textoOriginal || 'resumo');
     }
     if (resultado.dica === 'lista') {
       const transacoes = await db.listarTransacoes(usuarioId, null, 10);
