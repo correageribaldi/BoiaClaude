@@ -519,20 +519,27 @@ async function calcularSaldos(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT
+       -- Saldo atual: todas as transações pagas (histórico completo)
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as receitas_pagas,
        COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as despesas_pagas,
-       COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pendente' THEN valor ELSE 0 END), 0)::float as receitas_pendentes,
-       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente' THEN valor ELSE 0 END), 0)::float as despesas_pendentes,
-       COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0)::float as receitas_total,
-       COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0)::float as despesas_total
+       -- Pendentes apenas do mês atual (para projeção do mês)
+       COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pendente'
+         AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
+         AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
+         THEN valor ELSE 0 END), 0)::float as receitas_pendentes,
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente'
+         AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
+         AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
+         THEN valor ELSE 0 END), 0)::float as despesas_pendentes
      FROM transacoes
      WHERE usuario_id = $1`,
     [uid]
   );
   const r = result.rows[0];
+  const saldoAtual = r.receitas_pagas - r.despesas_pagas;
   return {
-    saldoAtual: r.receitas_pagas - r.despesas_pagas,
-    saldoPrevisao: r.receitas_total - r.despesas_total,
+    saldoAtual,
+    saldoPrevisao: saldoAtual + r.receitas_pendentes - r.despesas_pendentes,
     receitasPagas: r.receitas_pagas,
     despesasPagas: r.despesas_pagas,
     receitasPendentes: r.receitas_pendentes,
