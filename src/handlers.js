@@ -2639,8 +2639,27 @@ function calcularPeriodo(periodo) {
       titulo = `${nomesMes[mes]} de ${ano}`;
       break;
     }
+    case 'proximo_mes': {
+      dataInicio = new Date(ano, mes + 1, 1);
+      dataFim = new Date(ano, mes + 2, 0);
+      const nomesMesProx = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+      titulo = `${nomesMesProx[dataInicio.getMonth()]} de ${dataInicio.getFullYear()}`;
+      break;
+    }
     default: {
-      // Tentar resolver como dia da semana ou data
+      // Verificar se é nome de mês (janeiro, fevereiro, marco, abril...)
+      const MESES_NOME = { janeiro: 0, fevereiro: 1, marco: 2, abril: 3, maio: 4, junho: 5, julho: 6, agosto: 7, setembro: 8, outubro: 9, novembro: 10, dezembro: 11 };
+      const periodoNorm = normalizarTextoBusca(periodo);
+      if (MESES_NOME[periodoNorm] !== undefined) {
+        const mesAlvo = MESES_NOME[periodoNorm];
+        const anoAlvo = mesAlvo < mes ? ano + 1 : ano; // se já passou, vai pro próximo ano
+        dataInicio = new Date(anoAlvo, mesAlvo, 1);
+        dataFim = new Date(anoAlvo, mesAlvo + 1, 0);
+        const nomesMesNorm = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+        titulo = `${nomesMesNorm[mesAlvo]} de ${anoAlvo}`;
+        break;
+      }
+      // Tentar resolver como dia da semana ou data específica
       const dataResolvida = resolverData(periodo);
       if (dataResolvida) {
         const [a, m, d] = dataResolvida.split('-').map(Number);

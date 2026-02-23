@@ -375,7 +375,9 @@ REGRAS PARA AGENDA:
   - "amanha" → para amanhã
   - "semana" → para a semana atual (segunda a domingo)
   - "proxima_semana" → para a semana que vem (segunda a domingo da próxima semana)
-  - "mes" → para o mês inteiro
+  - "mes" → para o mês atual inteiro
+  - "proximo_mes" → para o próximo mês inteiro
+  - Nome de mês → para aquele mês específico: "janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro" (sem acento em março)
   - "YYYY-MM-DD" → para um dia específico
   - Para dias da semana, retorne o nome: "segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"
 - Exemplos:
@@ -387,6 +389,10 @@ REGRAS PARA AGENDA:
   - "minha agenda da próxima semana" → periodo: "proxima_semana"
   - "compromissos da semana que vem" → periodo: "proxima_semana"
   - "minha agenda do mês" → periodo: "mes"
+  - "o que tenho no mês que vem" → periodo: "proximo_mes"
+  - "minha agenda de março" → periodo: "marco"
+  - "compromissos de abril" → periodo: "abril"
+  - "o que tenho em janeiro" → periodo: "janeiro"
   - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD"
   - "o que tenho sexta" → periodo: "sexta"
   - "minha agenda de sábado" → periodo: "sabado"
@@ -394,6 +400,7 @@ REGRAS PARA AGENDA:
   - "liste meus compromissos para esta semana" → periodo: "semana"
   - "quais minhas atividades de amanhã" → periodo: "amanha"
   - "minha programação do mês" → periodo: "mes"
+  - "minha programação de março" → periodo: "marco"
 - NÃO confunda com CONSULTA: consulta é para perguntas financeiras específicas ("quanto gastei com comida")
 - AGENDA é para visão geral de tudo (finanças + lembretes) de um período
 
