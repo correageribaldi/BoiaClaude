@@ -584,6 +584,12 @@ async function interpretarItemFinanceiro(texto) {
 
   try {
     const categorias = (await db.listarCategorias()).join(', ');
+    const hoje = new Date();
+    const diaHoje = hoje.getDate();
+    const mesHoje = hoje.getMonth() + 1;
+    const anoHoje = hoje.getFullYear();
+    const diasNoMes = new Date(anoHoje, mesHoje, 0).getDate();
+    const diaAmanha = diaHoje < diasNoMes ? diaHoje + 1 : 1;
 
     const response = await getOpenAI().chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -591,6 +597,7 @@ async function interpretarItemFinanceiro(texto) {
         {
           role: 'system',
           content: `Interprete a resposta do usuário durante um cadastro financeiro rápido.
+Hoje é dia ${diaHoje}/${mesHoje}/${anoHoje}. Use essa data para resolver expressões relativas como "amanhã" (dia ${diaAmanha}), "depois de amanhã" (dia ${Math.min(diaHoje + 2, diasNoMes)}), "semana que vem" (dia ${Math.min(diaHoje + 7, diasNoMes)}), etc.
 Retorne APENAS um JSON válido:
 
 Se for UM ÚNICO ITEM FINANCEIRO (valor, receita, despesa, conta):
@@ -602,7 +609,7 @@ Se forem MÚLTIPLOS ITENS FINANCEIROS na mesma mensagem (2 ou mais itens):
 Regras dos itens:
 - "valor": número positivo (ex: 3000.00)
 - "descricao": nome curto do item (ex: "Salário", "Internet", "Aluguel")
-- "dia": dia do mês 1-31 se mencionado, null se não mencionado
+- "dia": dia do mês 1-31. Resolva expressões relativas usando a data de hoje (dia ${diaHoje}). Ex: "amanhã" → ${diaAmanha}, "semana que vem" → ${Math.min(diaHoje + 7, diasNoMes)}. null apenas se nenhum dia for mencionado.
 - "categoria": uma das categorias disponíveis: ${categorias}. Se não tiver certeza, use "Outros"
 
 Se for CONFIRMAÇÃO positiva (sim, bora, vamos, ok, pode ser, quero):
