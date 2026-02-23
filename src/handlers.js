@@ -2622,6 +2622,15 @@ function calcularPeriodo(periodo) {
       titulo = `esta semana (${dataInicio.toLocaleDateString('pt-BR')} a ${dataFim.toLocaleDateString('pt-BR')})`;
       break;
     }
+    case 'proxima_semana': {
+      // Segunda a domingo da semana seguinte
+      const diffSegProx = dow === 0 ? 1 : 8 - dow;
+      dataInicio = new Date(ano, mes, dia + diffSegProx);
+      dataFim = new Date(dataInicio);
+      dataFim.setDate(dataFim.getDate() + 6);
+      titulo = `semana que vem (${dataInicio.toLocaleDateString('pt-BR')} a ${dataFim.toLocaleDateString('pt-BR')})`;
+      break;
+    }
     case 'mes': {
       dataInicio = new Date(ano, mes, 1);
       const ultimoDia = new Date(ano, mes + 1, 0).getDate();

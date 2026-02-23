@@ -104,7 +104,7 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 {"acao": "listar_recorrentes"}
 
 15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
-{"acao": "agenda", "periodo": "hoje|amanha|semana|mes|YYYY-MM-DD"}
+{"acao": "agenda", "periodo": "hoje|amanha|semana|proxima_semana|mes|YYYY-MM-DD"}
 
 16. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, quero começar a organizar, organizar tudo agora, quero organizar tudo, bora organizar, vou organizar tudo, quero começar pelo começo, me ajuda a organizar):
 {"acao": "financas_em_dia"}
@@ -374,6 +374,7 @@ REGRAS PARA AGENDA:
   - "hoje" → para hoje
   - "amanha" → para amanhã
   - "semana" → para a semana atual (segunda a domingo)
+  - "proxima_semana" → para a semana que vem (segunda a domingo da próxima semana)
   - "mes" → para o mês inteiro
   - "YYYY-MM-DD" → para um dia específico
   - Para dias da semana, retorne o nome: "segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"
@@ -382,6 +383,9 @@ REGRAS PARA AGENDA:
   - "me organiza pro dia" → periodo: "hoje"
   - "como tá minha agenda amanhã" → periodo: "amanha"
   - "o que tenho essa semana" → periodo: "semana"
+  - "o que tenho semana que vem" → periodo: "proxima_semana"
+  - "minha agenda da próxima semana" → periodo: "proxima_semana"
+  - "compromissos da semana que vem" → periodo: "proxima_semana"
   - "minha agenda do mês" → periodo: "mes"
   - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD"
   - "o que tenho sexta" → periodo: "sexta"
