@@ -3187,6 +3187,12 @@ function calcularDataPendente(dia) {
 }
 
 async function salvarDadosPontoZero(usuarioId, estado) {
+  // Saldo inicial → receita já paga hoje (entra no saldoAtual imediatamente)
+  if (estado.saldoInicial > 0) {
+    const hojeISO = dateParaISO(new Date());
+    await db.adicionarTransacao(usuarioId, 'receita', estado.saldoInicial, 'Saldo inicial', 'Outros', hojeISO, 'pago');
+  }
+
   // Receitas fixas → receita pendente + lembrete recorrente mensal
   for (const r of estado.receitasFixas || []) {
     const dataStr = calcularDataPendente(r.dia);
