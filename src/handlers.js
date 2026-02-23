@@ -2720,12 +2720,107 @@ function coletarItens(item, lista) {
   return { ok: false };
 }
 
+// Extrai número de dia (1-31) de um texto como "dia 10", "10", "dia cinco"
+function extrairDiaDoTexto(texto) {
+  const t = texto.toLowerCase().replace(/\s+/g, ' ').trim();
+  // "dia 10" ou "dia cinco"
+  const matchDia = t.match(/\bdia\s+(\d{1,2})\b/);
+  if (matchDia) {
+    const d = parseInt(matchDia[1]);
+    if (d >= 1 && d <= 31) return d;
+  }
+  // Número isolado (ex: resposta "5" ou "10")
+  const matchNum = t.match(/^(\d{1,2})$/);
+  if (matchNum) {
+    const d = parseInt(matchNum[1]);
+    if (d >= 1 && d <= 31) return d;
+  }
+  return null;
+}
+
+// Retorna o próximo campo obrigatório faltante para o item parcial
+function proximoCampoFaltante(itemParcial, etapa) {
+  if (!itemParcial.descricao) return 'descricao';
+  if (!itemParcial.valor) return 'valor';
+  // Dia é obrigatório em tudo exceto receitas_variaveis
+  if (etapa !== 'receitas_variaveis' && !itemParcial.dia) return 'dia';
+  return null;
+}
+
+// Gera a pergunta para o campo faltante
+function perguntarCampoFaltante(campo, descricao) {
+  const nome = descricao ? `*${descricao}*` : 'esse item';
+  switch (campo) {
+    case 'descricao': return `Qual o nome desse item? Me diz como quer chamar.\n_Ex: "Aluguel", "Salário", "Internet"_`;
+    case 'valor':     return `Qual o valor de ${nome}? 💰\n_Ex: "R$ 1.500" ou só "1500"_`;
+    case 'dia':       return `Em que dia do mês ${nome} vence (ou entra)? 📅\n_Ex: "dia 5" ou só "5"_`;
+    default:          return null;
+  }
+}
+
+// Coleta o campo faltante de um item parcial salvo no estado
+async function handleItemParcialPontoZero(usuarioId, texto, estado) {
+  const ip = estado.itemParcial;
+  const campo = ip.esperandoCampo;
+
+  if (campo === 'valor') {
+    const valor = extrairValorDoTexto(texto);
+    if (!valor || valor <= 0) {
+      return `Não entendi o valor 😅 Me diz quanto é ${ip.descricao ? `o *${ip.descricao}*` : 'esse item'}.\n_Ex: "R$ 500" ou "500"_`;
+    }
+    ip.valor = valor;
+  } else if (campo === 'dia') {
+    const dia = extrairDiaDoTexto(texto);
+    if (!dia) {
+      return `Não entendi o dia 😅 Me diz em que dia do mês (número de 1 a 31).\n_Ex: "dia 5" ou só "5"_`;
+    }
+    ip.dia = dia;
+  } else if (campo === 'descricao') {
+    const desc = texto.trim();
+    if (!desc || desc.length < 2) {
+      return `Não entendi 😅 Me diz o nome desse item.\n_Ex: "Aluguel", "Salário", "Internet"_`;
+    }
+    ip.descricao = desc;
+  }
+
+  // Verifica se ainda falta algum campo
+  const proximo = proximoCampoFaltante(ip, estado.etapa);
+  if (proximo) {
+    ip.esperandoCampo = proximo;
+    salvarPontoZero(usuarioId, estado);
+    return perguntarCampoFaltante(proximo, ip.descricao);
+  }
+
+  // Item completo — adiciona à lista correta
+  delete estado.itemParcial;
+  const lista =
+    estado.etapa === 'receitas_fixas'     ? estado.receitasFixas    :
+    estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
+    estado.etapa === 'despesas_fixas'     ? estado.despesasFixas     :
+                                           estado.despesasVariaveis;
+  lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
+  salvarPontoZero(usuarioId, estado);
+
+  const nomeEtapa =
+    estado.etapa === 'receitas_fixas'     ? 'receita fixa'      :
+    estado.etapa === 'receitas_variaveis' ? 'receita variável'  :
+    estado.etapa === 'despesas_fixas'     ? 'despesa fixa'      :
+                                           'despesa programada';
+  const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
+  return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
+}
+
 async function handlePontoZero(usuarioId, texto, estado) {
   const lower = texto.toLowerCase().trim();
 
   if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
     limparPontoZero(usuarioId);
     return '❌ Cancelado. Sem problemas! Quando quiser recomeçar é só me falar *"finanças em dia"*.';
+  }
+
+  // Se há um item parcial aguardando campos faltantes, continua a coleta
+  if (estado.itemParcial) {
+    return await handleItemParcialPontoZero(usuarioId, texto, estado);
   }
 
   const item = await interpretarItemFinanceiro(texto);
@@ -2754,6 +2849,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
         const mais = res.quantidade > 1 ? `${res.quantidade} receitas fixas anotadas` : `Anotado`;
         return `${mais}:\n\n${res.msg}\n\nTem mais alguma receita fixa ou pode passar pra frente?`;
       }
+      if (item.tipo === 'item' && item.descricao) {
+        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
+        if (campoPendente) {
+          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
+          salvarPontoZero(usuarioId, estado);
+          return perguntarCampoFaltante(campoPendente, item.descricao);
+        }
+      }
       return 'Não entendi 😅 Me diz o que entra, o valor e o dia.\n_Ex: "Salário dia 5, R$ 3.000"_\n_Ou manda "não" se não tem._';
     }
 
@@ -2768,6 +2871,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} receitas variáveis anotadas` : `Anotado`;
         return `${mais}:\n\n${res.msg}\n\nTem mais alguma receita variável ou pode passar pra frente?`;
+      }
+      if (item.tipo === 'item' && item.descricao) {
+        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
+        if (campoPendente) {
+          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
+          salvarPontoZero(usuarioId, estado);
+          return perguntarCampoFaltante(campoPendente, item.descricao);
+        }
       }
       return 'Não entendi 😅 Me diz o que entra, o valor e se tem data prevista.\n_Ex: "Freela R$ 500 dia 20"_\n_Ou manda "não" se não tem._';
     }
@@ -2784,6 +2895,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
         const mais = res.quantidade > 1 ? `${res.quantidade} despesas fixas anotadas` : `Anotado`;
         return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa fixa ou pode passar pra frente?`;
       }
+      if (item.tipo === 'item' && item.descricao) {
+        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
+        if (campoPendente) {
+          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
+          salvarPontoZero(usuarioId, estado);
+          return perguntarCampoFaltante(campoPendente, item.descricao);
+        }
+      }
       return 'Não entendi 😅 Me diz a conta, o valor e o dia de vencimento.\n_Ex: "Aluguel dia 5, R$ 1.500"_\n_Ou manda "não" se não tem._';
     }
 
@@ -2796,6 +2915,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} despesas programadas anotadas` : `Anotado`;
         return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa já programada ou pode fechar?`;
+      }
+      if (item.tipo === 'item' && item.descricao) {
+        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
+        if (campoPendente) {
+          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
+          salvarPontoZero(usuarioId, estado);
+          return perguntarCampoFaltante(campoPendente, item.descricao);
+        }
       }
       return 'Não entendi 😅 Me diz o gasto, o valor e o dia.\n_Ex: "Salão de beleza R$ 180 dia 12"_\n_Ou manda "não" pra fechar._';
     }
