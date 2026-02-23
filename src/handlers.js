@@ -2752,6 +2752,7 @@ async function iniciarPontoZero(usuarioId) {
     receitasVariaveis: [],
     despesasFixas: [],
     despesasVariaveis: [],
+    orcamentos: [],
   });
 
   return `E aí! 😄 Bora deixar tudo em dia?\n\nEm poucos minutos organizo teu financeiro completo.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
@@ -2772,6 +2773,19 @@ function coletarItens(item, lista) {
     return { ok: true, msg, quantidade: 1 };
   }
   return { ok: false };
+}
+
+// Mapeia a descrição do orçamento para uma categoria do sistema
+function mapearCategoriaOrcamento(descricao) {
+  const d = (descricao || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/mercado|supermercado|feira|aliment|comida|refeicao|padaria/.test(d)) return 'Alimentacao';
+  if (/gasolina|combustivel|uber|99|taxi|onibus|metro|transporte|pedagio/.test(d)) return 'Transporte';
+  if (/farmacia|medico|saude|remedio|plano|consulta|academia/.test(d)) return 'Saude';
+  if (/lazer|cinema|restaurante|bar|diversao|entretenimento|viagem|passeio/.test(d)) return 'Lazer';
+  if (/escola|faculdade|curso|educacao|livro/.test(d)) return 'Educacao';
+  if (/roupa|vestuario|shopping|calcado/.test(d)) return 'Outros';
+  if (/pet|animal|veterinario/.test(d)) return 'Outros';
+  return 'Outros';
 }
 
 // Extrai número de dia (1-31) de um texto como "dia 10", "10", "dia cinco"
@@ -2848,21 +2862,27 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
 
   // Item completo — adiciona à lista correta
   delete estado.itemParcial;
-  const lista =
-    estado.etapa === 'receitas_fixas'     ? estado.receitasFixas    :
-    estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
-    estado.etapa === 'despesas_fixas'     ? estado.despesasFixas     :
-                                           estado.despesasVariaveis;
-  lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
+  if (estado.etapa === 'orcamento') {
+    const cat = mapearCategoriaOrcamento(ip.descricao);
+    estado.orcamentos.push({ descricao: ip.descricao, valor: ip.valor, categoria: cat });
+  } else {
+    const lista =
+      estado.etapa === 'receitas_fixas'     ? estado.receitasFixas    :
+      estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
+      estado.etapa === 'despesas_fixas'     ? estado.despesasFixas     :
+                                             estado.despesasVariaveis;
+    lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
+  }
   salvarPontoZero(usuarioId, estado);
 
   const nomeEtapa =
     estado.etapa === 'receitas_fixas'     ? 'receita fixa'      :
     estado.etapa === 'receitas_variaveis' ? 'receita variável'  :
     estado.etapa === 'despesas_fixas'     ? 'despesa fixa'      :
+    estado.etapa === 'orcamento'          ? 'orçamento'         :
                                            'despesa variável';
   const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
-  return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
+  return `${confirmacao}\n\nTem mais algum${nomeEtapa === 'orçamento' ? '' : 'a'} ${nomeEtapa} ou pode passar pra frente?`;
 }
 
 async function handlePontoZero(usuarioId, texto, estado) {
@@ -2963,7 +2983,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'despesas_variaveis': {
       if (item.tipo === 'nao') {
-        return await finalizarPontoZero(usuarioId, estado);
+        estado.etapa = 'orcamento';
+        salvarPontoZero(usuarioId, estado);
+        return `Ótimo! Última etapa: vamos definir seu *orçamento mensal* para os gastos do dia a dia.\n\nSão categorias como mercado, gasolina, farmácia, lazer... Você define quanto quer gastar em cada uma por mês e eu uso isso na sua projeção financeira — assim você sabe de verdade quanto sobra.\n\nPode mandar tudo junto!\n_Ex: "Mercado 800, Gasolina 200, Farmácia 150, Lazer 300"_\n\n_Se não quiser definir agora, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasVariaveis);
       if (res.ok) {
@@ -2980,6 +3002,32 @@ async function handlePontoZero(usuarioId, texto, estado) {
         }
       }
       return 'Não entendi 😅 Me diz o gasto e o valor médio.\n_Ex: "Água R$ 80" ou "Luz R$ 150"_\n_Ou manda "não" pra fechar._';
+    }
+
+    case 'orcamento': {
+      if (item.tipo === 'nao') {
+        return await finalizarPontoZero(usuarioId, estado);
+      }
+      // Coletar itens de orçamento (sem necessidade de dia)
+      const itensOrc = item.tipo === 'itens' ? item.itens : (item.tipo === 'item' && item.valor ? [item] : []);
+      if (itensOrc.length > 0) {
+        let msgOrc = '';
+        for (const it of itensOrc) {
+          const cat = mapearCategoriaOrcamento(it.descricao);
+          estado.orcamentos.push({ descricao: it.descricao, valor: it.valor, categoria: cat });
+          msgOrc += `✅ *${it.descricao}* — ${fmt.formatarMoeda(it.valor)}/mês\n`;
+        }
+        salvarPontoZero(usuarioId, estado);
+        const mais = itensOrc.length > 1 ? `${itensOrc.length} orçamentos definidos` : `Anotado`;
+        return `${mais}:\n\n${msgOrc}\nTem mais algum orçamento ou pode fechar?`;
+      }
+      // Item parcial sem valor
+      if (item.tipo === 'item' && item.descricao && !item.valor) {
+        estado.itemParcial = { descricao: item.descricao, valor: null, dia: null, categoria: null, esperandoCampo: 'valor' };
+        salvarPontoZero(usuarioId, estado);
+        return perguntarCampoFaltante('valor', item.descricao);
+      }
+      return 'Não entendi 😅 Me diz a categoria e o valor mensal.\n_Ex: "Mercado 800" ou "Gasolina 200"_\n_Ou manda "não" pra fechar._';
     }
 
     default:
@@ -3045,6 +3093,11 @@ async function salvarDadosPontoZero(usuarioId, estado) {
   for (const d of estado.despesasVariaveis || []) {
     const dataStr = calcularDataPendente(d.dia);
     await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente');
+  }
+
+  // Orçamentos → criar limitadores de categoria
+  for (const o of estado.orcamentos || []) {
+    await db.definirLimite(usuarioId, o.categoria, o.valor);
   }
 }
 
@@ -3134,14 +3187,38 @@ async function finalizarPontoZero(usuarioId, estado) {
     msg += '\n';
   }
 
+  // Orçamentos do dia a dia
+  const orcamentos = estado.orcamentos || [];
+  const totalOrcamento = orcamentos.reduce((s, o) => s + o.valor, 0);
+
+  if (orcamentos.length > 0) {
+    msg += `📊 *Orçamento do dia a dia (-${fmt.formatarMoeda(totalOrcamento)}):*\n`;
+    for (const o of orcamentos) {
+      msg += `  🟡 ${o.descricao} — ${fmt.formatarMoeda(o.valor)}/mês\n`;
+    }
+    msg += '\n';
+  }
+
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   const emojiPrev = previsao >= 0 ? '✅' : '🚨';
-  msg += `${emojiPrev} *Previsão até ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}\n\n`;
+  msg += `${emojiPrev} *Previsão até ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}\n`;
 
-  if (previsao >= 0) {
-    msg += `Sobram *${fmt.formatarMoeda(previsao)}* até o fim do mês! 💪\n`;
+  if (totalOrcamento > 0) {
+    const livre = previsao - totalOrcamento;
+    const emojiLivre = livre >= 0 ? '✅' : '🚨';
+    msg += `${emojiLivre} *Livre após orçamento:* ${fmt.formatarMoeda(livre)}\n\n`;
+    if (livre >= 0) {
+      msg += `Depois de pagar tudo e cobrir o orçamento do dia a dia, sobram *${fmt.formatarMoeda(livre)}*! 💪\n`;
+    } else {
+      msg += `⚠️ Atenção! O orçamento do dia a dia ultrapassa o que sobra. Pode precisar ajustar.\n`;
+    }
   } else {
-    msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsao))}* pra fechar o mês no azul.\n`;
+    msg += '\n';
+    if (previsao >= 0) {
+      msg += `Sobram *${fmt.formatarMoeda(previsao)}* até o fim do mês! 💪\n`;
+    } else {
+      msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsao))}* pra fechar o mês no azul.\n`;
+    }
   }
 
   msg += `\n_Tudo registrado! Agora é só ir usando o Cronos no dia a dia._ 🚀\n`;
