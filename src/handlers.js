@@ -2752,6 +2752,7 @@ async function iniciarPontoZero(usuarioId) {
     receitasVariaveis: [],
     despesasFixas: [],
     despesasVariaveis: [],
+    cartoes: [],
     orcamentos: [],
   });
 
@@ -2862,7 +2863,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
 
   // Item completo — adiciona à lista correta
   delete estado.itemParcial;
-  if (estado.etapa === 'orcamento') {
+  if (estado.etapa === 'despesas_dia_a_dia') {
     const cat = mapearCategoriaOrcamento(ip.descricao);
     estado.orcamentos.push({ descricao: ip.descricao, valor: ip.valor, categoria: cat });
   } else {
@@ -2876,13 +2877,89 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   salvarPontoZero(usuarioId, estado);
 
   const nomeEtapa =
-    estado.etapa === 'receitas_fixas'     ? 'receita fixa'      :
-    estado.etapa === 'receitas_variaveis' ? 'receita variável'  :
-    estado.etapa === 'despesas_fixas'     ? 'despesa fixa'      :
-    estado.etapa === 'orcamento'          ? 'orçamento'         :
-                                           'despesa variável';
+    estado.etapa === 'receitas_fixas'      ? 'receita fixa'          :
+    estado.etapa === 'receitas_variaveis'  ? 'receita variável'      :
+    estado.etapa === 'despesas_fixas'      ? 'despesa fixa'          :
+    estado.etapa === 'contas_variaveis'    ? 'conta variável'        :
+    estado.etapa === 'despesas_dia_a_dia'  ? 'orçamento'             :
+                                            'despesa variável';
   const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
   return `${confirmacao}\n\nTem mais algum${nomeEtapa === 'orçamento' ? '' : 'a'} ${nomeEtapa} ou pode passar pra frente?`;
+}
+
+async function handleCartaoCadastro(usuarioId, texto, estado) {
+  const cc = estado.cartaoEmCadastro;
+  const lower = texto.toLowerCase().trim();
+
+  // Cancelar o cartão em andamento sem cancelar o fluxo inteiro
+  if (lower === 'pular' || lower === 'nao' || lower === 'não' || lower === 'n') {
+    delete estado.cartaoEmCadastro;
+    salvarPontoZero(usuarioId, estado);
+    return `Ok, pulei esse cartão.\n\nTem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
+  }
+
+  switch (cc.campo) {
+
+    case 'limiteTotal': {
+      const valor = extrairValorDoTexto(texto);
+      if (!valor || valor <= 0) {
+        return `Não entendi o valor 😅 Qual o limite total do *${cc.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
+      }
+      cc.limiteTotal = valor;
+      cc.campo = 'diaFechamento';
+      salvarPontoZero(usuarioId, estado);
+      return `Qual o *dia de fechamento* da fatura do *${cc.nome}*? 📅\n_Ex: "dia 15" ou só "15"_`;
+    }
+
+    case 'diaFechamento': {
+      const dia = extrairDiaDoTexto(texto);
+      if (!dia) {
+        return `Não entendi 😅 Em que dia fecha a fatura do *${cc.nome}*? (número de 1 a 31)\n_Ex: "dia 15" ou só "15"_`;
+      }
+      cc.diaFechamento = dia;
+      cc.campo = 'diaVencimento';
+      salvarPontoZero(usuarioId, estado);
+      return `E o *dia de vencimento* (pagamento) da fatura? 📅\n_Ex: "dia 22" ou só "22"_`;
+    }
+
+    case 'diaVencimento': {
+      const dia = extrairDiaDoTexto(texto);
+      if (!dia) {
+        return `Não entendi 😅 Em que dia vence a fatura do *${cc.nome}*? (número de 1 a 31)\n_Ex: "dia 22" ou só "22"_`;
+      }
+      cc.diaVencimento = dia;
+      cc.campo = 'valorFatura';
+      salvarPontoZero(usuarioId, estado);
+      return `Qual o *valor médio da fatura* do *${cc.nome}*? 💰\n(Ou o valor atual se souber — manda "0" se não sabe)\n_Ex: "R$ 1.200" ou "1200"_`;
+    }
+
+    case 'valorFatura': {
+      let valorFatura = 0;
+      if (lower !== '0' && lower !== 'zero' && lower !== 'nao sei' && lower !== 'não sei') {
+        const valor = extrairValorDoTexto(texto);
+        if (valor === null) {
+          return `Não entendi o valor 😅 Qual o valor médio da fatura do *${cc.nome}*?\n_Ex: "R$ 1.200" — ou manda "0" se não sabe._`;
+        }
+        valorFatura = valor;
+      }
+      cc.valorFatura = valorFatura;
+      estado.cartoes.push({ nome: cc.nome, limiteTotal: cc.limiteTotal, diaFechamento: cc.diaFechamento, diaVencimento: cc.diaVencimento, valorFatura });
+      delete estado.cartaoEmCadastro;
+      salvarPontoZero(usuarioId, estado);
+
+      const faturaStr = valorFatura > 0 ? fmt.formatarMoeda(valorFatura) : 'valor não informado';
+      return `✅ *${cc.nome}* cadastrado!\n` +
+        `  Limite: ${fmt.formatarMoeda(cc.limiteTotal)}\n` +
+        `  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}\n` +
+        `  Fatura: ~${faturaStr}/mês\n\n` +
+        `Tem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
+    }
+
+    default:
+      delete estado.cartaoEmCadastro;
+      salvarPontoZero(usuarioId, estado);
+      return `Algo deu errado no cadastro do cartão 😅 Tente novamente.`;
+  }
 }
 
 async function handlePontoZero(usuarioId, texto, estado) {
@@ -2896,6 +2973,11 @@ async function handlePontoZero(usuarioId, texto, estado) {
   // Se há um item parcial aguardando campos faltantes, continua a coleta
   if (estado.itemParcial) {
     return await handleItemParcialPontoZero(usuarioId, texto, estado);
+  }
+
+  // Se está no meio do cadastro de um cartão, continua a coleta (sem chamar IA)
+  if (estado.cartaoEmCadastro) {
+    return await handleCartaoCadastro(usuarioId, texto, estado);
   }
 
   const item = await interpretarItemFinanceiro(texto);
@@ -2960,9 +3042,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'despesas_fixas': {
       if (item.tipo === 'nao') {
-        estado.etapa = 'despesas_variaveis';
+        estado.etapa = 'contas_variaveis';
         salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora as *despesas variáveis* — contas que chegam todo mês mas o valor muda (água, luz, gás, mercado, gasolina, etc.). Me diz o valor médio que você costuma pagar em cada uma.\n\nPode mandar tudo junto!\n_Ex: "Água R$ 80, Luz R$ 150, Mercado R$ 600"_\n\n_Se não tem nenhuma, manda "não"._`;
+        return `Ótimo! Agora as *contas variáveis* — contas que chegam todo mês mas o valor muda: luz, água, gás, internet variável, etc. *Não inclua faturas de cartão aqui*, essas vêm no próximo passo.\n\nMe diz o valor médio de cada uma. Pode mandar tudo junto!\n_Ex: "Luz R$ 150, Água R$ 80, Gás R$ 40"_\n\n_Se não tem, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasFixas);
       if (res.ok) {
@@ -2981,17 +3063,17 @@ async function handlePontoZero(usuarioId, texto, estado) {
       return 'Não entendi 😅 Me diz a conta, o valor e o dia de vencimento.\n_Ex: "Aluguel dia 5, R$ 1.500"_\n_Ou manda "não" se não tem._';
     }
 
-    case 'despesas_variaveis': {
+    case 'contas_variaveis': {
       if (item.tipo === 'nao') {
-        estado.etapa = 'orcamento';
+        estado.etapa = 'cartoes';
         salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Última etapa: vamos definir seu *orçamento mensal* para os gastos do dia a dia.\n\nSão categorias como mercado, gasolina, farmácia, lazer... Você define quanto quer gastar em cada uma por mês e eu uso isso na sua projeção financeira — assim você sabe de verdade quanto sobra.\n\nPode mandar tudo junto!\n_Ex: "Mercado 800, Gasolina 200, Farmácia 150, Lazer 300"_\n\n_Se não quiser definir agora, manda "não"._`;
+        return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasVariaveis);
       if (res.ok) {
         salvarPontoZero(usuarioId, estado);
-        const mais = res.quantidade > 1 ? `${res.quantidade} despesas variáveis anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa variável ou pode fechar?`;
+        const mais = res.quantidade > 1 ? `${res.quantidade} contas variáveis anotadas` : `Anotado`;
+        return `${mais}:\n\n${res.msg}\n\nTem mais alguma conta variável ou pode passar pra frente?`;
       }
       if (item.tipo === 'item' && item.descricao) {
         const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
@@ -3001,10 +3083,26 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(campoPendente, item.descricao);
         }
       }
-      return 'Não entendi 😅 Me diz o gasto e o valor médio.\n_Ex: "Água R$ 80" ou "Luz R$ 150"_\n_Ou manda "não" pra fechar._';
+      return 'Não entendi 😅 Me diz a conta e o valor médio.\n_Ex: "Luz R$ 150" ou "Água R$ 80"_\n_Ou manda "não" se não tem._';
     }
 
-    case 'orcamento': {
+    case 'cartoes': {
+      if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
+        estado.etapa = 'despesas_dia_a_dia';
+        salvarPontoZero(usuarioId, estado);
+        return `Ótimo! Última etapa: vamos definir seu *orçamento do dia a dia*.\n\nSão gastos como mercado, transporte, farmácia, lazer... Você define quanto quer gastar em cada categoria por mês e eu uso isso na sua projeção — assim você sabe de verdade quanto sobra.\n\nPode mandar tudo junto!\n_Ex: "Mercado 800, Gasolina 200, Farmácia 150, Lazer 300"_\n\n_Se não quiser definir agora, manda "não"._`;
+      }
+      // Qualquer texto que não seja "não" → nome do cartão
+      const nomeCartao = texto.trim();
+      if (!nomeCartao || nomeCartao.length < 2) {
+        return `Me diz o nome ou banco do cartão 😅\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n_Ou manda "não" se não tem cartão._`;
+      }
+      estado.cartaoEmCadastro = { nome: nomeCartao, campo: 'limiteTotal' };
+      salvarPontoZero(usuarioId, estado);
+      return `*${nomeCartao}* — qual o *limite total* desse cartão? 💳\n_Ex: "R$ 5.000" ou "5000"_`;
+    }
+
+    case 'despesas_dia_a_dia': {
       if (item.tipo === 'nao') {
         return await finalizarPontoZero(usuarioId, estado);
       }
@@ -3095,6 +3193,19 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente');
   }
 
+  // Cartões → despesa pendente (fatura) + lembrete recorrente no dia de vencimento
+  for (const c of estado.cartoes || []) {
+    if (c.valorFatura && c.valorFatura > 0) {
+      const dataStr = calcularDataPendente(c.diaVencimento);
+      await db.adicionarTransacao(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Outros', dataStr, 'pendente');
+    }
+    await db.criarLembreteRecorrente(
+      usuarioId,
+      `💳 Vencimento fatura ${c.nome}${c.valorFatura > 0 ? ' - ' + fmt.formatarMoeda(c.valorFatura) : ''}`,
+      '09:00', 'mensal', null, c.diaVencimento || 1, null
+    );
+  }
+
   // Orçamentos → criar limitadores de categoria
   for (const o of estado.orcamentos || []) {
     await db.definirLimite(usuarioId, o.categoria, o.valor);
@@ -3125,13 +3236,20 @@ async function finalizarPontoZero(usuarioId, estado) {
   const dfFixasPass = (estado.despesasFixas     || []).filter(d => !ehFuturo(d));
   const dfVarPass   = (estado.despesasVariaveis || []).filter(d => !ehFuturo(d));
 
+  // Cartões: fatura futura = diaVencimento ainda não passou; passada = já passou
+  const cartoesFut  = (estado.cartoes || []).filter(c => c.valorFatura > 0 && (!c.diaVencimento || c.diaVencimento >= diaHoje));
+  const cartoesPass = (estado.cartoes || []).filter(c => c.valorFatura > 0 && c.diaVencimento && c.diaVencimento < diaHoje);
+
   const soma = arr => arr.reduce((s, x) => s + x.valor, 0);
-  const totalRecFixasFut = soma(rfFixasFut);
-  const totalRecVarFut   = soma(rfVarFut);
-  const totalDespFixasFut = soma(dfFixasFut);
-  const totalDespVarFut   = soma(dfVarFut);
+  const somaCartoes = arr => arr.reduce((s, c) => s + c.valorFatura, 0);
+
+  const totalRecFixasFut   = soma(rfFixasFut);
+  const totalRecVarFut     = soma(rfVarFut);
+  const totalDespFixasFut  = soma(dfFixasFut);
+  const totalDespVarFut    = soma(dfVarFut);
+  const totalCartoesFut    = somaCartoes(cartoesFut);
   const totalRecFut  = totalRecFixasFut + totalRecVarFut;
-  const totalDespFut = totalDespFixasFut + totalDespVarFut;
+  const totalDespFut = totalDespFixasFut + totalDespVarFut + totalCartoesFut;
   const previsao = estado.saldoInicial + totalRecFut - totalDespFut;
 
   let msg = `📊 *FINANÇAS EM DIA — ${mesAtual.toUpperCase()}*\n\n`;
@@ -3174,8 +3292,17 @@ async function finalizarPontoZero(usuarioId, estado) {
     msg += '\n';
   }
 
+  // Cartões — faturas futuras
+  if (cartoesFut.length > 0) {
+    msg += `💳 *Faturas de Cartão (-${fmt.formatarMoeda(totalCartoesFut)}):*\n`;
+    for (const c of cartoesFut) {
+      msg += `  🔴 ${c.nome} — ${fmt.formatarMoeda(c.valorFatura)} (venc. dia ${c.diaVencimento})\n`;
+    }
+    msg += '\n';
+  }
+
   // Itens já contabilizados no saldo (dia já passou)
-  const passados = [...rfFixasPass, ...rfVarPass, ...dfFixasPass, ...dfVarPass];
+  const passados = [...rfFixasPass, ...rfVarPass, ...dfFixasPass, ...dfVarPass, ...cartoesPass];
   if (passados.length > 0) {
     msg += `✅ *Já contabilizado no saldo (dias anteriores):*\n`;
     for (const r of [...rfFixasPass, ...rfVarPass]) {
@@ -3183,6 +3310,9 @@ async function finalizarPontoZero(usuarioId, estado) {
     }
     for (const d of [...dfFixasPass, ...dfVarPass]) {
       msg += `  🔴 ${d.descricao} — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia}) ✔️\n`;
+    }
+    for (const c of cartoesPass) {
+      msg += `  🔴 ${c.nome} — ${fmt.formatarMoeda(c.valorFatura)} (venc. dia ${c.diaVencimento}) ✔️\n`;
     }
     msg += '\n';
   }
