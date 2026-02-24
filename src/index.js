@@ -15,16 +15,13 @@ const client = new Client({
   puppeteer: {
     headless: true,
     executablePath: CHROMIUM_PATH,
-    protocolTimeout: 120000, // 2 minutos — evita timeout em servidores lentos
+    protocolTimeout: 120000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--disable-sync',
-      '--no-first-run',
+      '--no-zygote',
     ],
   },
 });
