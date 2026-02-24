@@ -25,7 +25,6 @@ const client = new Client({
       '--disable-background-networking',
       '--disable-sync',
       '--no-first-run',
-      '--single-process',
     ],
   },
 });
