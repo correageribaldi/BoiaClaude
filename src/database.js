@@ -252,6 +252,22 @@ async function initTables() {
       ON contatos_compartilhados(contato_id);
   `);
 
+  // Tabela de caixinhas de investimento
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS caixinhas (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      saldo NUMERIC(12,2) DEFAULT 0,
+      meta NUMERIC(12,2),
+      tipo TEXT,
+      rendimento_mensal NUMERIC(8,4),
+      criado_em TIMESTAMP DEFAULT NOW(),
+      ativo BOOLEAN DEFAULT TRUE
+    );
+    CREATE INDEX IF NOT EXISTS idx_caixinhas_usuario_id ON caixinhas(usuario_id);
+  `);
+
   // Tabela de usuários do painel web (usuário/senha)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS painel_usuarios (
@@ -537,6 +553,13 @@ async function calcularSaldos(usuarioId) {
   );
   const r = result.rows[0];
   const saldoAtual = r.receitas_pagas - r.despesas_pagas;
+
+  const caixRes = await pool.query(
+    `SELECT COALESCE(SUM(saldo), 0)::float as total FROM caixinhas WHERE usuario_id = $1 AND ativo = TRUE`,
+    [uid]
+  );
+  const totalCaixinhas = caixRes.rows[0].total;
+
   return {
     saldoAtual,
     saldoPrevisao: saldoAtual + r.receitas_pendentes - r.despesas_pendentes,
@@ -544,6 +567,8 @@ async function calcularSaldos(usuarioId) {
     despesasPagas: r.despesas_pagas,
     receitasPendentes: r.receitas_pendentes,
     despesasPendentes: r.despesas_pendentes,
+    totalCaixinhas,
+    patrimonio: saldoAtual + totalCaixinhas,
   };
 }
 
@@ -1007,6 +1032,25 @@ async function removerContatoCompartilhado(usuarioId, contatoId) {
   return result.rows[0] || null;
 }
 
+async function criarCaixinha(usuarioId, nome, saldo, meta, tipo, rendimentoMensal) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query(
+    `INSERT INTO caixinhas (usuario_id, nome, saldo, meta, tipo, rendimento_mensal)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [uid, nome, saldo || 0, meta || null, tipo || null, rendimentoMensal || null]
+  );
+}
+
+async function listarCaixinhas(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, nome, saldo::float, meta::float, tipo, rendimento_mensal::float
+     FROM caixinhas WHERE usuario_id = $1 AND ativo = TRUE ORDER BY criado_em ASC`,
+    [uid]
+  );
+  return result.rows;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -1055,4 +1099,6 @@ module.exports = {
   usernameDisponivel,
   criarCategoria,
   excluirCategoria,
+  criarCaixinha,
+  listarCaixinhas,
 };

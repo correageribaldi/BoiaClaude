@@ -106,7 +106,10 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
 {"acao": "agenda", "periodo": "hoje|amanha|semana|proxima_semana|mes|YYYY-MM-DD"}
 
-16. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, quero começar a organizar, organizar tudo agora, quero organizar tudo, bora organizar, vou organizar tudo, quero começar pelo começo, me ajuda a organizar):
+16. CAIXINHAS / INVESTIMENTOS (minhas caixinhas, meus investimentos, ver investimentos, quanto tenho investido, minhas reservas, ver caixinhas):
+{"acao": "caixinhas"}
+
+17. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, quero começar a organizar, organizar tudo agora, quero organizar tudo, bora organizar, vou organizar tudo, quero começar pelo começo, me ajuda a organizar):
 {"acao": "financas_em_dia"}
 
 IMPORTANTE: NÃO CONFUNDIR com "começar do zero", "resetar", "zerar dados", "limpar tudo" — esses são comandos de RESET que apagam tudo. "Finanças em dia" é para ORGANIZAR as finanças, não apagar.

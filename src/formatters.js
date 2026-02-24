@@ -153,14 +153,20 @@ function formatarPendentes(transacoes) {
 }
 
 function formatarSaldos(saldos) {
-  const { saldoAtual, saldoPrevisao, receitasPagas, despesasPagas, receitasPendentes, despesasPendentes } = saldos;
+  const { saldoAtual, saldoPrevisao, receitasPagas, despesasPagas, receitasPendentes, despesasPendentes, totalCaixinhas, patrimonio } = saldos;
 
   let msg = `💼 *Seus saldos:*\n\n`;
   msg += `${saldoAtual >= 0 ? '✅' : '🔴'} *Saldo Atual:* ${formatarMoeda(saldoAtual)}\n`;
   msg += `   Receitas recebidas: ${formatarMoeda(receitasPagas)}\n`;
   msg += `   Despesas pagas: ${formatarMoeda(despesasPagas)}\n`;
+
+  if (totalCaixinhas > 0) {
+    msg += `\n🏦 *Investimentos:* +${formatarMoeda(totalCaixinhas)}\n`;
+    msg += `💼 *Patrimônio Total:* ${formatarMoeda(patrimonio)}\n`;
+  }
+
   msg += `\n━━━━━━━━━━━━━━━\n\n`;
-  msg += `${saldoPrevisao >= 0 ? '🔮✅' : '🔮🔴'} *Saldo Previsão:* ${formatarMoeda(saldoPrevisao)}\n`;
+  msg += `${saldoPrevisao >= 0 ? '🔮✅' : '🔮🔴'} *Saldo Previsão (mês):* ${formatarMoeda(saldoPrevisao)}\n`;
   if (receitasPendentes > 0) msg += `   A receber: +${formatarMoeda(receitasPendentes)}\n`;
   if (despesasPendentes > 0) msg += `   A pagar: -${formatarMoeda(despesasPendentes)}\n`;
 

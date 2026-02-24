@@ -1187,6 +1187,11 @@ async function handleMessage(usuarioId, texto) {
     return await handleResumo(usuarioId, msg);
   }
 
+  // Comando: caixinhas / investimentos
+  if (lower === 'caixinhas' || lower === 'investimentos' || lower === 'minhas caixinhas' || lower === 'meus investimentos') {
+    return await handleListarCaixinhas(usuarioId);
+  }
+
   // Comando: agenda
   if (lower === 'agenda' || lower === 'agenda hoje' || lower === 'minha agenda') {
     return await handleAgenda(usuarioId, 'hoje');
@@ -1718,6 +1723,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Listar apenas recorrentes
   if (resultado.acao === 'listar_recorrentes') {
     return await handleListarRecorrentes(usuarioId);
+  }
+
+  // Listar caixinhas de investimento
+  if (resultado.acao === 'caixinhas') {
+    return await handleListarCaixinhas(usuarioId);
   }
 
   // Agenda - visão geral do dia/semana/mês
@@ -2361,6 +2371,24 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
   return msg;
 }
 
+async function handleListarCaixinhas(usuarioId) {
+  const caixinhas = await db.listarCaixinhas(usuarioId);
+  if (caixinhas.length === 0) {
+    return `🏦 Você ainda não tem caixinhas cadastradas.\n\n_Para criar, use "Finanças em Dia" ou diga "quero organizar minhas finanças"._`;
+  }
+  const total = caixinhas.reduce((s, c) => s + c.saldo, 0);
+  let msg = `🏦 *Suas Caixinhas de Investimento:*\n\n`;
+  for (const c of caixinhas) {
+    msg += `💰 *${c.nome}*\n   Saldo: ${fmt.formatarMoeda(c.saldo)}`;
+    if (c.meta) msg += ` | Meta: ${fmt.formatarMoeda(c.meta)}`;
+    if (c.tipo) msg += `\n   Tipo: ${c.tipo}`;
+    if (c.rendimento_mensal) msg += ` | Rendimento: ${c.rendimento_mensal}%/mês`;
+    msg += '\n\n';
+  }
+  msg += `━━━━━━━━━━━━━━━\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
+  return msg;
+}
+
 async function handleListarRecorrentes(usuarioId) {
   const lembretes = await db.listarLembretesRecorrentes(usuarioId);
 
@@ -2808,6 +2836,7 @@ async function iniciarPontoZero(usuarioId) {
     receitasVariaveis: [],
     despesasFixas: [],
     despesasVariaveis: [],
+    investimentos: [],
     cartoes: [],
     orcamentos: [],
   });
@@ -3018,6 +3047,69 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
   }
 }
 
+async function handleInvestimentoCadastro(usuarioId, texto, estado) {
+  const inv = estado.investimentoEmCadastro;
+  const lower = texto.toLowerCase().trim();
+  const isPular = lower === 'pular' || lower === 'nao' || lower === 'não' || lower === 'n' || lower === '-';
+
+  switch (inv.campo) {
+
+    case 'saldo': {
+      const valor = extrairValorDoTexto(texto);
+      if (!valor || valor <= 0) {
+        return `Não entendi o valor 😅 Quanto você tem guardado na *${inv.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
+      }
+      inv.saldo = valor;
+      inv.campo = 'meta';
+      salvarPontoZero(usuarioId, estado);
+      return `Qual a *meta* para essa caixinha? 🎯\n_Ex: "R$ 20.000" — ou manda "pular" se não tem meta definida._`;
+    }
+
+    case 'meta': {
+      inv.meta = isPular ? null : (extrairValorDoTexto(texto) || null);
+      inv.campo = 'tipo';
+      salvarPontoZero(usuarioId, estado);
+      return `Que *tipo* de investimento é essa caixinha?\n_Ex: "Renda fixa", "Ações", "Emergência", "Viagem"... ou "pular"._`;
+    }
+
+    case 'tipo': {
+      inv.tipo = isPular ? null : texto.trim();
+      inv.campo = 'rendimento';
+      salvarPontoZero(usuarioId, estado);
+      return `Qual o *rendimento mensal estimado* (% ao mês)? 📈\n_Ex: "1%" ou "0.8" — ou "pular" se não sabe._`;
+    }
+
+    case 'rendimento': {
+      let rendimento = null;
+      if (!isPular) {
+        const val = extrairValorDoTexto(texto);
+        if (val !== null) rendimento = val;
+      }
+      estado.investimentos.push({
+        nome: inv.nome,
+        saldo: inv.saldo,
+        meta: inv.meta,
+        tipo: inv.tipo,
+        rendimento,
+      });
+      delete estado.investimentoEmCadastro;
+      salvarPontoZero(usuarioId, estado);
+
+      let detalhes = `  Saldo: ${fmt.formatarMoeda(inv.saldo)}`;
+      if (inv.meta) detalhes += ` | Meta: ${fmt.formatarMoeda(inv.meta)}`;
+      if (inv.tipo) detalhes += `\n  Tipo: ${inv.tipo}`;
+      if (rendimento !== null) detalhes += ` | Rendimento: ${rendimento}%/mês`;
+
+      return `✅ *${inv.nome}* cadastrada!\n${detalhes}\n\nTem mais alguma reserva ou investimento?\n_Manda o nome ou "não" pra avançar._`;
+    }
+
+    default:
+      delete estado.investimentoEmCadastro;
+      salvarPontoZero(usuarioId, estado);
+      return `Algo deu errado no cadastro da caixinha 😅 Tente novamente.`;
+  }
+}
+
 async function handlePontoZero(usuarioId, texto, estado) {
   const lower = texto.toLowerCase().trim();
 
@@ -3029,6 +3121,11 @@ async function handlePontoZero(usuarioId, texto, estado) {
   // Se há um item parcial aguardando campos faltantes, continua a coleta
   if (estado.itemParcial) {
     return await handleItemParcialPontoZero(usuarioId, texto, estado);
+  }
+
+  // Se está no meio do cadastro de uma caixinha, continua a coleta (sem chamar IA)
+  if (estado.investimentoEmCadastro) {
+    return await handleInvestimentoCadastro(usuarioId, texto, estado);
   }
 
   // Se está no meio do cadastro de um cartão, continua a coleta (sem chamar IA)
@@ -3121,9 +3218,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'contas_variaveis': {
       if (item.tipo === 'nao') {
-        estado.etapa = 'cartoes';
+        estado.etapa = 'investimentos';
         salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+        return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasVariaveis);
       if (res.ok) {
@@ -3140,6 +3237,21 @@ async function handlePontoZero(usuarioId, texto, estado) {
         }
       }
       return 'Não entendi 😅 Me diz a conta e o valor médio.\n_Ex: "Luz R$ 150" ou "Água R$ 80"_\n_Ou manda "não" se não tem._';
+    }
+
+    case 'investimentos': {
+      if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
+        estado.etapa = 'cartoes';
+        salvarPontoZero(usuarioId, estado);
+        return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+      }
+      const nomeCaixinha = texto.trim();
+      if (!nomeCaixinha || nomeCaixinha.length < 2) {
+        return `Me diz o nome da caixinha 😅\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n_Ou manda "não" para pular._`;
+      }
+      estado.investimentoEmCadastro = { nome: nomeCaixinha, campo: 'saldo' };
+      salvarPontoZero(usuarioId, estado);
+      return `*${nomeCaixinha}* — quanto você tem guardado nessa caixinha hoje? 💰\n_Ex: "R$ 5.000" ou "5000"_`;
     }
 
     case 'cartoes': {
@@ -3268,6 +3380,11 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     );
   }
 
+  // Investimentos → criar caixinhas no banco
+  for (const inv of estado.investimentos || []) {
+    await db.criarCaixinha(usuarioId, inv.nome, inv.saldo, inv.meta, inv.tipo, inv.rendimento);
+  }
+
   // Orçamentos → criar limitadores de categoria
   for (const o of estado.orcamentos || []) {
     await db.definirLimite(usuarioId, o.categoria, o.valor);
@@ -3314,9 +3431,29 @@ async function finalizarPontoZero(usuarioId, estado) {
   const totalDespFut = totalDespFixasFut + totalDespVarFut + totalCartoesFut;
   const previsao = estado.saldoInicial + totalRecFut - totalDespFut;
 
+  const investimentos = estado.investimentos || [];
+  const totalInvestido = investimentos.reduce((s, i) => s + i.saldo, 0);
+
   let msg = `📊 *FINANÇAS EM DIA — ${mesAtual.toUpperCase()}*\n\n`;
   msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n`;
+  if (totalInvestido > 0) {
+    msg += `🏦 *Reservas/Investimentos:* ${fmt.formatarMoeda(totalInvestido)}\n`;
+    msg += `💼 *Patrimônio total:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)}\n`;
+  }
   msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Caixinhas
+  if (investimentos.length > 0) {
+    msg += `🏦 *Caixinhas (${fmt.formatarMoeda(totalInvestido)}):*\n`;
+    for (const inv of investimentos) {
+      let linha = `  💰 ${inv.nome} — ${fmt.formatarMoeda(inv.saldo)}`;
+      if (inv.meta) linha += ` | meta: ${fmt.formatarMoeda(inv.meta)}`;
+      if (inv.tipo) linha += ` | ${inv.tipo}`;
+      if (inv.rendimento) linha += ` | ${inv.rendimento}%/mês`;
+      msg += linha + '\n';
+    }
+    msg += '\n';
+  }
 
   // Receitas fixas
   if (rfFixasFut.length > 0) {
