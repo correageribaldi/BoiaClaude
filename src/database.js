@@ -856,7 +856,8 @@ async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
 }
 
 // Verificar limite e gastos de uma categoria no mês atual
-async function verificarLimite(usuarioId, categoria) {
+// subcategorias: array de categorias de transação que compõem esse bucket (ex: ['Alimentacao','Transporte'])
+async function verificarLimite(usuarioId, categoria, subcategorias = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const agora = new Date();
   const ano = agora.getFullYear();
@@ -902,15 +903,17 @@ async function verificarLimite(usuarioId, categoria) {
     }
   }
 
-  // Calcular gastos do mês
+  // Calcular gastos do mês — soma todas as subcategorias do bucket
+  const cats = subcategorias && subcategorias.length > 0 ? subcategorias : [categoria];
+  const placeholders = cats.map((_, i) => `$${i + 4}`).join(', ');
   const gastosResult = await pool.query(
     `SELECT COALESCE(SUM(valor), 0)::float as total
      FROM transacoes
      WHERE usuario_id = $1
-       AND categoria = $2
        AND tipo = 'despesa'
-       AND data >= $3 AND data <= $4`,
-    [uid, categoria, inicioMes, fimMes]
+       AND data >= $2 AND data <= $3
+       AND categoria IN (${placeholders})`,
+    [uid, inicioMes, fimMes, ...cats]
   );
 
   const gastos = gastosResult.rows[0].total;

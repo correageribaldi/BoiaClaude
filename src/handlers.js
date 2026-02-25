@@ -324,6 +324,51 @@ const REGRA_503020 = {
   },
 };
 
+// Mapeamento de categorias de transação → bucket de orçamento (Finanças em Dia)
+const MAPA_BUDGET = {
+  'Variáveis':     ['Alimentacao', 'Transporte', 'Saude', 'Educacao', 'Moradia', 'Outros', 'Vestuario', 'Compras'],
+  'Lazer':         ['Lazer'],
+  'Investimentos': ['Investimentos', 'Poupanca'],
+  'Objetivos':     ['Objetivos'],
+};
+
+function mapearCategoriaBudget(categoria) {
+  for (const [budget, cats] of Object.entries(MAPA_BUDGET)) {
+    if (cats.includes(categoria)) return budget;
+  }
+  return null;
+}
+
+function formatarBlocoLimite(limiteInfo, categoriaTx, budgetCat) {
+  const { limite, limiteEfetivo, gastos, restante, percentual, proporcional, diasMes, diasUsuario } = limiteInfo;
+  let emoji = '';
+  if (percentual >= 100) emoji = '🚨';
+  else if (percentual >= 80) emoji = '⚠️';
+  else if (percentual >= 60) emoji = '📊';
+  else emoji = '✅';
+
+  const label = budgetCat !== categoriaTx
+    ? `${budgetCat} _(${categoriaTx})_`
+    : budgetCat;
+
+  let bloco = `\n\n${emoji} *Orçamento ${label}:*\n`;
+  if (proporcional) {
+    bloco += `_Proporcional: ${diasUsuario} de ${diasMes} dias (iniciou no mês)_\n`;
+    bloco += `Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} _(de ${fmt.formatarMoeda(limite)})_\n`;
+  }
+  const barraTotal = 10;
+  const barraCheios = Math.min(Math.round(percentual / 10), barraTotal);
+  const barra = '█'.repeat(barraCheios) + '░'.repeat(barraTotal - barraCheios);
+  bloco += `${barra} ${percentual}%\n`;
+  bloco += `Usado: ${fmt.formatarMoeda(gastos)} | Disponível: `;
+  if (restante > 0) {
+    bloco += `*${fmt.formatarMoeda(restante)}*`;
+  } else {
+    bloco += `*🚨 Excedido em ${fmt.formatarMoeda(Math.abs(restante))}*`;
+  }
+  return bloco;
+}
+
 function salvarAnaliseFinanceira(usuarioId, dados) {
   analiseFinanceiraEstados.set(usuarioId, {
     ...dados,
@@ -1601,31 +1646,11 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
 
   // Verificar limite de gastos (apenas para despesas)
   if (tipo === 'despesa' && categoria) {
-    const limiteInfo = await db.verificarLimite(usuarioId, categoria);
-    if (limiteInfo) {
-      const { limite, limiteEfetivo, gastos, restante, percentual, proporcional, diasMes, diasUsuario } = limiteInfo;
-      let emoji = '';
-      if (percentual >= 100) emoji = '🚨';
-      else if (percentual >= 80) emoji = '⚠️';
-      else if (percentual >= 60) emoji = '📊';
-      else emoji = '✅';
-
-      msg += `\n\n${emoji} *Limite de ${categoria}:*\n`;
-      if (proporcional) {
-        msg += `_Proporcional: ${diasUsuario} de ${diasMes} dias (iniciou no mês)_\n`;
-        msg += `Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} _(de ${fmt.formatarMoeda(limite)})_\n`;
-      }
-      // Barra visual de progresso
-      const barraTotal = 10;
-      const barraCheios = Math.min(Math.round(percentual / 10), barraTotal);
-      const barra = '█'.repeat(barraCheios) + '░'.repeat(barraTotal - barraCheios);
-      msg += `${barra} ${percentual}%\n`;
-      msg += `Usado: ${fmt.formatarMoeda(gastos)} | Disponível: `;
-      if (restante > 0) {
-        msg += `*${fmt.formatarMoeda(restante)}*`;
-      } else {
-        msg += `*🚨 Excedido em ${fmt.formatarMoeda(Math.abs(restante))}*`;
-      }
+    const budgetCat = mapearCategoriaBudget(categoria);
+    if (budgetCat) {
+      const subcats = MAPA_BUDGET[budgetCat];
+      const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
+      if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
     }
   }
 
@@ -1910,30 +1935,11 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
 
   // Verificar limite de gastos (apenas para despesas)
   if (tipo === 'despesa' && categoria) {
-    const limiteInfo = await db.verificarLimite(usuarioId, categoria);
-    if (limiteInfo) {
-      const { limite, limiteEfetivo, gastos, restante, percentual, proporcional, diasMes, diasUsuario } = limiteInfo;
-      let emojiLimite = '';
-      if (percentual >= 100) emojiLimite = '🚨';
-      else if (percentual >= 80) emojiLimite = '⚠️';
-      else if (percentual >= 60) emojiLimite = '📊';
-      else emojiLimite = '✅';
-
-      msg += `\n\n${emojiLimite} *Limite de ${categoria}:*\n`;
-      if (proporcional) {
-        msg += `_Proporcional: ${diasUsuario} de ${diasMes} dias (iniciou no mês)_\n`;
-        msg += `Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} _(de ${fmt.formatarMoeda(limite)})_\n`;
-      }
-      const barraTotal = 10;
-      const barraCheios = Math.min(Math.round(percentual / 10), barraTotal);
-      const barra = '█'.repeat(barraCheios) + '░'.repeat(barraTotal - barraCheios);
-      msg += `${barra} ${percentual}%\n`;
-      msg += `Usado: ${fmt.formatarMoeda(gastos)} | Disponível: `;
-      if (restante > 0) {
-        msg += `*${fmt.formatarMoeda(restante)}*`;
-      } else {
-        msg += `*🚨 Excedido em ${fmt.formatarMoeda(Math.abs(restante))}*`;
-      }
+    const budgetCat = mapearCategoriaBudget(categoria);
+    if (budgetCat) {
+      const subcats = MAPA_BUDGET[budgetCat];
+      const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
+      if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
     }
   }
 
