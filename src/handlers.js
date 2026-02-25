@@ -1840,6 +1840,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     return await handleListarCaixinhas(usuarioId);
   }
 
+  // Depósito em caixinha existente
+  if (resultado.acao === 'deposito_caixinha') {
+    return await handleDepositoCaixinha(usuarioId, resultado);
+  }
+
   // Cadastro standalone de cartão de crédito
   if (resultado.acao === 'novo_cartao') {
     return await iniciarCadastroCartaoStandalone(usuarioId);
@@ -2491,6 +2496,53 @@ async function handleListarCaixinhas(usuarioId) {
     msg += '\n\n';
   }
   msg += `━━━━━━━━━━━━━━━\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
+  return msg;
+}
+
+async function handleDepositoCaixinha(usuarioId, resultado) {
+  const nome = resultado.nome || null;
+  const valor = resultado.valor && resultado.valor > 0 ? resultado.valor : null;
+
+  if (!valor) {
+    return `Me diz o valor que quer adicionar e em qual caixinha 💰\n_Ex: "adicionar 500 na reserva de emergência"_`;
+  }
+
+  if (!nome) {
+    const caixinhas = await db.listarCaixinhas(usuarioId);
+    if (caixinhas.length === 0) {
+      return `Você ainda não tem caixinhas cadastradas.\n_Diz "criar caixinha" pra começar!_`;
+    }
+    const lista = caixinhas.map(c => `  💰 *${c.nome}* — ${fmt.formatarMoeda(c.saldo)}`).join('\n');
+    return `Em qual caixinha você quer depositar *${fmt.formatarMoeda(valor)}*?\n\n${lista}\n\n_Me diz o nome da caixinha._`;
+  }
+
+  const matches = await db.buscarCaixinhasPorNome(usuarioId, nome);
+
+  if (matches.length === 0) {
+    const caixinhas = await db.listarCaixinhas(usuarioId);
+    const lista = caixinhas.length > 0
+      ? caixinhas.map(c => `  💰 *${c.nome}*`).join('\n')
+      : '  _Nenhuma caixinha cadastrada_';
+    return `Não encontrei caixinha com o nome *"${nome}"* 😅\n\nSuas caixinhas:\n${lista}\n\n_Tenta de novo com o nome correto._`;
+  }
+
+  if (matches.length > 1) {
+    const lista = matches.map(c => `  💰 *${c.nome}* — ${fmt.formatarMoeda(c.saldo)}`).join('\n');
+    return `Encontrei ${matches.length} caixinhas com esse nome. Qual você quer abastecer?\n\n${lista}\n\n_Me diz o nome completo._`;
+  }
+
+  const caixinha = matches[0];
+  const saldoAnterior = caixinha.saldo;
+  const atualizada = await db.adicionarSaldoCaixinha(caixinha.id, valor);
+  const novoSaldo = atualizada.saldo;
+
+  let msg = `✅ *${fmt.formatarMoeda(valor)}* adicionado à *${atualizada.nome}*! 💰\n\n`;
+  msg += `  Saldo anterior: ${fmt.formatarMoeda(saldoAnterior)}\n`;
+  msg += `  Novo saldo: *${fmt.formatarMoeda(novoSaldo)}*`;
+  if (atualizada.meta && atualizada.meta > 0) {
+    const pct = Math.min(100, Math.round((novoSaldo / atualizada.meta) * 100));
+    msg += `\n  Meta: ${fmt.formatarMoeda(atualizada.meta)} — *${pct}% atingido* ${pct >= 100 ? '🎉' : pct >= 75 ? '🔥' : '📈'}`;
+  }
   return msg;
 }
 

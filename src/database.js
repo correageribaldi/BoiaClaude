@@ -1392,6 +1392,38 @@ async function listarCaixinhas(usuarioId) {
   return result.rows;
 }
 
+// Busca caixinha(s) por nome: tenta match exato primeiro, depois parcial
+async function buscarCaixinhasPorNome(usuarioId, nome) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  // Exato (case-insensitive)
+  let result = await pool.query(
+    `SELECT id, nome, saldo::float, meta::float, tipo, rendimento_mensal::float
+     FROM caixinhas WHERE usuario_id = $1 AND ativo = TRUE AND LOWER(nome) = LOWER($2)`,
+    [uid, nome]
+  );
+  if (result.rows.length > 0) return result.rows;
+
+  // Parcial
+  result = await pool.query(
+    `SELECT id, nome, saldo::float, meta::float, tipo, rendimento_mensal::float
+     FROM caixinhas WHERE usuario_id = $1 AND ativo = TRUE AND nome ILIKE $2
+     ORDER BY criado_em ASC`,
+    [uid, `%${nome}%`]
+  );
+  return result.rows;
+}
+
+// Adiciona valor ao saldo de uma caixinha pelo ID
+async function adicionarSaldoCaixinha(caixinhaId, valor) {
+  const result = await pool.query(
+    `UPDATE caixinhas SET saldo = saldo + $1 WHERE id = $2
+     RETURNING id, nome, saldo::float, meta::float, tipo`,
+    [valor, caixinhaId]
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -1446,6 +1478,8 @@ module.exports = {
   salvarBudgetCat,
   criarCaixinha,
   listarCaixinhas,
+  buscarCaixinhasPorNome,
+  adicionarSaldoCaixinha,
   criarRecorrencia,
   listarRecorrencias,
   calcularOcorrenciasNoPerodo,
