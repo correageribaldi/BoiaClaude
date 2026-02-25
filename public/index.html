@@ -92,11 +92,13 @@
 
       <div class="filter-bar">
         <div class="filter-tabs">
-          <button class="filter-tab active" data-filter="">Todas</button>
-          <button class="filter-tab" data-filter="pago">Pagas</button>
-          <button class="filter-tab" data-filter="pendente">A Pagar</button>
-          <button class="filter-tab" data-filter-tipo="receita">Receitas</button>
-          <button class="filter-tab" data-filter-tipo="despesa">Despesas</button>
+          <button class="filter-tab active" data-filter="" data-filter-tipo="">Todas</button>
+          <button class="filter-tab" data-filter="" data-filter-tipo="receita">Receitas</button>
+          <button class="filter-tab" data-filter="" data-filter-tipo="despesa">Despesas</button>
+          <button class="filter-tab" data-filter="pago" data-filter-tipo="despesa">Pagas</button>
+          <button class="filter-tab" data-filter="pago" data-filter-tipo="receita">Recebidas</button>
+          <button class="filter-tab" data-filter="pendente" data-filter-tipo="despesa">A Pagar</button>
+          <button class="filter-tab" data-filter="pendente" data-filter-tipo="receita">A Receber</button>
         </div>
         <input class="search-input" id="tx-search" type="text" placeholder="Buscar por descrição..." />
       </div>
