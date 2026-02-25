@@ -2841,7 +2841,7 @@ async function iniciarPontoZero(usuarioId) {
     orcamentos: [],
   });
 
-  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm poucos minutos organizo teu financeiro completo.\n\nPrimeiro: *quanto tu tem disponível hoje*, somando tudo (conta, carteira, pix)? Pode ser aproximado.\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
+  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm poucos minutos organizo teu financeiro completo.\n\nPrimeiro: *quanto tu tem disponível hoje em conta corrente, carteira e pix?*\n\n⚠️ _Não inclua investimentos (poupança, CDB, etc.) — eles serão registrados em seguida como caixinhas._\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
 }
 
 function coletarItens(item, lista) {
