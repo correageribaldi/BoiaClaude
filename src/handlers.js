@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -337,6 +337,23 @@ function mapearCategoriaBudget(categoria) {
     if (cats.includes(categoria)) return budget;
   }
   return null;
+}
+
+// Resolve o bucket de orçamento para qualquer categoria:
+// 1. Mapa hardcoded (síncrono, rápido)
+// 2. Banco de dados (categorias com budget_cat salvo)
+// 3. IA (classifica uma vez e persiste para sempre)
+async function resolverBudgetCategoria(categoria) {
+  const hardcoded = mapearCategoriaBudget(categoria);
+  if (hardcoded) return hardcoded;
+
+  const dbBudget = await db.buscarBudgetCat(categoria);
+  if (dbBudget) return dbBudget;
+
+  const aiClassified = await classificarCategoriaBudget(categoria);
+  await db.salvarBudgetCat(categoria, aiClassified);
+  console.log(`[BUDGET] Categoria "${categoria}" classificada pela IA como "${aiClassified}"`);
+  return aiClassified;
 }
 
 function formatarBlocoLimite(limiteInfo, categoriaTx, budgetCat) {
@@ -1646,9 +1663,10 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
 
   // Verificar limite de gastos (apenas para despesas)
   if (tipo === 'despesa' && categoria) {
-    const budgetCat = mapearCategoriaBudget(categoria);
+    const budgetCat = await resolverBudgetCategoria(categoria);
     if (budgetCat) {
-      const subcats = MAPA_BUDGET[budgetCat];
+      // subcats: categorias hardcoded do bucket + a própria categoria (cobre categorias novas)
+      const subcats = [...(MAPA_BUDGET[budgetCat] || []), categoria].filter((v, i, a) => a.indexOf(v) === i);
       const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
       if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
     }
@@ -1935,9 +1953,10 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
 
   // Verificar limite de gastos (apenas para despesas)
   if (tipo === 'despesa' && categoria) {
-    const budgetCat = mapearCategoriaBudget(categoria);
+    const budgetCat = await resolverBudgetCategoria(categoria);
     if (budgetCat) {
-      const subcats = MAPA_BUDGET[budgetCat];
+      // subcats: categorias hardcoded do bucket + a própria categoria (cobre categorias novas)
+      const subcats = [...(MAPA_BUDGET[budgetCat] || []), categoria].filter((v, i, a) => a.indexOf(v) === i);
       const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
       if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
     }

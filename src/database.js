@@ -302,6 +302,41 @@ async function initTables() {
       [cat]
     );
   }
+
+  // Migração: coluna budget_cat para mapear categorias ao orçamento mensal
+  await pool.query(`
+    ALTER TABLE categorias ADD COLUMN IF NOT EXISTS budget_cat TEXT;
+  `);
+
+  // Seed: mapeamento padrão das categorias conhecidas
+  const mapeamentoPadrao = [
+    ['Alimentação',   'Variáveis'],
+    ['Alimentacao',   'Variáveis'],
+    ['Transporte',    'Variáveis'],
+    ['Moradia',       'Variáveis'],
+    ['Saúde',         'Variáveis'],
+    ['Saude',         'Variáveis'],
+    ['Educação',      'Variáveis'],
+    ['Educacao',      'Variáveis'],
+    ['Vestuário',     'Variáveis'],
+    ['Vestuario',     'Variáveis'],
+    ['Compras',       'Variáveis'],
+    ['Outros',        'Variáveis'],
+    ['Lazer',         'Lazer'],
+    ['Investimentos', 'Investimentos'],
+    ['Poupança',      'Investimentos'],
+    ['Poupanca',      'Investimentos'],
+    ['Objetivos',     'Objetivos'],
+    ['Salário',       null],
+    ['Salario',       null],
+    ['Freelance',     null],
+  ];
+  for (const [nome, budgetCat] of mapeamentoPadrao) {
+    await pool.query(
+      `UPDATE categorias SET budget_cat = $1 WHERE nome = $2 AND budget_cat IS NULL`,
+      [budgetCat, nome]
+    );
+  }
 }
 
 async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status) {
@@ -1038,10 +1073,27 @@ async function usernameDisponivel(username) {
   return result.rows.length === 0;
 }
 
-async function criarCategoria(nome) {
+async function criarCategoria(nome, budgetCat = null) {
   await pool.query(
-    'INSERT INTO categorias (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING',
-    [nome.trim()]
+    'INSERT INTO categorias (nome, budget_cat) VALUES ($1, $2) ON CONFLICT (nome) DO NOTHING',
+    [nome.trim(), budgetCat]
+  );
+}
+
+async function buscarBudgetCat(categoria) {
+  const result = await pool.query(
+    'SELECT budget_cat FROM categorias WHERE nome = $1',
+    [categoria]
+  );
+  if (result.rows.length === 0) return null;
+  return result.rows[0].budget_cat || null;
+}
+
+async function salvarBudgetCat(categoria, budgetCat) {
+  await pool.query(
+    `INSERT INTO categorias (nome, budget_cat) VALUES ($1, $2)
+     ON CONFLICT (nome) DO UPDATE SET budget_cat = $2`,
+    [categoria.trim(), budgetCat]
   );
 }
 
@@ -1136,6 +1188,8 @@ module.exports = {
   usernameDisponivel,
   criarCategoria,
   excluirCategoria,
+  buscarBudgetCat,
+  salvarBudgetCat,
   criarCaixinha,
   listarCaixinhas,
 };

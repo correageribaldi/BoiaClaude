@@ -923,4 +923,25 @@ Use linguagem informal brasileira. *Negrito* para valores e termos-chave. NUNCA 
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra };
+// Classifica uma categoria desconhecida no bucket de orçamento correto (chamada única por categoria nova)
+async function classificarCategoriaBudget(categoria) {
+  const buckets = ['Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'user',
+        content: `Classifique a categoria de gasto "${categoria}" em um dos buckets de orçamento pessoal:\n- Variáveis: gastos do dia a dia (alimentação, transporte, saúde, moradia, educação, etc.)\n- Lazer: entretenimento, viagens, restaurantes, hobbies\n- Investimentos: aplicações financeiras, poupança\n- Objetivos: metas financeiras específicas\n\nResponda APENAS com uma das opções: Variáveis, Lazer, Investimentos, Objetivos`,
+      }],
+      max_tokens: 10,
+      temperature: 0,
+    });
+    const result = response.choices[0].message.content.trim();
+    return buckets.includes(result) ? result : 'Variáveis';
+  } catch (err) {
+    console.error('[AI] Erro ao classificar categoria budget:', err.message);
+    return 'Variáveis';
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget };
