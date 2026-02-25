@@ -399,6 +399,7 @@ REGRAS PARA AGENDA:
   - "o que tenho pro dia 20" → periodo: "YYYY-MM-DD"
   - "o que tenho sexta" → periodo: "sexta"
   - "minha agenda de sábado" → periodo: "sabado"
+  - Para "daqui a N meses" ou "em N meses": calcule o mês alvo com base em {{DATA_HOJE}} e retorne o nome do mês. Ex: se hoje é fevereiro, "daqui a 2 meses" → periodo: "abril", "daqui 3 meses" → periodo: "maio"
 - Sinônimos de agenda: "compromissos", "programação", "atividades", "tarefas do dia", "o que tenho"
   - "liste meus compromissos para esta semana" → periodo: "semana"
   - "quais minhas atividades de amanhã" → periodo: "amanha"
