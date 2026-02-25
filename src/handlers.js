@@ -370,8 +370,7 @@ function formatarBlocoLimite(limiteInfo, categoriaTx, budgetCat) {
 
   let bloco = `\n\n${emoji} *Orçamento ${label}:*\n`;
   if (proporcional) {
-    bloco += `_Proporcional: ${diasUsuario} de ${diasMes} dias (iniciou no mês)_\n`;
-    bloco += `Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} _(de ${fmt.formatarMoeda(limite)})_\n`;
+    bloco += `_Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} de ${fmt.formatarMoeda(limite)} (proporcional)_\n`;
   }
   const barraTotal = 10;
   const barraCheios = Math.min(Math.round(percentual / 10), barraTotal);
