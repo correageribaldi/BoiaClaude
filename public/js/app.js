@@ -246,10 +246,13 @@ function renderTabelaTransacoes(transacoes) {
       <td><strong>${esc(t.descricao)}</strong></td>
       <td><span style="font-size:12px;color:var(--text-muted)">${esc(t.categoria || '—')}</span></td>
       <td class="text-right ${isReceita ? 'valor-positivo' : 'valor-negativo'}">${isReceita ? '+' : '-'}${fmtMoeda(t.valor)}</td>
-      <td><span class="badge badge-${t.status}">${t.status === 'pago' ? (isReceita ? 'Recebido' : 'Pago') : (isReceita ? 'A Receber' : 'A Pagar')}</span></td>
+      <td>${t.projetado
+        ? `<span class="badge badge-projetado">${isReceita ? 'Previsto' : 'Previsto'}</span>`
+        : `<span class="badge badge-${t.status}">${t.status === 'pago' ? (isReceita ? 'Recebido' : 'Pago') : (isReceita ? 'A Receber' : 'A Pagar')}</span>`
+      }</td>
       <td style="white-space:nowrap">
-        ${t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
-        <button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>
+        ${!t.projetado && t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
+        ${!t.projetado ? `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>` : ''}
       </td>
     `;
     tbody.appendChild(tr);

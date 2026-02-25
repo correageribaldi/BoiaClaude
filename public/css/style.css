@@ -290,6 +290,7 @@ body {
 }
 .badge-pago { background: var(--green-light); color: var(--green); }
 .badge-pendente { background: var(--orange-light); color: var(--orange); }
+.badge-projetado { background: #e8f0fe; color: #3d6ecf; border: 1px dashed #3d6ecf; }
 
 .action-btn {
   background: none;

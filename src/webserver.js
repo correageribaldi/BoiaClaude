@@ -112,9 +112,39 @@ app.get('/api/transactions', autenticar, async (req, res) => {
       dataInicio: dataInicio || null,
       dataFim: dataFim || null,
       descricao: descricao || null,
-      limite: parseInt(limite) || 20,
+      limite: parseInt(limite) || 200,
     });
-    res.json(transacoes);
+
+    // Adicionar projeções de recorrências quando não filtrando apenas por 'pago'
+    let resultado = transacoes;
+    if (status !== 'pago' && dataInicio && dataFim) {
+      const regras = await db.listarRecorrencias(req.usuarioId);
+      if (regras.length > 0) {
+        const dataInicioObj = new Date(dataInicio + 'T12:00:00');
+        const dataFimObj = new Date(dataFim + 'T12:00:00');
+        const ocorrencias = db.calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj);
+
+        // Excluir projeções já cobertas por transação real (mesmo recorrencia_id no mês)
+        const anoMes = dataInicio.substring(0, 7);
+        const idsComTransacao = new Set(
+          transacoes
+            .filter(t => t.recorrencia_id != null && (t.data || '').startsWith(anoMes))
+            .map(t => t.recorrencia_id)
+        );
+
+        const projetadas = ocorrencias
+          .filter(o => !idsComTransacao.has(o.recorrencia_id))
+          .filter(o => !tipo || o.tipo === tipo)
+          .filter(o => !descricao || o.descricao.toLowerCase().includes(descricao.toLowerCase()))
+          .map(o => ({ ...o, id: null, status: 'pendente', projetado: true }));
+
+        resultado = [...transacoes, ...projetadas].sort((a, b) =>
+          (a.data || '').localeCompare(b.data || '')
+        );
+      }
+    }
+
+    res.json(resultado);
   } catch (err) {
     console.error('[WEB] /api/transactions:', err.message);
     res.status(500).json({ erro: err.message });
