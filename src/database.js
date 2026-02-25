@@ -214,6 +214,18 @@ async function initTables() {
       ADD COLUMN IF NOT EXISTS oculto BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 
+  // Migração: marcar lembretes de sistema existentes como ocultos (criados antes da coluna oculto)
+  await pool.query(`
+    UPDATE lembretes_recorrentes
+    SET oculto = TRUE
+    WHERE oculto = FALSE
+      AND (
+        mensagem LIKE '💸 Pagar:%'
+        OR mensagem LIKE '💰 Receber:%'
+        OR mensagem LIKE '💳 Vencimento fatura%'
+      );
+  `);
+
   // Tabela de usuários (controle de primeiro contato e nome)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
