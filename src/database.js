@@ -862,7 +862,6 @@ async function verificarLimite(usuarioId, categoria) {
   const ano = agora.getFullYear();
   const mes = agora.getMonth() + 1;
 
-  // Calcular o último dia do mês corretamente
   const ultimoDia = new Date(ano, mes, 0).getDate();
   const mesStr = String(mes).padStart(2, '0');
   const inicioMes = `${ano}-${mesStr}-01`;
@@ -879,6 +878,30 @@ async function verificarLimite(usuarioId, categoria) {
 
   const limite = limiteResult.rows[0].valor_limite;
 
+  // Verificar se o usuário começou no mês atual (pro-rata)
+  const usuarioResult = await pool.query(
+    `SELECT primeiro_contato FROM usuarios WHERE usuario_id = $1`,
+    [uid]
+  );
+  let limiteEfetivo = limite;
+  let proporcional = false;
+  let diasMes = ultimoDia;
+  let diasUsuario = ultimoDia;
+
+  if (usuarioResult.rows.length > 0) {
+    const primeiroContato = new Date(usuarioResult.rows[0].primeiro_contato);
+    const anoInicio = primeiroContato.getFullYear();
+    const mesInicio = primeiroContato.getMonth() + 1;
+    const diaInicio = primeiroContato.getDate();
+
+    if (anoInicio === ano && mesInicio === mes && diaInicio > 1) {
+      // Usuário começou no mês atual após o dia 1 → pro-rata
+      diasUsuario = ultimoDia - diaInicio + 1;
+      limiteEfetivo = Math.round(limite * diasUsuario / ultimoDia);
+      proporcional = true;
+    }
+  }
+
   // Calcular gastos do mês
   const gastosResult = await pool.query(
     `SELECT COALESCE(SUM(valor), 0)::float as total
@@ -891,15 +914,19 @@ async function verificarLimite(usuarioId, categoria) {
   );
 
   const gastos = gastosResult.rows[0].total;
-  const restante = limite - gastos;
-  const percentual = limite > 0 ? (gastos / limite) * 100 : 0;
+  const restante = limiteEfetivo - gastos;
+  const percentual = limiteEfetivo > 0 ? (gastos / limiteEfetivo) * 100 : 0;
 
   return {
     categoria,
     limite,
+    limiteEfetivo,
     gastos,
     restante,
-    percentual: Math.round(percentual)
+    percentual: Math.round(percentual),
+    proporcional,
+    diasMes,
+    diasUsuario,
   };
 }
 

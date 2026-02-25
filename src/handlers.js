@@ -1603,7 +1603,7 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
   if (tipo === 'despesa' && categoria) {
     const limiteInfo = await db.verificarLimite(usuarioId, categoria);
     if (limiteInfo) {
-      const { limite, gastos, restante, percentual } = limiteInfo;
+      const { limite, limiteEfetivo, gastos, restante, percentual, proporcional, diasMes, diasUsuario } = limiteInfo;
       let emoji = '';
       if (percentual >= 100) emoji = '🚨';
       else if (percentual >= 80) emoji = '⚠️';
@@ -1611,11 +1611,20 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
       else emoji = '✅';
 
       msg += `\n\n${emoji} *Limite de ${categoria}:*\n`;
-      msg += `Gasto: ${fmt.formatarMoeda(gastos)} de ${fmt.formatarMoeda(limite)} (${percentual}%)\n`;
+      if (proporcional) {
+        msg += `_Proporcional: ${diasUsuario} de ${diasMes} dias (iniciou no mês)_\n`;
+        msg += `Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} _(de ${fmt.formatarMoeda(limite)})_\n`;
+      }
+      // Barra visual de progresso
+      const barraTotal = 10;
+      const barraCheios = Math.min(Math.round(percentual / 10), barraTotal);
+      const barra = '█'.repeat(barraCheios) + '░'.repeat(barraTotal - barraCheios);
+      msg += `${barra} ${percentual}%\n`;
+      msg += `Usado: ${fmt.formatarMoeda(gastos)} | Disponível: `;
       if (restante > 0) {
-        msg += `Restam: ${fmt.formatarMoeda(restante)} este mês`;
+        msg += `*${fmt.formatarMoeda(restante)}*`;
       } else {
-        msg += `⚠️ *Limite excedido em ${fmt.formatarMoeda(Math.abs(restante))}!*`;
+        msg += `*🚨 Excedido em ${fmt.formatarMoeda(Math.abs(restante))}*`;
       }
     }
   }
@@ -1903,7 +1912,7 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
   if (tipo === 'despesa' && categoria) {
     const limiteInfo = await db.verificarLimite(usuarioId, categoria);
     if (limiteInfo) {
-      const { limite, gastos, restante, percentual } = limiteInfo;
+      const { limite, limiteEfetivo, gastos, restante, percentual, proporcional, diasMes, diasUsuario } = limiteInfo;
       let emojiLimite = '';
       if (percentual >= 100) emojiLimite = '🚨';
       else if (percentual >= 80) emojiLimite = '⚠️';
@@ -1911,11 +1920,19 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
       else emojiLimite = '✅';
 
       msg += `\n\n${emojiLimite} *Limite de ${categoria}:*\n`;
-      msg += `Gasto: ${fmt.formatarMoeda(gastos)} de ${fmt.formatarMoeda(limite)} (${percentual}%)\n`;
+      if (proporcional) {
+        msg += `_Proporcional: ${diasUsuario} de ${diasMes} dias (iniciou no mês)_\n`;
+        msg += `Limite do mês: ${fmt.formatarMoeda(limiteEfetivo)} _(de ${fmt.formatarMoeda(limite)})_\n`;
+      }
+      const barraTotal = 10;
+      const barraCheios = Math.min(Math.round(percentual / 10), barraTotal);
+      const barra = '█'.repeat(barraCheios) + '░'.repeat(barraTotal - barraCheios);
+      msg += `${barra} ${percentual}%\n`;
+      msg += `Usado: ${fmt.formatarMoeda(gastos)} | Disponível: `;
       if (restante > 0) {
-        msg += `Restam: ${fmt.formatarMoeda(restante)} este mês`;
+        msg += `*${fmt.formatarMoeda(restante)}*`;
       } else {
-        msg += `⚠️ *Limite excedido em ${fmt.formatarMoeda(Math.abs(restante))}!*`;
+        msg += `*🚨 Excedido em ${fmt.formatarMoeda(Math.abs(restante))}*`;
       }
     }
   }
