@@ -778,6 +778,7 @@ async function limparDadosUsuario(usuarioId) {
   await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM caixinhas WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM contatos_compartilhados WHERE usuario_principal_id = $1 OR contato_id = $1', [uid]);
   await pool.query('DELETE FROM usuarios WHERE usuario_id = $1', [uid]);
   return true;
