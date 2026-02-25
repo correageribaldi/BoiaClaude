@@ -2333,7 +2333,8 @@ async function handleTransacaoRecorrente(usuarioId, resultado) {
       frequencia || 'mensal',
       diaSemanLembrete,
       diaLembrete,
-      null
+      null,
+      true  // oculto — lembrete de sistema, não aparece nos lembretes do usuário
     );
 
     const emoji = (tipo === 'despesa') ? '📉' : '📈';
