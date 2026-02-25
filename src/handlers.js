@@ -2315,26 +2315,20 @@ async function handleTransacaoRecorrente(usuarioId, resultado) {
   }
 
   try {
-    // Cria a transação pendente para a próxima ocorrência
-    const dataStr = calcularDataPendente(dia_mes || null);
-    await db.adicionarTransacao(
+    // 1. Criar regra de recorrência
+    const diaM = frequencia === 'semanal' ? null : (dia_mes ?? null);
+    const diaS = frequencia === 'semanal' ? (dia_semana ?? null) : null;
+    const recorrenciaId = await db.criarRecorrencia(
       usuarioId, tipo || 'despesa', valor, descricao,
-      categoria || 'Outros', dataStr, 'pendente'
+      categoria || 'Outros', frequencia || 'mensal',
+      diaM, diaS, null, null
     );
 
-    // Cria lembrete recorrente para registrar as ocorrências futuras no fluxo financeiro
-    const labelPagar = (tipo === 'despesa') ? '💸 Pagar' : '💰 Receber';
-    const diaLembrete = frequencia === 'semanal' ? null : (dia_mes ?? new Date().getDate());
-    const diaSemanLembrete = frequencia === 'semanal' ? (dia_semana ?? null) : null;
-    await db.criarLembreteRecorrente(
-      usuarioId,
-      `${labelPagar}: ${descricao} - ${fmt.formatarMoeda(valor)}`,
-      '09:00',
-      frequencia || 'mensal',
-      diaSemanLembrete,
-      diaLembrete,
-      null,
-      true  // oculto — lembrete de sistema, não aparece nos lembretes do usuário
+    // 2. Criar transação pendente para a próxima ocorrência (para o sistema de lembretes)
+    const dataStr = calcularDataPendente(dia_mes || null);
+    await db.adicionarTransacaoComRecorrencia(
+      usuarioId, tipo || 'despesa', valor, descricao,
+      categoria || 'Outros', dataStr, 'pendente', recorrenciaId
     );
 
     const emoji = (tipo === 'despesa') ? '📉' : '📈';
@@ -2812,41 +2806,33 @@ function parsearLembreteOculto(mensagem) {
 async function handleAgenda(usuarioId, periodo) {
   const { dataInicio, dataFim, titulo, dataInicioObj, dataFimObj } = calcularPeriodo(periodo);
 
-  // Verificar se o período é um mês futuro (além do mês atual)
-  const hoje = new Date();
-  const inicioMesAtual = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-  const isPeriodoFuturo = dataInicioObj >= new Date(inicioMesAtual.getFullYear(), inicioMesAtual.getMonth() + 1, 1);
-
   // Buscar tudo em paralelo
-  const [transacoes, lembretes, recorrentes, sistemaRecorrentes] = await Promise.all([
+  const [transacoes, lembretes, recorrentes, regras] = await Promise.all([
     db.consultarTransacoes(usuarioId, { dataInicio, dataFim, limite: 50 }),
     db.buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim),
     db.listarLembretesRecorrentes(usuarioId),
-    db.listarLembretesRecorrentesSistema(usuarioId),
+    db.listarRecorrencias(usuarioId),
   ]);
 
-  // Filtrar recorrentes que disparam no período
+  // Lembretes recorrentes do usuário que disparam no período
   const recorrentesDoPeriodo = recorrentes.filter(r => recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj));
 
-  // Projetar transações a partir dos lembretes de sistema quando não há transações reais
-  let receitasProjetadas = [];
-  let despesasProjetadas = [];
-  if (sistemaRecorrentes.length > 0) {
-    for (const r of sistemaRecorrentes) {
-      if (!recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj)) continue;
-      const parsed = parsearLembreteOculto(r.mensagem);
-      if (!parsed) continue;
-      if (parsed.tipo === 'receita') receitasProjetadas.push(parsed);
-      else despesasProjetadas.push(parsed);
-    }
-  }
+  // Calcular projeções de recorrências para o período
+  const ocorrencias = db.calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj);
 
-  // Separar transações reais
-  const receitasReais = transacoes.filter(t => t.tipo === 'receita');
-  const despesasReais = transacoes.filter(t => t.tipo === 'despesa');
-  const receitas = receitasReais.length > 0 ? receitasReais : receitasProjetadas.map(p => ({ ...p, status: 'projetado' }));
-  const despesas = despesasReais.length > 0 ? despesasReais : despesasProjetadas.map(p => ({ ...p, status: 'projetado' }));
-  const pendentes = transacoes.filter(t => t.status === 'pendente');
+  // Overlay: remover ocorrências que já têm transação real (pelo recorrencia_id)
+  const idsComTransacao = new Set(transacoes.filter(t => t.recorrencia_id != null).map(t => t.recorrencia_id));
+  const ocorrenciasSemCobertura = ocorrencias.filter(o => !idsComTransacao.has(o.recorrencia_id));
+
+  // Montar listas finais: transações reais + projeções sem cobertura
+  const receitasReais   = transacoes.filter(t => t.tipo === 'receita');
+  const despesasReais   = transacoes.filter(t => t.tipo === 'despesa');
+  const receitasProjetadas = ocorrenciasSemCobertura.filter(o => o.tipo === 'receita');
+  const despesasProjetadas = ocorrenciasSemCobertura.filter(o => o.tipo === 'despesa');
+
+  const receitas = [...receitasReais, ...receitasProjetadas];
+  const despesas = [...despesasReais, ...despesasProjetadas];
+  const temProjecao = receitasProjetadas.length > 0 || despesasProjetadas.length > 0;
 
   const temAlgo = receitas.length > 0 || despesas.length > 0 || lembretes.length > 0 || recorrentesDoPeriodo.length > 0;
 
@@ -2854,18 +2840,20 @@ async function handleAgenda(usuarioId, periodo) {
     return `📅 *Sua agenda para ${titulo}*\n\nVocê não tem nada agendado para esse período! 😎\n\n_Dica: registre despesas, receitas ou crie lembretes para organizar seu dia._`;
   }
 
-  const notaProjecao = isPeriodoFuturo && (receitasProjetadas.length > 0 || despesasProjetadas.length > 0) ? `\n_🔄 = previsto com base nas suas contas fixas_\n` : '';
+  const notaProjecao = temProjecao ? `\n_🔄 = previsto com base nas suas contas fixas_\n` : '';
   let msg = `📅 *Sua agenda para ${titulo}*${notaProjecao}\n\n`;
 
   // Receitas do período
   if (receitas.length > 0) {
     const totalReceitas = receitas.reduce((acc, t) => acc + t.valor, 0);
-    const labelR = isPeriodoFuturo && receitasReais.length === 0 ? `Receitas previstas (${fmt.formatarMoeda(totalReceitas)})` : `Receitas (${fmt.formatarMoeda(totalReceitas)})`;
+    const labelR = receitasReais.length === 0 && receitasProjetadas.length > 0
+      ? `Receitas previstas (${fmt.formatarMoeda(totalReceitas)})`
+      : `Receitas (${fmt.formatarMoeda(totalReceitas)})`;
     msg += `💰 *${labelR}:*\n`;
     for (const t of receitas) {
-      const status = t.status === 'projetado' ? ' 🔄' : t.status === 'pendente' ? ' ⏳' : ' ✅';
+      const statusIcon = t.status === 'projetado' ? ' 🔄' : t.status === 'pendente' ? ' ⏳' : ' ✅';
       const cat = t.categoria ? ` (${t.categoria})` : '';
-      msg += `  🟢 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_${cat}${status}\n`;
+      msg += `  🟢 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_${cat}${statusIcon}\n`;
     }
     msg += '\n';
   }
@@ -2873,12 +2861,14 @@ async function handleAgenda(usuarioId, periodo) {
   // Despesas do período
   if (despesas.length > 0) {
     const totalDespesas = despesas.reduce((acc, t) => acc + t.valor, 0);
-    const labelD = isPeriodoFuturo && despesasReais.length === 0 ? `Despesas previstas (${fmt.formatarMoeda(totalDespesas)})` : `Despesas (${fmt.formatarMoeda(totalDespesas)})`;
+    const labelD = despesasReais.length === 0 && despesasProjetadas.length > 0
+      ? `Despesas previstas (${fmt.formatarMoeda(totalDespesas)})`
+      : `Despesas (${fmt.formatarMoeda(totalDespesas)})`;
     msg += `💸 *${labelD}:*\n`;
     for (const t of despesas) {
-      const status = t.status === 'projetado' ? ' 🔄' : t.status === 'pendente' ? ' ⏳' : ' ✅';
+      const statusIcon = t.status === 'projetado' ? ' 🔄' : t.status === 'pendente' ? ' ⏳' : ' ✅';
       const cat = t.categoria ? ` (${t.categoria})` : '';
-      msg += `  🔴 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_${cat}${status}\n`;
+      msg += `  🔴 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_${cat}${statusIcon}\n`;
     }
     msg += '\n';
   }
@@ -2892,7 +2882,7 @@ async function handleAgenda(usuarioId, periodo) {
     msg += '\n';
   }
 
-  // Recorrentes que disparam no período
+  // Lembretes recorrentes do usuário (não financeiros)
   if (recorrentesDoPeriodo.length > 0) {
     msg += `🔄 *Lembretes recorrentes:*\n`;
     for (const r of recorrentesDoPeriodo) {
@@ -3393,45 +3383,42 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.adicionarTransacao(usuarioId, 'receita', estado.saldoInicial, 'Saldo inicial', 'Outros', hojeISO, 'pago');
   }
 
-  // Receitas fixas → receita pendente + lembrete recorrente mensal
+  // Receitas fixas → regra de recorrência + transação pendente para o mês atual
   for (const r of estado.receitasFixas || []) {
-    const dataStr = calcularDataPendente(r.dia);
-    await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente');
-    await db.criarLembreteRecorrente(
-      usuarioId,
-      `💰 Receber: ${r.descricao} - ${fmt.formatarMoeda(r.valor)}`,
-      '09:00', 'mensal', null, r.dia || 1, null, true
+    const recorrenciaId = await db.criarRecorrencia(
+      usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros',
+      'mensal', r.dia || 1, null, null, null
     );
+    const dataStr = calcularDataPendente(r.dia);
+    await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
   }
 
-  // Receitas variáveis → receita pendente (sem lembrete recorrente)
+  // Receitas variáveis → transação pendente apenas (sem recorrência)
   for (const r of estado.receitasVariaveis || []) {
     const dataStr = calcularDataPendente(r.dia);
     await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente');
   }
 
-  // Despesas fixas → despesa pendente + lembrete recorrente mensal
+  // Despesas fixas → regra de recorrência + transação pendente para o mês atual
   for (const d of estado.despesasFixas || []) {
-    const dataStr = calcularDataPendente(d.dia);
-    await db.adicionarTransacao(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente');
-    await db.criarLembreteRecorrente(
-      usuarioId,
-      `💸 Pagar: ${d.descricao} - ${fmt.formatarMoeda(d.valor)}`,
-      '09:00', 'mensal', null, d.dia || 1, null, true
+    const recorrenciaId = await db.criarRecorrencia(
+      usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros',
+      'mensal', d.dia || 1, null, null, null
     );
+    const dataStr = calcularDataPendente(d.dia);
+    await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
   }
 
-  // Cartões → despesa pendente (fatura) + lembrete recorrente no dia de vencimento
+  // Cartões → regra de recorrência + transação pendente para o mês atual
   for (const c of estado.cartoes || []) {
+    const recorrenciaId = await db.criarRecorrencia(
+      usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Outros',
+      'mensal', c.diaVencimento || 1, null, null, null
+    );
     if (c.valorFatura && c.valorFatura > 0) {
       const dataStr = calcularDataPendente(c.diaVencimento);
-      await db.adicionarTransacao(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Outros', dataStr, 'pendente');
+      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Outros', dataStr, 'pendente', recorrenciaId);
     }
-    await db.criarLembreteRecorrente(
-      usuarioId,
-      `💳 Vencimento fatura ${c.nome}${c.valorFatura > 0 ? ' - ' + fmt.formatarMoeda(c.valorFatura) : ''}`,
-      '09:00', 'mensal', null, c.diaVencimento || 1, null, true
-    );
   }
 
   // Investimentos → criar caixinhas no banco

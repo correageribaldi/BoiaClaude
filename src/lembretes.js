@@ -57,9 +57,57 @@ function agruparPorUsuario(transacoes) {
   return grupos;
 }
 
+// Criação lazy: gera transações pendentes para recorrências que disparam hoje e ainda não têm registro
+async function criarPendentesDeRecorrencias() {
+  try {
+    const hoje = new Date();
+    const hojeStr = hoje.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }).split('/');
+    const hojeISO = `${hojeStr[2]}-${hojeStr[1].padStart(2, '0')}-${hojeStr[0].padStart(2, '0')}`;
+    const hojeObj = new Date(hojeISO + 'T12:00:00');
+
+    // Buscar todos os usuários com recorrências ativas
+    const result = await db.pool.query(
+      `SELECT DISTINCT usuario_id FROM recorrencias WHERE ativo = TRUE AND (data_fim IS NULL OR data_fim >= $1)`,
+      [hojeISO]
+    );
+
+    for (const row of result.rows) {
+      const usuarioId = row.usuario_id;
+      const regras = await db.listarRecorrencias(usuarioId);
+      const ocorrenciasHoje = db.calcularOcorrenciasNoPerodo(regras, hojeObj, hojeObj);
+
+      for (const o of ocorrenciasHoje) {
+        // Verificar se já existe transação para esta recorrência neste mês
+        const anoMes = hojeISO.substring(0, 7);
+        const existeRes = await db.pool.query(
+          `SELECT id FROM transacoes
+           WHERE usuario_id = $1 AND recorrencia_id = $2 AND TO_CHAR(data, 'YYYY-MM') = $3
+           LIMIT 1`,
+          [usuarioId, o.recorrencia_id, anoMes]
+        );
+        if (existeRes.rows.length === 0) {
+          // Criar transação pendente para o lembrete
+          await db.adicionarTransacaoComRecorrencia(
+            usuarioId, o.tipo, o.valor, o.descricao,
+            o.categoria, hojeISO, 'pendente', o.recorrencia_id
+          );
+          console.log(`[RECORRENCIA] Criada pendente lazy: ${o.descricao} (${usuarioId})`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[RECORRENCIA] Erro ao criar pendentes lazy:', err.message);
+  }
+}
+
 // Executa uma rodada de lembretes
 async function executarRodada(client, rodada) {
   try {
+    // Rodada 1: garantir que recorrências do dia têm transação pendente
+    if (rodada === 1) {
+      await criarPendentesDeRecorrencias();
+    }
+
     const pendentes = await db.buscarPendentesParaLembrete(rodada);
 
     if (pendentes.length === 0) {

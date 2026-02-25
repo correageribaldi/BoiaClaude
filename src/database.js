@@ -270,6 +270,87 @@ async function initTables() {
       ON contatos_compartilhados(contato_id);
   `);
 
+  // Tabela de regras de recorrência (despesas/receitas fixas)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS recorrencias (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      tipo TEXT NOT NULL CHECK (tipo IN ('receita', 'despesa')),
+      valor NUMERIC(12,2) NOT NULL,
+      descricao TEXT NOT NULL,
+      categoria TEXT,
+      frequencia TEXT NOT NULL CHECK (frequencia IN ('diario', 'semanal', 'mensal', 'anual')),
+      dia_mes INTEGER CHECK (dia_mes BETWEEN 1 AND 31),
+      dia_semana INTEGER CHECK (dia_semana BETWEEN 0 AND 6),
+      data_inicio DATE NOT NULL DEFAULT CURRENT_DATE,
+      data_fim DATE,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_recorrencias_usuario
+      ON recorrencias(usuario_id, ativo);
+  `);
+
+  // Migração: coluna recorrencia_id em transacoes (link para a regra de origem)
+  await pool.query(`
+    ALTER TABLE transacoes
+      ADD COLUMN IF NOT EXISTS recorrencia_id INTEGER REFERENCES recorrencias(id);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_transacoes_recorrencia_id
+      ON transacoes(recorrencia_id)
+      WHERE recorrencia_id IS NOT NULL;
+  `);
+
+  // Migração: converter lembretes_recorrentes ocultos (💸/💰/💳) → recorrencias
+  await pool.query(`
+    DO $$
+    DECLARE
+      rec RECORD;
+      v_tipo TEXT;
+      v_descricao TEXT;
+      v_valor NUMERIC(12,2);
+      v_str TEXT;
+    BEGIN
+      FOR rec IN
+        SELECT * FROM lembretes_recorrentes
+        WHERE ativo = TRUE
+          AND (
+            mensagem LIKE '💸 Pagar:%'
+            OR mensagem LIKE '💰 Receber:%'
+            OR mensagem LIKE '💳 Vencimento fatura%'
+          )
+      LOOP
+        BEGIN
+          IF rec.mensagem LIKE '💰 Receber:%' THEN
+            v_tipo := 'receita';
+          ELSE
+            v_tipo := 'despesa';
+          END IF;
+          v_str := REGEXP_REPLACE(rec.mensagem, '^[^:]+:\\s*', '');
+          v_descricao := SPLIT_PART(v_str, ' - R$ ', 1);
+          v_valor := REPLACE(REPLACE(SPLIT_PART(v_str, ' - R$ ', 2), '.', ''), ',', '.')::NUMERIC(12,2);
+          IF NOT EXISTS (
+            SELECT 1 FROM recorrencias
+            WHERE usuario_id = rec.usuario_id
+              AND descricao = v_descricao
+              AND frequencia = rec.frequencia
+              AND dia_mes IS NOT DISTINCT FROM rec.dia_mes
+              AND dia_semana IS NOT DISTINCT FROM rec.dia_semana
+          ) THEN
+            INSERT INTO recorrencias
+              (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, ativo)
+            VALUES
+              (rec.usuario_id, v_tipo, v_valor, v_descricao, 'Outros',
+               rec.frequencia, rec.dia_mes, rec.dia_semana, CURRENT_DATE, rec.ativo);
+          END IF;
+        EXCEPTION WHEN OTHERS THEN
+          RAISE WARNING 'Falha ao migrar lembrete id=%: %', rec.id, SQLERRM;
+        END;
+      END LOOP;
+    END $$;
+  `);
+
   // Tabela de caixinhas de investimento
   await pool.query(`
     CREATE TABLE IF NOT EXISTS caixinhas (
@@ -351,6 +432,93 @@ async function initTables() {
   }
 }
 
+// ─── Recorrências ────────────────────────────────────────────────────────────
+
+async function criarRecorrencia(usuarioId, tipo, valor, descricao, categoria, frequencia, diaMes, diaSemana, dataInicio, dataFim) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO recorrencias
+       (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING id`,
+    [uid, tipo, valor, descricao, categoria || 'Outros', frequencia,
+     diaMes || null, diaSemana || null,
+     dataInicio || dataHojeBR(), dataFim || null]
+  );
+  return result.rows[0].id;
+}
+
+async function listarRecorrencias(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, tipo, valor::float, descricao, categoria, frequencia,
+            dia_mes, dia_semana,
+            TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
+            TO_CHAR(data_fim,    'YYYY-MM-DD') as data_fim
+     FROM recorrencias
+     WHERE usuario_id = $1
+       AND ativo = TRUE
+       AND (data_fim IS NULL OR data_fim >= CURRENT_DATE)
+     ORDER BY dia_mes ASC NULLS LAST, dia_semana ASC NULLS LAST, descricao ASC`,
+    [uid]
+  );
+  return result.rows;
+}
+
+// Calcula ocorrências de regras recorrentes num período — sem I/O, pura memória
+function calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj) {
+  const ocorrencias = [];
+  for (const regra of regras) {
+    const regraInicio = regra.data_inicio ? new Date(regra.data_inicio + 'T12:00:00') : null;
+    const regraFim    = regra.data_fim    ? new Date(regra.data_fim    + 'T12:00:00') : null;
+    const d = new Date(dataInicioObj);
+    d.setHours(12, 0, 0, 0);
+    const fim = new Date(dataFimObj);
+    fim.setHours(12, 0, 0, 0);
+    while (d <= fim) {
+      if (regraInicio && d < regraInicio) { d.setDate(d.getDate() + 1); continue; }
+      if (regraFim    && d > regraFim)    { break; }
+      let dispara = false;
+      if      (regra.frequencia === 'diario')  dispara = true;
+      else if (regra.frequencia === 'semanal') dispara = (d.getDay() === regra.dia_semana);
+      else if (regra.frequencia === 'mensal')  dispara = (d.getDate() === regra.dia_mes);
+      else if (regra.frequencia === 'anual')   dispara = (d.getDate() === regra.dia_mes && (d.getMonth() + 1) === regra.dia_semana);
+      if (dispara) {
+        const yyyy = d.getFullYear();
+        const mm   = String(d.getMonth() + 1).padStart(2, '0');
+        const dd   = String(d.getDate()).padStart(2, '0');
+        ocorrencias.push({
+          tipo:           regra.tipo,
+          valor:          regra.valor,
+          descricao:      regra.descricao,
+          categoria:      regra.categoria,
+          data:           `${yyyy}-${mm}-${dd}`,
+          recorrencia_id: regra.id,
+          status:         'projetado',
+        });
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  }
+  return ocorrencias;
+}
+
+// Cria transação com vínculo à regra de recorrência
+async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+       (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
+     RETURNING id, numero_usuario`,
+    [uid, tipo, valor, descricao, categoria || 'Outros',
+     data || dataHojeBR(), status || 'pago', recorrenciaId || null]
+  );
+  return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -366,7 +534,7 @@ async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, 
 async function listarTransacoes(usuarioId, tipo, limite) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id
      FROM transacoes
      WHERE usuario_id = $1 AND ($2::text IS NULL OR tipo = $2)
      ORDER BY data DESC, id DESC
@@ -461,7 +629,7 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   }
 
   let query = `
-    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id
     FROM transacoes
     WHERE usuario_id = $1
   `;
@@ -586,12 +754,12 @@ async function listarPendentes(usuarioId, tipo) {
 
 async function calcularSaldos(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  // 1. Saldo atual (histórico completo de pagos) + pendentes de transações explícitas do mês
   const result = await pool.query(
     `SELECT
-       -- Saldo atual: todas as transações pagas (histórico completo)
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as receitas_pagas,
        COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as despesas_pagas,
-       -- Pendentes apenas do mês atual (para projeção do mês)
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pendente'
          AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
          AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
@@ -607,19 +775,51 @@ async function calcularSaldos(usuarioId) {
   const r = result.rows[0];
   const saldoAtual = r.receitas_pagas - r.despesas_pagas;
 
+  // 2. Recorrências do mês atual que ainda não têm transação (pendente ou paga)
+  const regras = await listarRecorrencias(uid);
+  let receitasRecorrentes = 0;
+  let despesasRecorrentes = 0;
+  if (regras.length > 0) {
+    const hoje = new Date();
+    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    const fimMes    = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+    const ocorrencias = calcularOcorrenciasNoPerodo(regras, inicioMes, fimMes);
+    if (ocorrencias.length > 0) {
+      const ids = [...new Set(ocorrencias.map(o => o.recorrencia_id))];
+      const anoMes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+      const existRes = await pool.query(
+        `SELECT DISTINCT recorrencia_id FROM transacoes
+         WHERE usuario_id = $1
+           AND recorrencia_id = ANY($2::int[])
+           AND TO_CHAR(data, 'YYYY-MM') = $3`,
+        [uid, ids, anoMes]
+      );
+      const jaTemTransacao = new Set(existRes.rows.map(row => row.recorrencia_id));
+      for (const o of ocorrencias) {
+        if (!jaTemTransacao.has(o.recorrencia_id)) {
+          if (o.tipo === 'receita') receitasRecorrentes += o.valor;
+          else despesasRecorrentes += o.valor;
+        }
+      }
+    }
+  }
+
   const caixRes = await pool.query(
     `SELECT COALESCE(SUM(saldo), 0)::float as total FROM caixinhas WHERE usuario_id = $1 AND ativo = TRUE`,
     [uid]
   );
   const totalCaixinhas = caixRes.rows[0].total;
 
+  const receitasPendentes = r.receitas_pendentes + receitasRecorrentes;
+  const despesasPendentes = r.despesas_pendentes + despesasRecorrentes;
+
   return {
     saldoAtual,
-    saldoPrevisao: saldoAtual + r.receitas_pendentes - r.despesas_pendentes,
-    receitasPagas: r.receitas_pagas,
-    despesasPagas: r.despesas_pagas,
-    receitasPendentes: r.receitas_pendentes,
-    despesasPendentes: r.despesas_pendentes,
+    saldoPrevisao: saldoAtual + receitasPendentes - despesasPendentes,
+    receitasPagas:    r.receitas_pagas,
+    despesasPagas:    r.despesas_pagas,
+    receitasPendentes,
+    despesasPendentes,
     totalCaixinhas,
     patrimonio: saldoAtual + totalCaixinhas,
   };
@@ -848,7 +1048,9 @@ async function listarCategorias() {
 // Limpar todos os dados de um usuário (para testes)
 async function limparDadosUsuario(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  // transacoes tem FK para recorrencias: deletar primeiro
   await pool.query('DELETE FROM transacoes WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM recorrencias WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_enviados WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [uid]);
@@ -1227,4 +1429,8 @@ module.exports = {
   salvarBudgetCat,
   criarCaixinha,
   listarCaixinhas,
+  criarRecorrencia,
+  listarRecorrencias,
+  calcularOcorrenciasNoPerodo,
+  adicionarTransacaoComRecorrencia,
 };
