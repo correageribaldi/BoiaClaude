@@ -3307,7 +3307,7 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.criarLembreteRecorrente(
       usuarioId,
       `💰 Receber: ${r.descricao} - ${fmt.formatarMoeda(r.valor)}`,
-      '09:00', 'mensal', null, r.dia || 1, null
+      '09:00', 'mensal', null, r.dia || 1, null, true
     );
   }
 
@@ -3324,7 +3324,7 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.criarLembreteRecorrente(
       usuarioId,
       `💸 Pagar: ${d.descricao} - ${fmt.formatarMoeda(d.valor)}`,
-      '09:00', 'mensal', null, d.dia || 1, null
+      '09:00', 'mensal', null, d.dia || 1, null, true
     );
   }
 
@@ -3337,7 +3337,7 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.criarLembreteRecorrente(
       usuarioId,
       `💳 Vencimento fatura ${c.nome}${c.valorFatura > 0 ? ' - ' + fmt.formatarMoeda(c.valorFatura) : ''}`,
-      '09:00', 'mensal', null, c.diaVencimento || 1, null
+      '09:00', 'mensal', null, c.diaVencimento || 1, null, true
     );
   }
 

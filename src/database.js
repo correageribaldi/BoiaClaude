@@ -208,6 +208,12 @@ async function initTables() {
       ON lembretes_recorrentes(ativo, horario);
   `);
 
+  // Migração: coluna oculto para lembretes de sistema (despesas/cartões do Finanças em Dia)
+  await pool.query(`
+    ALTER TABLE lembretes_recorrentes
+      ADD COLUMN IF NOT EXISTS oculto BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
   // Tabela de usuários (controle de primeiro contato e nome)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -661,13 +667,13 @@ async function cancelarLembreteGeral(usuarioId, lembreteId) {
 }
 
 // Criar lembrete recorrente
-async function criarLembreteRecorrente(usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim) {
+async function criarLembreteRecorrente(usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim, oculto = false) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `INSERT INTO lembretes_recorrentes (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO lembretes_recorrentes (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim, oculto)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
-    [uid, mensagem, horario, frequencia, diaSemana, diaMes, dataFim]
+    [uid, mensagem, horario, frequencia, diaSemana, diaMes, dataFim, oculto]
   );
   return result.rows[0].id;
 }
@@ -713,7 +719,7 @@ async function listarLembretesRecorrentes(usuarioId) {
     `SELECT id, mensagem, TO_CHAR(horario, 'HH24:MI') as horario, frequencia,
             dia_semana, dia_mes, TO_CHAR(data_fim, 'DD/MM/YYYY') as data_fim
      FROM lembretes_recorrentes
-     WHERE usuario_id = $1 AND ativo = TRUE
+     WHERE usuario_id = $1 AND ativo = TRUE AND oculto = FALSE
      ORDER BY horario ASC`,
     [uid]
   );
