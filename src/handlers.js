@@ -3436,15 +3436,11 @@ async function finalizarPontoZero(usuarioId, estado) {
 
   let msg = `📊 *FINANÇAS EM DIA — ${mesAtual.toUpperCase()}*\n\n`;
   msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n`;
-  if (totalInvestido > 0) {
-    msg += `🏦 *Reservas/Investimentos:* ${fmt.formatarMoeda(totalInvestido)}\n`;
-    msg += `💼 *Patrimônio total:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)}\n`;
-  }
   msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  // Caixinhas
+  // Caixinhas (sem repetir no cabeçalho — detalhes aqui já são suficientes)
   if (investimentos.length > 0) {
-    msg += `🏦 *Caixinhas (${fmt.formatarMoeda(totalInvestido)}):*\n`;
+    msg += `🏦 *Caixinhas e Investimentos:*\n`;
     for (const inv of investimentos) {
       let linha = `  💰 ${inv.nome} — ${fmt.formatarMoeda(inv.saldo)}`;
       if (inv.meta) linha += ` | meta: ${fmt.formatarMoeda(inv.meta)}`;
@@ -3452,7 +3448,7 @@ async function finalizarPontoZero(usuarioId, estado) {
       if (inv.rendimento) linha += ` | ${inv.rendimento}%/mês`;
       msg += linha + '\n';
     }
-    msg += '\n';
+    msg += `  _Total investido: ${fmt.formatarMoeda(totalInvestido)}_\n\n`;
   }
 
   // Receitas fixas
@@ -3531,6 +3527,9 @@ async function finalizarPontoZero(usuarioId, estado) {
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   const emojiPrev = previsao >= 0 ? '✅' : '🚨';
   msg += `${emojiPrev} *Previsão até ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}\n`;
+  if (totalInvestido > 0) {
+    msg += `💼 *Patrimônio total:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)} _(saldo + investimentos)_\n`;
+  }
 
   if (totalOrcamento > 0) {
     const livre = previsao - totalOrcamento;
