@@ -109,6 +109,12 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 16. CAIXINHAS / INVESTIMENTOS (minhas caixinhas, meus investimentos, ver investimentos, quanto tenho investido, minhas reservas, ver caixinhas):
 {"acao": "caixinhas"}
 
+16a. NOVO CARTÃO DE CRÉDITO (quero cadastrar um cartão, novo cartão, adicionar cartão, cadastrar cartão de crédito, tenho um novo cartão, quero adicionar meu cartão):
+{"acao": "novo_cartao"}
+
+16b. NOVA CAIXINHA / INVESTIMENTO (quero cadastrar uma caixinha, nova caixinha, adicionar investimento, criar caixinha, cadastrar reserva, novo investimento, quero registrar um investimento, tenho uma poupança pra cadastrar):
+{"acao": "nova_caixinha"}
+
 17. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, quero começar a organizar, organizar tudo agora, quero organizar tudo, bora organizar, vou organizar tudo, quero começar pelo começo, me ajuda a organizar):
 {"acao": "financas_em_dia"}
 

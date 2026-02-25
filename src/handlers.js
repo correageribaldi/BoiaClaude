@@ -1840,6 +1840,16 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     return await handleListarCaixinhas(usuarioId);
   }
 
+  // Cadastro standalone de cartão de crédito
+  if (resultado.acao === 'novo_cartao') {
+    return await iniciarCadastroCartaoStandalone(usuarioId);
+  }
+
+  // Cadastro standalone de caixinha/investimento
+  if (resultado.acao === 'nova_caixinha') {
+    return await iniciarCadastroCaixinhaStandalone(usuarioId);
+  }
+
   // Agenda - visão geral do dia/semana/mês
   if (resultado.acao === 'agenda') {
     // Detectar dia da semana no texto e sobrescrever periodo da IA
@@ -3367,6 +3377,18 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'investimentos': {
       if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
+        if (estado.standalone === 'caixinha') {
+          // Modo standalone: salvar caixinhas diretamente e encerrar
+          for (const inv of estado.investimentos || []) {
+            await db.criarCaixinha(usuarioId, inv.nome, inv.saldo, inv.meta, inv.tipo, inv.rendimento);
+          }
+          limparPontoZero(usuarioId);
+          const qtd = (estado.investimentos || []).length;
+          if (qtd === 0) return `Tudo bem! Nenhuma caixinha cadastrada.`;
+          const total = (estado.investimentos || []).reduce((s, i) => s + (i.saldo || 0), 0);
+          const lista = (estado.investimentos || []).map(i => `  💰 *${i.nome}* — ${fmt.formatarMoeda(i.saldo)}`).join('\n');
+          return `✅ ${qtd === 1 ? 'Caixinha cadastrada' : `${qtd} caixinhas cadastradas`} com sucesso!\n\n${lista}\n\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
+        }
         estado.etapa = 'cartoes';
         salvarPontoZero(usuarioId, estado);
         return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
@@ -3382,6 +3404,24 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'cartoes': {
       if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
+        if (estado.standalone === 'cartao') {
+          // Modo standalone: salvar cartões diretamente e encerrar
+          for (const c of estado.cartoes || []) {
+            const recorrenciaId = await db.criarRecorrencia(
+              usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
+              'mensal', c.diaVencimento || 1, null, null, null
+            );
+            if (c.valorFatura && c.valorFatura > 0) {
+              const dataStr = calcularDataPendente(c.diaVencimento);
+              await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataStr, 'pendente', recorrenciaId);
+            }
+          }
+          limparPontoZero(usuarioId);
+          const qtd = (estado.cartoes || []).length;
+          if (qtd === 0) return `Tudo bem! Nenhum cartão cadastrado.`;
+          const lista = (estado.cartoes || []).map(c => `  💳 *${c.nome}* — vence dia ${c.diaVencimento}${c.valorFatura > 0 ? ` | fatura ${fmt.formatarMoeda(c.valorFatura)}` : ''}`).join('\n');
+          return `✅ ${qtd === 1 ? 'Cartão cadastrado' : `${qtd} cartões cadastrados`} com sucesso!\n\n${lista}`;
+        }
         const budget = gerarOrcamentoProporcional(estado);
         estado.orcamentos = budget.orcamentos;
         return await finalizarPontoZero(usuarioId, estado);
@@ -3409,6 +3449,28 @@ async function handlePontoZero(usuarioId, texto, estado) {
       limparPontoZero(usuarioId);
       return 'Algo deu errado no fluxo 😅 Me manda *"finanças em dia"* pra começar de novo.';
   }
+}
+
+// Inicia cadastro de cartão fora do fluxo "Finanças em Dia"
+async function iniciarCadastroCartaoStandalone(usuarioId) {
+  salvarPontoZero(usuarioId, {
+    etapa: 'cartoes',
+    cartoes: [],
+    investimentos: [],
+    standalone: 'cartao',
+  });
+  return `Vamos cadastrar seu cartão de crédito! 💳\n\nMe diz o *nome ou banco* do cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Quando terminar, manda "não" pra encerrar._`;
+}
+
+// Inicia cadastro de caixinha/investimento fora do fluxo "Finanças em Dia"
+async function iniciarCadastroCaixinhaStandalone(usuarioId) {
+  salvarPontoZero(usuarioId, {
+    etapa: 'investimentos',
+    cartoes: [],
+    investimentos: [],
+    standalone: 'caixinha',
+  });
+  return `Vamos cadastrar sua caixinha de investimento! 🏦\n\nMe diz o *nome* da caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Quando terminar, manda "não" pra encerrar._`;
 }
 
 function calcularDataPendente(dia) {
