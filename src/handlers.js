@@ -2858,10 +2858,15 @@ async function handleAgenda(usuarioId, periodo) {
     msg += '\n';
   }
 
-  // Resumo de pendentes
-  if (pendentes.length > 0) {
-    const totalPendente = pendentes.reduce((acc, t) => acc + t.valor, 0);
-    msg += `⚠️ _${pendentes.length} lançamento${pendentes.length > 1 ? 's' : ''} pendente${pendentes.length > 1 ? 's' : ''} (${fmt.formatarMoeda(totalPendente)})_`;
+  // Saldo do período
+  if (receitas.length > 0 || despesas.length > 0) {
+    const totalReceitas = receitas.reduce((acc, t) => acc + t.valor, 0);
+    const totalDespesas = despesas.reduce((acc, t) => acc + t.valor, 0);
+    const saldo = totalReceitas - totalDespesas;
+    const emojiSaldo = saldo >= 0 ? '✅' : '🚨';
+    msg += `━━━━━━━━━━━━━━━\n`;
+    msg += `${emojiSaldo} *Saldo do período: ${fmt.formatarMoeda(saldo)}*`;
+    if (saldo < 0) msg += ` _(despesas superam receitas)_`;
   }
 
   return msg;
