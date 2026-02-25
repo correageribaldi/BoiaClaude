@@ -2828,6 +2828,23 @@ async function handleAgenda(usuarioId, periodo) {
 
 // ==================== FINANÇAS EM DIA ====================
 
+function gerarOrcamentoProporcional(estado) {
+  const totalReceitas = [
+    ...(estado.receitasFixas || []),
+    ...(estado.receitasVariaveis || []),
+  ].reduce((s, r) => s + r.valor, 0);
+  const totalFixas = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
+  const limiteFixas = totalReceitas * 0.50;
+  const alertaFixas = totalFixas > limiteFixas;
+  const orcamentos = [
+    { descricao: 'Variáveis',     valor: Math.round(totalReceitas * 0.20), categoria: 'Variáveis' },
+    { descricao: 'Lazer',         valor: Math.round(totalReceitas * 0.10), categoria: 'Lazer' },
+    { descricao: 'Investimentos', valor: Math.round(totalReceitas * 0.15), categoria: 'Investimentos' },
+    { descricao: 'Objetivos',     valor: Math.round(totalReceitas * 0.05), categoria: 'Objetivos' },
+  ];
+  return { totalReceitas, totalFixas, limiteFixas, alertaFixas, orcamentos };
+}
+
 async function iniciarPontoZero(usuarioId) {
   salvarPontoZero(usuarioId, {
     etapa: 'saldo',
@@ -2947,27 +2964,19 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
 
   // Item completo — adiciona à lista correta
   delete estado.itemParcial;
-  if (estado.etapa === 'despesas_dia_a_dia') {
-    const cat = mapearCategoriaOrcamento(ip.descricao);
-    estado.orcamentos.push({ descricao: ip.descricao, valor: ip.valor, categoria: cat });
-  } else {
-    const lista =
-      estado.etapa === 'receitas_fixas'     ? estado.receitasFixas    :
-      estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
-      estado.etapa === 'despesas_fixas'     ? estado.despesasFixas     :
-                                             estado.despesasVariaveis;
-    lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
-  }
+  const lista =
+    estado.etapa === 'receitas_fixas'     ? estado.receitasFixas    :
+    estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
+                                           estado.despesasFixas;
+  lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
   salvarPontoZero(usuarioId, estado);
 
   const nomeEtapa =
-    estado.etapa === 'receitas_fixas'      ? 'receita fixa'          :
-    estado.etapa === 'receitas_variaveis'  ? 'receita variável'      :
-    estado.etapa === 'despesas_fixas'      ? 'despesa'               :
-    estado.etapa === 'despesas_dia_a_dia'  ? 'orçamento'             :
-                                            'despesa';
+    estado.etapa === 'receitas_fixas'     ? 'receita fixa'     :
+    estado.etapa === 'receitas_variaveis' ? 'receita variável' :
+                                           'despesa';
   const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
-  return `${confirmacao}\n\nTem mais algum${nomeEtapa === 'orçamento' ? '' : 'a'} ${nomeEtapa} ou pode passar pra frente?`;
+  return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
 }
 
 async function handleCartaoCadastro(usuarioId, texto, estado) {
@@ -3231,9 +3240,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'cartoes': {
       if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
-        estado.etapa = 'despesas_dia_a_dia';
-        salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Última etapa: vamos definir seu *orçamento do dia a dia*.\n\nSão gastos como mercado, transporte, farmácia, lazer... Você define quanto quer gastar em cada categoria por mês e eu uso isso na sua projeção — assim você sabe de verdade quanto sobra.\n\nPode mandar tudo junto!\n_Ex: "Mercado 800, Gasolina 200, Farmácia 150, Lazer 300"_\n\n_Se não quiser definir agora, manda "não"._`;
+        const budget = gerarOrcamentoProporcional(estado);
+        estado.orcamentos = budget.orcamentos;
+        return await finalizarPontoZero(usuarioId, estado);
       }
       // Qualquer texto que não seja "não" → nome do cartão
       const nomeCartao = texto.trim();
@@ -3246,29 +3255,12 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'despesas_dia_a_dia': {
-      if (item.tipo === 'nao') {
-        return await finalizarPontoZero(usuarioId, estado);
+      // Fallback para estados salvos — gera orçamento proporcional e finaliza
+      if (estado.orcamentos.length === 0) {
+        const budget = gerarOrcamentoProporcional(estado);
+        estado.orcamentos = budget.orcamentos;
       }
-      // Coletar itens de orçamento (sem necessidade de dia)
-      const itensOrc = item.tipo === 'itens' ? item.itens : (item.tipo === 'item' && item.valor ? [item] : []);
-      if (itensOrc.length > 0) {
-        let msgOrc = '';
-        for (const it of itensOrc) {
-          const cat = mapearCategoriaOrcamento(it.descricao);
-          estado.orcamentos.push({ descricao: it.descricao, valor: it.valor, categoria: cat });
-          msgOrc += `✅ *${it.descricao}* — ${fmt.formatarMoeda(it.valor)}/mês\n`;
-        }
-        salvarPontoZero(usuarioId, estado);
-        const mais = itensOrc.length > 1 ? `${itensOrc.length} orçamentos definidos` : `Anotado`;
-        return `${mais}:\n\n${msgOrc}\nTem mais algum orçamento ou pode fechar?`;
-      }
-      // Item parcial sem valor
-      if (item.tipo === 'item' && item.descricao && !item.valor) {
-        estado.itemParcial = { descricao: item.descricao, valor: null, dia: null, categoria: null, esperandoCampo: 'valor' };
-        salvarPontoZero(usuarioId, estado);
-        return perguntarCampoFaltante('valor', item.descricao);
-      }
-      return 'Não entendi 😅 Me diz a categoria e o valor mensal.\n_Ex: "Mercado 800" ou "Gasolina 200"_\n_Ou manda "não" pra fechar._';
+      return await finalizarPontoZero(usuarioId, estado);
     }
 
     default:
@@ -3469,17 +3461,30 @@ async function finalizarPontoZero(usuarioId, estado) {
     msg += '\n';
   }
 
-  // Orçamentos do dia a dia
-  const orcamentos = estado.orcamentos || [];
-  const totalOrcamento = orcamentos.reduce((s, o) => s + o.valor, 0);
+  // Orçamento proporcional (regra 50/20/10/15/5)
+  const totalReceitas = [...(estado.receitasFixas || []), ...(estado.receitasVariaveis || [])].reduce((s, r) => s + r.valor, 0);
+  const totalFixasReal = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
+  const limiteFixas = Math.round(totalReceitas * 0.50);
+  const alertaFixas = totalFixasReal > limiteFixas;
 
-  if (orcamentos.length > 0) {
-    msg += `📊 *Orçamento do dia a dia (-${fmt.formatarMoeda(totalOrcamento)}):*\n`;
-    for (const o of orcamentos) {
-      msg += `  🟡 ${o.descricao} — ${fmt.formatarMoeda(o.valor)}/mês\n`;
+  const linhasOrcamento = [
+    { label: 'Fixas',         pct: 50, valor: limiteFixas,                      real: totalFixasReal, check: true },
+    { label: 'Variáveis',     pct: 20, valor: Math.round(totalReceitas * 0.20), real: null,           check: false },
+    { label: 'Lazer',         pct: 10, valor: Math.round(totalReceitas * 0.10), real: null,           check: false },
+    { label: 'Investimentos', pct: 15, valor: Math.round(totalReceitas * 0.15), real: null,           check: false },
+    { label: 'Objetivos',     pct:  5, valor: Math.round(totalReceitas * 0.05), real: null,           check: false },
+  ];
+
+  msg += `📊 *Orçamento mensal sugerido* _(baseado na sua renda de ${fmt.formatarMoeda(totalReceitas)})_\n\n`;
+  for (const l of linhasOrcamento) {
+    const emojiLinha = l.check && alertaFixas ? '⚠️' : '🟡';
+    msg += `${emojiLinha} *${l.label}* (${l.pct}%) — ${fmt.formatarMoeda(l.valor)}`;
+    if (l.check && alertaFixas) {
+      msg += `\n   _⚠️ Suas fixas atuais (${fmt.formatarMoeda(l.real)}) já ultrapassam esse limite!_`;
     }
     msg += '\n';
   }
+  msg += '\n';
 
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   const emojiPrev = previsao >= 0 ? '✅' : '🚨';
@@ -3487,23 +3492,11 @@ async function finalizarPontoZero(usuarioId, estado) {
   if (totalInvestido > 0) {
     msg += `💼 *Patrimônio total:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)} _(saldo + investimentos)_\n`;
   }
-
-  if (totalOrcamento > 0) {
-    const livre = previsao - totalOrcamento;
-    const emojiLivre = livre >= 0 ? '✅' : '🚨';
-    msg += `${emojiLivre} *Livre após orçamento:* ${fmt.formatarMoeda(livre)}\n\n`;
-    if (livre >= 0) {
-      msg += `Depois de pagar tudo e cobrir o orçamento do dia a dia, sobram *${fmt.formatarMoeda(livre)}*! 💪\n`;
-    } else {
-      msg += `⚠️ Atenção! O orçamento do dia a dia ultrapassa o que sobra. Pode precisar ajustar.\n`;
-    }
+  msg += '\n';
+  if (previsao >= 0) {
+    msg += `Sobram *${fmt.formatarMoeda(previsao)}* até o fim do mês! 💪\n`;
   } else {
-    msg += '\n';
-    if (previsao >= 0) {
-      msg += `Sobram *${fmt.formatarMoeda(previsao)}* até o fim do mês! 💪\n`;
-    } else {
-      msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsao))}* pra fechar o mês no azul.\n`;
-    }
+    msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsao))}* pra fechar o mês no azul.\n`;
   }
 
   msg += `\n_Tudo registrado! Agora é só ir usando o Cronos no dia a dia._ 🚀\n`;
