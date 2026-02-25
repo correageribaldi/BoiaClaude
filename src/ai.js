@@ -944,4 +944,35 @@ async function classificarCategoriaBudget(categoria) {
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget };
+// Classificação binária: o usuário está confirmando que fez um pagamento?
+// Usado como fallback quando palavras-chave não batem — suporta linguagem natural livre.
+async function interpretarConfirmacaoPagamento(texto) {
+  if (!process.env.OPENAI_API_KEY) return false;
+
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `O usuário acabou de receber um lembrete de pagamento de uma conta/despesa.
+A resposta dele indica que ele já fez o pagamento, a transferência ou confirmou o recebimento?
+Responda APENAS "sim" ou "não".
+Exemplos de confirmação: "já fiz", "tá feito", "fiz o pix", "mandei", "quitei", "liquidei", "transferi", "ta pago", "pode dar baixa", "deu certo", "efetuei", "já resolvi", "ok fiz", "acabei de pagar".
+Exemplos que NÃO são confirmação: "quanto é?", "como pago?", "preciso pagar hoje?", "ok obrigado", "entendi".`,
+        },
+        { role: 'user', content: texto },
+      ],
+      temperature: 0.0,
+      max_tokens: 5,
+    });
+
+    const resposta = response.choices[0]?.message?.content?.toLowerCase().trim() || '';
+    return resposta.startsWith('sim');
+  } catch (err) {
+    console.error('[AI] Erro ao interpretar confirmação de pagamento:', err.message);
+    return false;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento };

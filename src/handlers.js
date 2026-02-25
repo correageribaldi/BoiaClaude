@@ -1,6 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -1096,14 +1096,22 @@ function normalizarTexto(lower) {
 
 // Fallback: quando não há estado em memória, confirma pagamento via lembretes_enviados do dia
 async function tentarConfirmacaoPorDB(usuarioId, lower) {
-  const normalizado = normalizarTexto(lower);
-  const confirmou = PALAVRAS_CONFIRMACAO_FORTE.some(p =>
-    normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
-  );
-  if (!confirmou) return null;
-
+  // Buscar pendentes primeiro — se não houver, não vale nem verificar intent
   const pendentes = await db.buscarPendentesLembradosHoje(usuarioId);
   if (pendentes.length === 0) return null;
+
+  // Fast path: palavras fortes e inequívocas de pagamento
+  const normalizado = normalizarTexto(lower);
+  let confirmou = PALAVRAS_CONFIRMACAO_FORTE.some(p =>
+    normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
+  );
+
+  // Slow path: IA interpreta linguagem natural ("já fiz", "mandei o pix", "quitei", etc.)
+  if (!confirmou) {
+    confirmou = await interpretarConfirmacaoPagamento(lower);
+  }
+
+  if (!confirmou) return null;
 
   const pagas = [];
   for (const t of pendentes) {
@@ -1128,14 +1136,19 @@ async function tentarConfirmacaoPorDB(usuarioId, lower) {
 async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
   const normalizado = normalizarTexto(lower);
 
-  const confirmou = PALAVRAS_PAGAMENTO_CONFIRMADO.some(p =>
+  // Fast path: palavras-chave conhecidas
+  let confirmou = PALAVRAS_PAGAMENTO_CONFIRMADO.some(p =>
     normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
   );
 
+  // Slow path: IA interpreta linguagem natural ("já fiz", "mandei o pix", "quitei", etc.)
   if (!confirmou) {
-    // Usuário não confirmou — limpar estado para não bloquear fluxo normal
+    confirmou = await interpretarConfirmacaoPagamento(lower);
+  }
+
+  if (!confirmou) {
+    // Não é confirmação de pagamento — limpar estado e processar como mensagem normal
     limparConfirmacaoLembrete(usuarioId);
-    // Processar como mensagem normal
     return null;
   }
 
