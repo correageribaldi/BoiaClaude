@@ -759,7 +759,7 @@ async function desativarRecorrentesExpirados() {
   );
 }
 
-// Listar lembretes recorrentes ativos de um usuário
+// Listar lembretes recorrentes ativos de um usuário (exclui os de sistema pelo padrão da mensagem)
 async function listarLembretesRecorrentes(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -767,19 +767,28 @@ async function listarLembretesRecorrentes(usuarioId) {
             dia_semana, dia_mes, TO_CHAR(data_fim, 'DD/MM/YYYY') as data_fim
      FROM lembretes_recorrentes
      WHERE usuario_id = $1 AND ativo = TRUE AND oculto = FALSE
+       AND mensagem NOT LIKE '💸 Pagar:%'
+       AND mensagem NOT LIKE '💰 Receber:%'
+       AND mensagem NOT LIKE '💳 Vencimento fatura%'
      ORDER BY horario ASC`,
     [uid]
   );
   return result.rows;
 }
 
-// Listar lembretes recorrentes de sistema (oculto=TRUE) — usados para projetar meses futuros na agenda
+// Listar lembretes recorrentes de sistema — usados para projetar meses futuros na agenda
+// Detectados pelo padrão da mensagem (independe do campo oculto)
 async function listarLembretesRecorrentesSistema(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT id, mensagem, frequencia, dia_semana, dia_mes
      FROM lembretes_recorrentes
-     WHERE usuario_id = $1 AND ativo = TRUE AND oculto = TRUE
+     WHERE usuario_id = $1 AND ativo = TRUE
+       AND (
+         mensagem LIKE '💸 Pagar:%'
+         OR mensagem LIKE '💰 Receber:%'
+         OR mensagem LIKE '💳 Vencimento fatura%'
+       )
      ORDER BY dia_mes ASC NULLS LAST`,
     [uid]
   );

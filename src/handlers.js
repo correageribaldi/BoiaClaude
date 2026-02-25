@@ -2822,16 +2822,16 @@ async function handleAgenda(usuarioId, periodo) {
     db.consultarTransacoes(usuarioId, { dataInicio, dataFim, limite: 50 }),
     db.buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim),
     db.listarLembretesRecorrentes(usuarioId),
-    isPeriodoFuturo ? db.listarLembretesRecorrentesSistema(usuarioId) : Promise.resolve([]),
+    db.listarLembretesRecorrentesSistema(usuarioId),
   ]);
 
   // Filtrar recorrentes que disparam no período
   const recorrentesDoPeriodo = recorrentes.filter(r => recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj));
 
-  // Para meses futuros: projetar transações a partir dos lembretes de sistema
+  // Projetar transações a partir dos lembretes de sistema quando não há transações reais
   let receitasProjetadas = [];
   let despesasProjetadas = [];
-  if (isPeriodoFuturo && sistemaRecorrentes.length > 0) {
+  if (sistemaRecorrentes.length > 0) {
     for (const r of sistemaRecorrentes) {
       if (!recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj)) continue;
       const parsed = parsearLembreteOculto(r.mensagem);
