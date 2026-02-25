@@ -2788,22 +2788,63 @@ function recorrenteDisparaNoPerodo(rec, dataInicioObj, dataFimObj) {
   return false;
 }
 
+// Parseia mensagem de lembrete oculto (sistema) para extrair tipo/descricao/valor
+function parsearLembreteOculto(mensagem) {
+  const pagMatch = mensagem.match(/💸 Pagar: (.+?) - R\$ ([\d.,]+)/);
+  if (pagMatch) {
+    const valor = parseFloat(pagMatch[2].replace(/\./g, '').replace(',', '.'));
+    return { tipo: 'despesa', descricao: pagMatch[1], valor };
+  }
+  const recMatch = mensagem.match(/💰 Receber: (.+?) - R\$ ([\d.,]+)/);
+  if (recMatch) {
+    const valor = parseFloat(recMatch[2].replace(/\./g, '').replace(',', '.'));
+    return { tipo: 'receita', descricao: recMatch[1], valor };
+  }
+  const fatMatch = mensagem.match(/💳 Vencimento fatura (.+?) - R\$ ([\d.,]+)/);
+  if (fatMatch) {
+    const valor = parseFloat(fatMatch[2].replace(/\./g, '').replace(',', '.'));
+    return { tipo: 'despesa', descricao: `Fatura ${fatMatch[1]}`, valor };
+  }
+  return null;
+}
+
 async function handleAgenda(usuarioId, periodo) {
   const { dataInicio, dataFim, titulo, dataInicioObj, dataFimObj } = calcularPeriodo(periodo);
 
+  // Verificar se o período é um mês futuro (além do mês atual)
+  const hoje = new Date();
+  const inicioMesAtual = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  const isPeriodoFuturo = dataInicioObj >= new Date(inicioMesAtual.getFullYear(), inicioMesAtual.getMonth() + 1, 1);
+
   // Buscar tudo em paralelo
-  const [transacoes, lembretes, recorrentes] = await Promise.all([
+  const [transacoes, lembretes, recorrentes, sistemaRecorrentes] = await Promise.all([
     db.consultarTransacoes(usuarioId, { dataInicio, dataFim, limite: 50 }),
     db.buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim),
     db.listarLembretesRecorrentes(usuarioId),
+    isPeriodoFuturo ? db.listarLembretesRecorrentesSistema(usuarioId) : Promise.resolve([]),
   ]);
 
   // Filtrar recorrentes que disparam no período
   const recorrentesDoPeriodo = recorrentes.filter(r => recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj));
 
-  // Separar transações
-  const receitas = transacoes.filter(t => t.tipo === 'receita');
-  const despesas = transacoes.filter(t => t.tipo === 'despesa');
+  // Para meses futuros: projetar transações a partir dos lembretes de sistema
+  let receitasProjetadas = [];
+  let despesasProjetadas = [];
+  if (isPeriodoFuturo && sistemaRecorrentes.length > 0) {
+    for (const r of sistemaRecorrentes) {
+      if (!recorrenteDisparaNoPerodo(r, dataInicioObj, dataFimObj)) continue;
+      const parsed = parsearLembreteOculto(r.mensagem);
+      if (!parsed) continue;
+      if (parsed.tipo === 'receita') receitasProjetadas.push(parsed);
+      else despesasProjetadas.push(parsed);
+    }
+  }
+
+  // Separar transações reais
+  const receitasReais = transacoes.filter(t => t.tipo === 'receita');
+  const despesasReais = transacoes.filter(t => t.tipo === 'despesa');
+  const receitas = receitasReais.length > 0 ? receitasReais : receitasProjetadas.map(p => ({ ...p, status: 'projetado' }));
+  const despesas = despesasReais.length > 0 ? despesasReais : despesasProjetadas.map(p => ({ ...p, status: 'projetado' }));
   const pendentes = transacoes.filter(t => t.status === 'pendente');
 
   const temAlgo = receitas.length > 0 || despesas.length > 0 || lembretes.length > 0 || recorrentesDoPeriodo.length > 0;
@@ -2812,15 +2853,18 @@ async function handleAgenda(usuarioId, periodo) {
     return `📅 *Sua agenda para ${titulo}*\n\nVocê não tem nada agendado para esse período! 😎\n\n_Dica: registre despesas, receitas ou crie lembretes para organizar seu dia._`;
   }
 
-  let msg = `📅 *Sua agenda para ${titulo}*\n\n`;
+  const notaProjecao = isPeriodoFuturo && (receitasProjetadas.length > 0 || despesasProjetadas.length > 0) ? `\n_🔄 = previsto com base nas suas contas fixas_\n` : '';
+  let msg = `📅 *Sua agenda para ${titulo}*${notaProjecao}\n\n`;
 
   // Receitas do período
   if (receitas.length > 0) {
     const totalReceitas = receitas.reduce((acc, t) => acc + t.valor, 0);
-    msg += `💰 *Receitas (${fmt.formatarMoeda(totalReceitas)}):*\n`;
+    const labelR = isPeriodoFuturo && receitasReais.length === 0 ? `Receitas previstas (${fmt.formatarMoeda(totalReceitas)})` : `Receitas (${fmt.formatarMoeda(totalReceitas)})`;
+    msg += `💰 *${labelR}:*\n`;
     for (const t of receitas) {
-      const status = t.status === 'pendente' ? ' ⏳' : ' ✅';
-      msg += `  🟢 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_ (${t.categoria})${status}\n`;
+      const status = t.status === 'projetado' ? ' 🔄' : t.status === 'pendente' ? ' ⏳' : ' ✅';
+      const cat = t.categoria ? ` (${t.categoria})` : '';
+      msg += `  🟢 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_${cat}${status}\n`;
     }
     msg += '\n';
   }
@@ -2828,10 +2872,12 @@ async function handleAgenda(usuarioId, periodo) {
   // Despesas do período
   if (despesas.length > 0) {
     const totalDespesas = despesas.reduce((acc, t) => acc + t.valor, 0);
-    msg += `💸 *Despesas (${fmt.formatarMoeda(totalDespesas)}):*\n`;
+    const labelD = isPeriodoFuturo && despesasReais.length === 0 ? `Despesas previstas (${fmt.formatarMoeda(totalDespesas)})` : `Despesas (${fmt.formatarMoeda(totalDespesas)})`;
+    msg += `💸 *${labelD}:*\n`;
     for (const t of despesas) {
-      const status = t.status === 'pendente' ? ' ⏳' : ' ✅';
-      msg += `  🔴 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_ (${t.categoria})${status}\n`;
+      const status = t.status === 'projetado' ? ' 🔄' : t.status === 'pendente' ? ' ⏳' : ' ✅';
+      const cat = t.categoria ? ` (${t.categoria})` : '';
+      msg += `  🔴 ${fmt.formatarMoeda(t.valor)} - _${t.descricao}_${cat}${status}\n`;
     }
     msg += '\n';
   }

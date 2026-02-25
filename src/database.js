@@ -761,6 +761,19 @@ async function listarLembretesRecorrentes(usuarioId) {
   return result.rows;
 }
 
+// Listar lembretes recorrentes de sistema (oculto=TRUE) — usados para projetar meses futuros na agenda
+async function listarLembretesRecorrentesSistema(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, mensagem, frequencia, dia_semana, dia_mes
+     FROM lembretes_recorrentes
+     WHERE usuario_id = $1 AND ativo = TRUE AND oculto = TRUE
+     ORDER BY dia_mes ASC NULLS LAST`,
+    [uid]
+  );
+  return result.rows;
+}
+
 // Cancelar lembrete recorrente
 async function cancelarLembreteRecorrente(usuarioId, lembreteId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
@@ -1167,6 +1180,7 @@ module.exports = {
   marcarRecorrenteEnviado,
   desativarRecorrentesExpirados,
   listarLembretesRecorrentes,
+  listarLembretesRecorrentesSistema,
   cancelarLembreteRecorrente,
   verificarUsuarioNovo,
   registrarUsuario,
