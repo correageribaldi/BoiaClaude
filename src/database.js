@@ -855,6 +855,22 @@ async function registrarLembreteEnviado(transacaoId, usuarioId, rodada) {
   );
 }
 
+// Buscar transações pendentes que foram lembradas hoje (fallback para confirmação sem estado em memória)
+async function buscarPendentesLembradosHoje(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT DISTINCT t.id, t.tipo, t.valor::float, t.descricao
+     FROM transacoes t
+     JOIN lembretes_enviados le ON le.transacao_id = t.id
+     WHERE t.usuario_id = $1
+       AND t.status = 'pendente'
+       AND le.data_envio = CURRENT_DATE
+     ORDER BY t.id ASC`,
+    [uid]
+  );
+  return result.rows;
+}
+
 // Verificar se a transação já foi paga (para parar lembretes futuros)
 async function transacaoAindaPendente(transacaoId) {
   const result = await pool.query(
@@ -1392,6 +1408,7 @@ module.exports = {
   listarPendentes,
   calcularSaldos,
   buscarPendentesParaLembrete,
+  buscarPendentesLembradosHoje,
   registrarLembreteEnviado,
   transacaoAindaPendente,
   criarLembreteGeral,

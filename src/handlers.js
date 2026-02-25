@@ -1078,13 +1078,55 @@ const PALAVRAS_PAGAMENTO_CONFIRMADO = [
   'acabei de pagar', 'acabei de receber',
 ];
 
-async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
-  const normalizado = lower
+// Subset de palavras inequivocamente de pagamento — usadas para fallback via DB (sem estado em memória)
+const PALAVRAS_CONFIRMACAO_FORTE = [
+  'paguei', 'ja paguei', 'já paguei', 'pago', 'já pago', 'ja pago',
+  'sim paguei', 'acabei de pagar', 'acabei de receber',
+  'recebi', 'já recebi', 'ja recebi', 'recebido',
+];
+
+function normalizarTexto(lower) {
+  return lower
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Fallback: quando não há estado em memória, confirma pagamento via lembretes_enviados do dia
+async function tentarConfirmacaoPorDB(usuarioId, lower) {
+  const normalizado = normalizarTexto(lower);
+  const confirmou = PALAVRAS_CONFIRMACAO_FORTE.some(p =>
+    normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
+  );
+  if (!confirmou) return null;
+
+  const pendentes = await db.buscarPendentesLembradosHoje(usuarioId);
+  if (pendentes.length === 0) return null;
+
+  const pagas = [];
+  for (const t of pendentes) {
+    const result = await db.liquidarTransacaoPorId(t.id);
+    if (result) pagas.push(result);
+  }
+
+  if (pagas.length === 0) {
+    return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
+  }
+
+  if (pagas.length === 1) {
+    const t = pagas[0];
+    const acao = t.tipo === 'despesa' ? 'paga' : 'recebida';
+    return `✅ *${t.descricao}* marcada como ${acao}! Ótimo! 🎉`;
+  }
+
+  const lista = pagas.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
+  return `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo! 🎉`;
+}
+
+async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
+  const normalizado = normalizarTexto(lower);
 
   const confirmou = PALAVRAS_PAGAMENTO_CONFIRMADO.some(p =>
     normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
@@ -1142,6 +1184,10 @@ async function handleMessage(usuarioId, texto) {
     const resposta = await handleConfirmacaoLembrete(usuarioId, lower, confLembrete);
     if (resposta !== null) return resposta;
     // resposta null = não confirmou, seguir fluxo normal
+  } else {
+    // Sem estado em memória (bot reiniciou ou estado foi limpo) — tentar confirmação via DB
+    const resposta = await tentarConfirmacaoPorDB(usuarioId, lower);
+    if (resposta !== null) return resposta;
   }
 
   // Verificar se há transação com dados incompletos
