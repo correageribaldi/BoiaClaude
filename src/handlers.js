@@ -1313,6 +1313,14 @@ async function handleMessage(usuarioId, texto) {
     return await pagamento.consultarPlano(usuarioId);
   }
 
+  // Comando: escolher plano mensal ou anual
+  if (lower === 'mensal' || lower === 'plano mensal' || lower === 'assinar mensal') {
+    return await pagamento.gerarLinkPlano(usuarioId, 'mensal');
+  }
+  if (lower === 'anual' || lower === 'plano anual' || lower === 'assinar anual') {
+    return await pagamento.gerarLinkPlano(usuarioId, 'anual');
+  }
+
   // Comando admin: ativar <numero> — ativa assinatura manualmente
   if (lower.startsWith('ativar ')) {
     const admins = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);

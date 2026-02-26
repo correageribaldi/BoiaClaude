@@ -2,9 +2,16 @@ const https = require('https');
 const cron = require('node-cron');
 const db = require('./database');
 
-const PRECO_CENTS = 1990; // R$ 19,90
-const DIAS_TRIAL = 0;    // 0 = cobrar imediatamente (teste); produção: 30
-const DIAS_GRACA = 0;    // 0 = sem carência; produção: sugerido 5
+const PRECO_CENTS_MENSAL = 1990;  // R$ 19,90/mês
+const PRECO_CENTS_ANUAL  = 17690; // R$ 176,90/ano (≈26% de desconto)
+const DIAS_TRIAL = 7;   // 7 dias grátis
+const DIAS_GRACA = 3;   // 3 dias de carência após expirar
+
+// Determina quantos dias ativar com base no order_nsu (contém '_anual_' para plano anual)
+function diasDoPlano(orderNsu) {
+  if (orderNsu && orderNsu.includes('_anual_')) return 365;
+  return 30;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +52,7 @@ function httpsPost(url, body) {
 // ─── Link de pagamento ────────────────────────────────────────────────────────
 
 // Retorna link existente se criado nas últimas 24h, senão cria um novo
-async function obterLinkPagamento(usuarioId, assinatura) {
+async function obterLinkPagamento(usuarioId, assinatura, plano = 'mensal') {
   const handle = process.env.INFINITYPAY_HANDLE;
   const webhookBase = process.env.WEBHOOK_BASE_URL;
 
@@ -53,20 +60,27 @@ async function obterLinkPagamento(usuarioId, assinatura) {
     return null; // InfinityPay não configurado
   }
 
-  // Reusar link criado nas últimas 24h
+  // Reusar link criado nas últimas 24h (só se for do mesmo plano)
   if (assinatura?.link_pagamento && assinatura?.link_criado_em) {
     const idadeHoras = (Date.now() - new Date(assinatura.link_criado_em).getTime()) / (1000 * 60 * 60);
-    if (idadeHoras < 24) {
+    const mesmoPlano = plano === 'anual'
+      ? (assinatura.order_nsu || '').includes('_anual_')
+      : !(assinatura.order_nsu || '').includes('_anual_');
+    if (idadeHoras < 24 && mesmoPlano) {
       return assinatura.link_pagamento;
     }
   }
 
-  // Criar novo link
-  const nsu = `cronos_${usuarioId.replace(/\D/g, '')}_${Date.now()}`;
+  const preco = plano === 'anual' ? PRECO_CENTS_ANUAL : PRECO_CENTS_MENSAL;
+  const descricao = plano === 'anual'
+    ? 'Cronos Assistente - Assinatura Anual'
+    : 'Cronos Assistente - Assinatura Mensal';
+  const nsu = `cronos_${plano}_${usuarioId.replace(/\D/g, '')}_${Date.now()}`;
+
   try {
     const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/links', {
       handle,
-      items: [{ quantity: 1, price: PRECO_CENTS, description: 'Cronos Assistente - Assinatura mensal' }],
+      items: [{ quantity: 1, price: preco, description: descricao }],
       order_nsu: nsu,
       webhook_url:  `${webhookBase}/webhook/pagamento`,
       redirect_url: `${webhookBase}/pagamento/sucesso`,
@@ -75,7 +89,7 @@ async function obterLinkPagamento(usuarioId, assinatura) {
     const link = res.url || res.link || res.checkout_url || null;
     if (link) {
       await db.salvarLinkAssinatura(usuarioId, nsu, link);
-      console.log(`[PAGAMENTO] 🔗 Link gerado para ${usuarioId}: nsu=${nsu} url=${link}`);
+      console.log(`[PAGAMENTO] 🔗 Link ${plano} gerado para ${usuarioId}: nsu=${nsu} url=${link}`);
     } else {
       console.error('[PAGAMENTO] API não retornou URL. Resposta:', JSON.stringify(res));
     }
@@ -83,6 +97,49 @@ async function obterLinkPagamento(usuarioId, assinatura) {
   } catch (err) {
     console.error('[PAGAMENTO] Erro ao criar link InfinityPay:', err.message);
     return null;
+  }
+}
+
+// Gera link de pagamento para o plano escolhido e retorna mensagem formatada para o usuário
+async function gerarLinkPlano(usuarioId, plano = 'mensal') {
+  const handle = process.env.INFINITYPAY_HANDLE;
+  const webhookBase = process.env.WEBHOOK_BASE_URL;
+
+  if (!handle || !webhookBase) {
+    return `❌ Sistema de pagamento não configurado. Entre em contato com o suporte.`;
+  }
+
+  const preco = plano === 'anual' ? PRECO_CENTS_ANUAL : PRECO_CENTS_MENSAL;
+  const descricao = plano === 'anual'
+    ? 'Cronos Assistente - Assinatura Anual'
+    : 'Cronos Assistente - Assinatura Mensal';
+  const nsu = `cronos_${plano}_${usuarioId.replace(/\D/g, '')}_${Date.now()}`;
+
+  try {
+    const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/links', {
+      handle,
+      items: [{ quantity: 1, price: preco, description: descricao }],
+      order_nsu: nsu,
+      webhook_url:  `${webhookBase}/webhook/pagamento`,
+      redirect_url: `${webhookBase}/pagamento/sucesso`,
+    });
+
+    const link = res.url || res.link || res.checkout_url || null;
+    if (!link) {
+      console.error('[PAGAMENTO] API não retornou URL para plano', plano, ':', JSON.stringify(res));
+      return `❌ Erro ao gerar link. Tente novamente em instantes.`;
+    }
+
+    await db.salvarLinkAssinatura(usuarioId, nsu, link);
+    console.log(`[PAGAMENTO] 🔗 Link ${plano} gerado para ${usuarioId}: nsu=${nsu} url=${link}`);
+
+    const precoStr = plano === 'anual' ? 'R$ 176,90/ano' : 'R$ 19,90/mês';
+    const emoji = plano === 'anual' ? '💎' : '💳';
+    return `${emoji} *Plano ${plano === 'anual' ? 'Anual' : 'Mensal'} — ${precoStr}*\n\n` +
+      `👉 ${link}\n\n_Após o pagamento, seu acesso é liberado automaticamente! ✅_`;
+  } catch (err) {
+    console.error('[PAGAMENTO] Erro ao criar link:', err.message);
+    return `❌ Erro ao gerar link. Tente novamente.`;
   }
 }
 
@@ -110,7 +167,8 @@ async function verificarAcesso(usuarioId) {
       assinatura.order_nsu, assinatura.transaction_nsu, assinatura.invoice_slug
     );
     if (foiPago) {
-      const pagoAteStr = await ativarManualmente(usuarioId);
+      const dias = diasDoPlano(assinatura.order_nsu);
+      const pagoAteStr = await ativarManualmente(usuarioId, dias);
       console.log(`[PAGAMENTO] ✅ Ativado via payment_check fallback: ${usuarioId}`);
       return { permitido: true, status: 'ativo', aviso: `✅ Pagamento confirmado! Sua assinatura está ativa até ${pagoAteStr.split('-').reverse().join('/')}.` };
     }
@@ -127,10 +185,11 @@ async function verificarAcesso(usuarioId) {
       let aviso = null;
 
       if (diasRestantes <= 3 && assinatura.avisos_enviados < 2) {
-        const link = await obterLinkPagamento(usuarioId, assinatura);
-        aviso = `⏰ Seu período gratuito termina em *${diasRestantes} dia(s)*!\n\n` +
-          `Assine por apenas *R$ 19,90/mês* para continuar usando o Cronos sem interrupção.` +
-          (link ? `\n\n👉 ${link}` : '');
+        aviso = `⏰ Seu período de teste termina em *${diasRestantes} dia(s)*!\n\n` +
+          `Escolha seu plano para continuar usando o Cronos:\n\n` +
+          `💳 *Mensal — R$ 19,90/mês*\n` +
+          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `_Responda *mensal* ou *anual* para receber seu link de pagamento._`;
         await db.incrementarAvisosAssinatura(usuarioId);
       }
 
@@ -147,13 +206,14 @@ async function verificarAcesso(usuarioId) {
         assinatura = { ...assinatura, status: 'graca' };
       }
       const diasGraca = Math.ceil((fimGraca - agora) / (1000 * 60 * 60 * 24));
-      const link = await obterLinkPagamento(usuarioId, assinatura);
       return {
         permitido: true,
         status: 'graca',
-        aviso: `⚠️ Seu período gratuito acabou! Você tem *${diasGraca} dia(s) de carência*.\n\n` +
-          `Assine por *R$ 19,90/mês* para não perder o acesso.` +
-          (link ? `\n\n👉 ${link}` : ''),
+        aviso: `⚠️ Seu período de teste acabou! Você tem *${diasGraca} dia(s) de carência*.\n\n` +
+          `Escolha seu plano para não perder o acesso:\n\n` +
+          `💳 *Mensal — R$ 19,90/mês*\n` +
+          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `_Responda *mensal* ou *anual* para receber seu link._`,
       };
     }
 
@@ -170,9 +230,11 @@ async function verificarAcesso(usuarioId) {
       let aviso = null;
 
       if (diasRestantes <= 3 && assinatura.avisos_enviados < 2) {
-        const link = await obterLinkPagamento(usuarioId, assinatura);
-        aviso = `🔔 Sua assinatura vence em *${diasRestantes} dia(s)*. Renove para continuar:` +
-          (link ? `\n\n👉 ${link}` : '');
+        aviso = `🔔 Sua assinatura vence em *${diasRestantes} dia(s)*!\n\n` +
+          `Renove escolhendo seu plano:\n\n` +
+          `💳 *Mensal — R$ 19,90/mês*\n` +
+          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `_Responda *mensal* ou *anual* para receber seu link de pagamento._`;
         await db.incrementarAvisosAssinatura(usuarioId);
       }
 
@@ -189,13 +251,14 @@ async function verificarAcesso(usuarioId) {
         assinatura = { ...assinatura, status: 'graca' };
       }
       const diasGraca = Math.ceil((fimGraca - agora) / (1000 * 60 * 60 * 24));
-      const link = await obterLinkPagamento(usuarioId, assinatura);
       return {
         permitido: true,
         status: 'graca',
         aviso: `⚠️ Sua assinatura venceu! Você tem *${diasGraca} dia(s) de carência*.\n\n` +
-          `Renove por *R$ 19,90/mês* para não perder o acesso.` +
-          (link ? `\n\n👉 ${link}` : ''),
+          `Renove escolhendo seu plano:\n\n` +
+          `💳 *Mensal — R$ 19,90/mês*\n` +
+          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `_Responda *mensal* ou *anual* para receber seu link._`,
       };
     }
 
@@ -213,12 +276,12 @@ async function verificarAcesso(usuarioId) {
 
     if (agora <= fimGraca) {
       const diasGraca = Math.ceil((fimGraca - agora) / (1000 * 60 * 60 * 24));
-      const link = await obterLinkPagamento(usuarioId, assinatura);
       return {
         permitido: true,
         status: 'graca',
-        aviso: `⚠️ *${diasGraca} dia(s) de carência restante(s)*. Assine para não perder o acesso.` +
-          (link ? `\n\n👉 ${link}` : ''),
+        aviso: `⚠️ *${diasGraca} dia(s) de carência restante(s).*\n\n` +
+          `💳 *Mensal — R$ 19,90/mês* | 💎 *Anual — R$ 176,90/ano*\n\n` +
+          `_Responda *mensal* ou *anual* para receber seu link._`,
       };
     }
 
@@ -233,26 +296,23 @@ async function verificarAcesso(usuarioId) {
 // ─── Mensagens ────────────────────────────────────────────────────────────────
 
 async function gerarMensagemBloqueio(usuarioId, nome) {
-  const assinatura = await db.buscarAssinatura(usuarioId);
-  const link = await obterLinkPagamento(usuarioId, assinatura);
   const saudacao = nome ? `Ei, ${nome.split(' ')[0]}! ` : '';
 
   return `🔒 ${saudacao}Seu acesso ao *Cronos* está suspenso.\n\n` +
-    `Para continuar usando o assistente financeiro, assine por apenas *R$ 19,90/mês*.\n` +
-    (link ? `\n👉 ${link}\n` : '') +
-    `\n_Após o pagamento, seu acesso é liberado automaticamente!_ ✅`;
+    `Escolha um plano para continuar:\n\n` +
+    `💳 *Mensal — R$ 19,90/mês*\n` +
+    `💎 *Anual — R$ 176,90/ano* _(apenas R$ 14,74/mês — economize 26%!)_\n\n` +
+    `_Responda *mensal* ou *anual* para receber seu link de pagamento._`;
 }
 
 function msgTrialBemVindo(nome) {
   const primeiroNome = nome ? nome.split(' ')[0] : null;
   const saudacao = primeiroNome ? `, ${primeiroNome}` : '';
-  if (DIAS_TRIAL === 0) {
-    return `🎉 *Bem-vindo${saudacao} ao Cronos!*\n\n` +
-      `Para usar o assistente financeiro, assine por apenas *R$ 19,90/mês*.\n\n` +
-      `_Assim que o pagamento for confirmado, seu acesso é liberado automaticamente! 🚀_`;
-  }
   return `🎉 *Bem-vindo${saudacao} ao Cronos!*\n\n` +
-    `Você tem *${DIAS_TRIAL} dias grátis* para experimentar tudo. Após esse período, a assinatura é de apenas *R$ 19,90/mês*.\n\n` +
+    `Você tem *${DIAS_TRIAL} dias grátis* para experimentar tudo!\n\n` +
+    `Após o período de teste, escolha seu plano:\n` +
+    `💳 *Mensal — R$ 19,90/mês*\n` +
+    `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
     `_Qualquer dúvida é só me chamar. Bora cuidar das finanças! 🚀_`;
 }
 
@@ -318,12 +378,12 @@ async function consultarPlano(usuarioId) {
 
 // ─── Ativar assinatura manualmente (admin) ───────────────────────────────────
 
-async function ativarManualmente(usuarioId) {
+async function ativarManualmente(usuarioId, dias = 30) {
   const pagoAte = new Date();
-  pagoAte.setDate(pagoAte.getDate() + 30);
+  pagoAte.setDate(pagoAte.getDate() + dias);
   const pagoAteStr = pagoAte.toISOString().slice(0, 10);
   await db.ativarAssinatura(usuarioId, pagoAteStr);
-  console.log(`[PAGAMENTO] ✅ Ativação manual: ${usuarioId} | pago_ate=${pagoAteStr}`);
+  console.log(`[PAGAMENTO] ✅ Ativação manual: ${usuarioId} | dias=${dias} | pago_ate=${pagoAteStr}`);
   return pagoAteStr;
 }
 
@@ -392,12 +452,13 @@ async function processarWebhook(payload) {
       console.log(`[PAGAMENTO] Transação salva: transaction_nsu=${transaction_nsu} slug=${invoice_slug}`);
     }
 
+    const dias = diasDoPlano(order_nsu);
     const pagoAte = new Date();
-    pagoAte.setDate(pagoAte.getDate() + 30);
+    pagoAte.setDate(pagoAte.getDate() + dias);
     const pagoAteStr = pagoAte.toISOString().slice(0, 10);
 
     await db.ativarAssinatura(assinatura.usuario_id, pagoAteStr);
-    console.log(`[PAGAMENTO] ✅ Assinatura ativada via webhook: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
+    console.log(`[PAGAMENTO] ✅ Assinatura ativada via webhook: ${assinatura.usuario_id} | plano=${dias === 365 ? 'anual' : 'mensal'} | pago_ate=${pagoAteStr}`);
 
     return assinatura.usuario_id;
   } catch (err) {
@@ -442,8 +503,9 @@ async function processarRedirectPagamento(query) {
     return null;
   }
 
-  const pagoAteStr = await ativarManualmente(assinatura.usuario_id);
-  console.log(`[PAGAMENTO] ✅ Ativado via redirect: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
+  const dias = diasDoPlano(order_nsu);
+  const pagoAteStr = await ativarManualmente(assinatura.usuario_id, dias);
+  console.log(`[PAGAMENTO] ✅ Ativado via redirect: ${assinatura.usuario_id} | plano=${dias === 365 ? 'anual' : 'mensal'} | pago_ate=${pagoAteStr}`);
   return { usuarioId: assinatura.usuario_id, pagoAteStr, receipt_url: receipt_url || null };
 }
 
@@ -549,8 +611,9 @@ function iniciarPollingPagamentos(whatsappClient) {
           assinatura.order_nsu, assinatura.transaction_nsu, assinatura.invoice_slug
         );
         if (foiPago) {
-          const pagoAteStr = await ativarManualmente(assinatura.usuario_id);
-          console.log(`[PAGAMENTO] ✅ Ativado via polling: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
+          const dias = diasDoPlano(assinatura.order_nsu);
+          const pagoAteStr = await ativarManualmente(assinatura.usuario_id, dias);
+          console.log(`[PAGAMENTO] ✅ Ativado via polling: ${assinatura.usuario_id} | plano=${dias === 365 ? 'anual' : 'mensal'} | pago_ate=${pagoAteStr}`);
           if (whatsappClient) {
             const dataFormatada = pagoAteStr.split('-').reverse().join('/');
             await whatsappClient.sendMessage(
@@ -574,6 +637,7 @@ module.exports = {
   consultarPlano,
   ativarManualmente,
   obterLinkPagamento,
+  gerarLinkPlano,
   aplicarCupom,
   processarWebhook,
   processarRedirectPagamento,

@@ -256,6 +256,15 @@ client.on('message', async (msg) => {
   if (!texto || texto.trim().length === 0) return;
 
   try {
+    // Interceptar escolha de plano ANTES do check de acesso (usuários bloqueados também podem escolher)
+    const textoLower = texto.trim().toLowerCase();
+    if (['mensal', 'plano mensal', 'assinar mensal', 'anual', 'plano anual', 'assinar anual'].includes(textoLower)) {
+      const plano = textoLower.includes('anual') ? 'anual' : 'mensal';
+      const resposta = await pagamento.gerarLinkPlano(usuarioId, plano);
+      await msg.reply(resposta);
+      return;
+    }
+
     // Verificar acesso por assinatura
     const acesso = await pagamento.verificarAcesso(usuarioId);
 
