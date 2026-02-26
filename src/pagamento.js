@@ -239,6 +239,66 @@ function msgTrialBemVindo(nome) {
     `_Qualquer dúvida é só me chamar. Bora cuidar das finanças! 🚀_`;
 }
 
+// ─── Consulta de plano ───────────────────────────────────────────────────────
+
+function formatarDataBR(date) {
+  return new Date(date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+}
+
+async function consultarPlano(usuarioId) {
+  if (ehAdmin(usuarioId)) {
+    return `📋 *Seu Plano Cronos*\n\n✅ *Status:* Acesso admin\n\n_Você tem acesso irrestrito ao Cronos._`;
+  }
+
+  const assinatura = await db.buscarAssinatura(usuarioId);
+
+  if (!assinatura) {
+    return `📋 *Seu Plano Cronos*\n\n❌ Nenhum plano encontrado.\n\n💳 Assine por *R$ 19,90/mês* para começar a usar o Cronos.`;
+  }
+
+  const agora = new Date();
+  let msg = `📋 *Seu Plano Cronos*\n\n`;
+
+  if (assinatura.status === 'trial') {
+    const trialFim = new Date(assinatura.trial_fim);
+    const diasRestantes = Math.ceil((trialFim - agora) / (1000 * 60 * 60 * 24));
+    if (diasRestantes > 0) {
+      msg += `✅ *Status:* Período gratuito\n`;
+      msg += `📅 *Expira em:* ${diasRestantes} dia(s) (${formatarDataBR(trialFim)})\n`;
+    } else {
+      msg += `⚠️ *Status:* Trial expirado\n`;
+    }
+    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês`;
+
+  } else if (assinatura.status === 'ativo') {
+    const pagoAte = new Date(assinatura.pago_ate + 'T23:59:59');
+    const diasRestantes = Math.ceil((pagoAte - agora) / (1000 * 60 * 60 * 24));
+    msg += `✅ *Status:* Ativo\n`;
+    msg += `📅 *Válido até:* ${formatarDataBR(pagoAte)} (${diasRestantes} dia(s))\n`;
+    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês`;
+
+  } else if (assinatura.status === 'graca') {
+    const base = assinatura.pago_ate
+      ? new Date(assinatura.pago_ate + 'T23:59:59')
+      : new Date(assinatura.trial_fim);
+    const fimGraca = new Date(base);
+    fimGraca.setDate(fimGraca.getDate() + DIAS_GRACA);
+    const diasGraca = Math.max(0, Math.ceil((fimGraca - agora) / (1000 * 60 * 60 * 24)));
+    msg += `⚠️ *Status:* Carência — ${diasGraca} dia(s) para suspender\n`;
+    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês\n`;
+    const link = await obterLinkPagamento(usuarioId, assinatura);
+    msg += `\n👉 Renove agora: ${link || 'Entre em contato para renovar.'}`;
+
+  } else {
+    msg += `🔒 *Status:* Suspenso\n`;
+    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês\n`;
+    const link = await obterLinkPagamento(usuarioId, assinatura);
+    msg += `\n👉 Assine para reativar: ${link || 'Entre em contato para assinar.'}`;
+  }
+
+  return msg;
+}
+
 // ─── Webhook de confirmação de pagamento ──────────────────────────────────────
 
 /**
@@ -287,5 +347,6 @@ module.exports = {
   verificarAcesso,
   gerarMensagemBloqueio,
   msgTrialBemVindo,
+  consultarPlano,
   processarWebhook,
 };

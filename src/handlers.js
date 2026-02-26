@@ -1,5 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
+const pagamento = require('./pagamento');
 const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
@@ -1307,6 +1308,11 @@ async function handleMessage(usuarioId, texto) {
     return await handleResumo(usuarioId, msg);
   }
 
+  // Comando: meu plano / assinatura
+  if (lower === 'meu plano' || lower === 'minha assinatura' || lower === 'plano' || lower === 'assinatura' || lower === 'meu plano cronos') {
+    return await pagamento.consultarPlano(usuarioId);
+  }
+
   // Comando: caixinhas / investimentos
   if (lower === 'caixinhas' || lower === 'investimentos' || lower === 'minhas caixinhas' || lower === 'meus investimentos') {
     return await handleListarCaixinhas(usuarioId);
@@ -1833,6 +1839,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Listar apenas recorrentes
   if (resultado.acao === 'listar_recorrentes') {
     return await handleListarRecorrentes(usuarioId);
+  }
+
+  // Consultar plano / assinatura
+  if (resultado.acao === 'meu_plano') {
+    return await pagamento.consultarPlano(usuarioId);
   }
 
   // Listar caixinhas de investimento

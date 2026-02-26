@@ -109,6 +109,9 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 16. CAIXINHAS / INVESTIMENTOS (minhas caixinhas, meus investimentos, ver investimentos, quanto tenho investido, minhas reservas, ver caixinhas):
 {"acao": "caixinhas"}
 
+16. MEU PLANO / ASSINATURA (meu plano, minha assinatura, ver meu plano, como está minha assinatura, quando vence meu plano, quanto tempo tenho, status da assinatura, detalhes do plano, quero ver meu plano):
+{"acao": "meu_plano"}
+
 16a. DEPÓSITO EM CAIXINHA (adicionar X à caixinha Y, depositar X na poupança, colocar X na reserva, abastecer caixinha, adicionar dinheiro ao CDB, quero colocar X no fundo Y, adicionar 1000 na reserva de emergência, depositar 500 na poupança):
 {"acao": "deposito_caixinha", "nome": "nome da caixinha ou null se não mencionado", "valor": 0.00}
 
