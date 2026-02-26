@@ -64,7 +64,7 @@ async function obterLinkPagamento(usuarioId, assinatura) {
   try {
     const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/links', {
       handle,
-      itens: [{ descricao: 'Cronos Assistente - Assinatura mensal', valor: PRECO_CENTS }],
+      items: [{ quantity: 1, price: PRECO_CENTS, description: 'Cronos Assistente - Assinatura mensal' }],
       order_nsu: nsu,
       webhook_url: `${webhookBase}/webhook/pagamento`,
     });
