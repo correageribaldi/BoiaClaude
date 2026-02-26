@@ -75,6 +75,9 @@ async function obterLinkPagamento(usuarioId, assinatura) {
     const link = res.url || res.link || res.checkout_url || null;
     if (link) {
       await db.salvarLinkAssinatura(usuarioId, nsu, link);
+      console.log(`[PAGAMENTO] 🔗 Link gerado para ${usuarioId}: nsu=${nsu} url=${link}`);
+    } else {
+      console.error('[PAGAMENTO] API não retornou URL. Resposta:', JSON.stringify(res));
     }
     return link;
   } catch (err) {
