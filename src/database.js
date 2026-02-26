@@ -1447,10 +1447,12 @@ async function adicionarSaldoCaixinha(caixinhaId, valor) {
 
 // ─── Assinaturas ─────────────────────────────────────────────────────────────
 
-async function criarAssinatura(usuarioId) {
+async function criarAssinatura(usuarioId, trialDias = 30) {
   await pool.query(
-    `INSERT INTO assinaturas (usuario_id) VALUES ($1) ON CONFLICT (usuario_id) DO NOTHING`,
-    [usuarioId]
+    `INSERT INTO assinaturas (usuario_id, trial_fim)
+     VALUES ($1, NOW() + ($2 || ' days')::INTERVAL)
+     ON CONFLICT (usuario_id) DO NOTHING`,
+    [usuarioId, trialDias]
   );
 }
 

@@ -2,6 +2,7 @@ const https = require('https');
 const db = require('./database');
 
 const PRECO_CENTS = 1990; // R$ 19,90
+const DIAS_TRIAL = 0;    // 0 = cobrar imediatamente (teste); produção: 30
 const DIAS_GRACA = 5;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,7 +95,7 @@ async function verificarAcesso(usuarioId) {
   let assinatura = await db.buscarAssinatura(usuarioId);
 
   if (!assinatura) {
-    await db.criarAssinatura(usuarioId);
+    await db.criarAssinatura(usuarioId, DIAS_TRIAL);
     return { permitido: true, ehPrimeiraVez: true, status: 'trial' };
   }
 
