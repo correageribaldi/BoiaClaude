@@ -3,7 +3,7 @@ const db = require('./database');
 
 const PRECO_CENTS = 1990; // R$ 19,90
 const DIAS_TRIAL = 0;    // 0 = cobrar imediatamente (teste); produção: 30
-const DIAS_GRACA = 5;
+const DIAS_GRACA = 0;    // 0 = sem carência; produção: sugerido 5
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
