@@ -229,8 +229,13 @@ async function gerarMensagemBloqueio(usuarioId, nome) {
 function msgTrialBemVindo(nome) {
   const primeiroNome = nome ? nome.split(' ')[0] : null;
   const saudacao = primeiroNome ? `, ${primeiroNome}` : '';
+  if (DIAS_TRIAL === 0) {
+    return `🎉 *Bem-vindo${saudacao} ao Cronos!*\n\n` +
+      `Para usar o assistente financeiro, assine por apenas *R$ 19,90/mês*.\n\n` +
+      `_Assim que o pagamento for confirmado, seu acesso é liberado automaticamente! 🚀_`;
+  }
   return `🎉 *Bem-vindo${saudacao} ao Cronos!*\n\n` +
-    `Você tem *30 dias grátis* para experimentar tudo. Após esse período, a assinatura é de apenas *R$ 19,90/mês*.\n\n` +
+    `Você tem *${DIAS_TRIAL} dias grátis* para experimentar tudo. Após esse período, a assinatura é de apenas *R$ 19,90/mês*.\n\n` +
     `_Qualquer dúvida é só me chamar. Bora cuidar das finanças! 🚀_`;
 }
 

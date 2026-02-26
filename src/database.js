@@ -388,6 +388,17 @@ async function initTables() {
       WHERE order_nsu IS NOT NULL;
   `);
 
+  // Migração: criar assinaturas para usuários existentes que ainda não têm registro
+  // trial_fim = NOW() → já expirado, entram em carência de 5 dias para assinar
+  await pool.query(`
+    INSERT INTO assinaturas (usuario_id, trial_fim)
+    SELECT u.usuario_id, NOW()
+    FROM usuarios u
+    LEFT JOIN assinaturas a ON a.usuario_id = u.usuario_id
+    WHERE a.id IS NULL
+    ON CONFLICT (usuario_id) DO NOTHING
+  `);
+
   // Tabela de usuários do painel web (usuário/senha)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS painel_usuarios (
