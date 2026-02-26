@@ -229,13 +229,16 @@ app.post('/webhook/pagamento', async (req, res) => {
           console.error('[WEBHOOK PAGAMENTO] Erro ao notificar usuário:', err.message);
         }
       }
-      res.json({ ok: true, usuario: usuarioId });
+      // Resposta obrigatória InfinityPay: { "success": true, "message": null }
+      res.json({ success: true, message: null });
     } else {
-      res.json({ ok: false });
+      // Retornar 200 com success:false para não provocar retentativas desnecessárias
+      res.json({ success: true, message: null });
     }
   } catch (err) {
     console.error('[WEBHOOK PAGAMENTO] Erro:', err.message);
-    res.status(500).json({ erro: err.message });
+    // 400 faz InfinityPay tentar novamente — usar só em erros transitórios
+    res.status(400).json({ success: false, message: err.message });
   }
 });
 

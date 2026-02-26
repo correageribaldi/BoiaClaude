@@ -323,15 +323,17 @@ async function ativarManualmente(usuarioId) {
 // ─── Verificação de pagamento via API (fallback sem webhook) ─────────────────
 
 async function verificarPagamentoNSU(orderNsu) {
-  const webhookBase = process.env.WEBHOOK_BASE_URL;
-  if (!webhookBase || !orderNsu) return false;
+  const handle = process.env.INFINITYPAY_HANDLE;
+  if (!handle || !orderNsu) return false;
   try {
+    // Requer handle + order_nsu conforme documentação InfinityPay
     const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/payment_check', {
+      handle,
       order_nsu: orderNsu,
     });
     console.log(`[PAGAMENTO] payment_check nsu=${orderNsu}:`, JSON.stringify(res));
-    // InfinityPay retorna status do pagamento — considerar pago se paid_amount > 0 ou status indica pago
-    const pago = res.paid_amount > 0 || res.status === 'paid' || res.status === 'approved';
+    // Resposta: { success, paid, amount, paid_amount, ... }
+    const pago = res.success === true && res.paid === true;
     return pago;
   } catch (err) {
     console.error('[PAGAMENTO] Erro ao chamar payment_check:', err.message);
