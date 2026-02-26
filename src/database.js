@@ -421,6 +421,11 @@ async function initTables() {
       ON painel_usuarios(usuario_id);
   `);
 
+  // Migração: coluna is_admin em painel_usuarios
+  await pool.query(`
+    ALTER TABLE painel_usuarios ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
   // Tabela de cupons de desconto/período grátis
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cupons (
@@ -1355,7 +1360,7 @@ async function criarUsuarioPainel(usuarioId, username, passwordHash) {
 
 async function buscarUsuarioPainelPorUsername(username) {
   const result = await pool.query(
-    `SELECT id, usuario_id, username, password_hash
+    `SELECT id, usuario_id, username, password_hash, is_admin
      FROM painel_usuarios WHERE username = $1 LIMIT 1`,
     [username.toLowerCase().trim()]
   );
@@ -1365,7 +1370,7 @@ async function buscarUsuarioPainelPorUsername(username) {
 async function buscarUsuarioPainelPorUserId(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT id, username FROM painel_usuarios WHERE usuario_id = $1 LIMIT 1`,
+    `SELECT id, username, is_admin FROM painel_usuarios WHERE usuario_id = $1 LIMIT 1`,
     [uid]
   );
   return result.rows[0] || null;

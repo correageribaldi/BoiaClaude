@@ -67,8 +67,7 @@ app.get('/api/auth/me', autenticar, async (req, res) => {
   try {
     const usuario = await db.buscarUsuario(req.usuarioId).catch(() => null);
     const painel = await db.buscarUsuarioPainelPorUserId(req.usuarioId).catch(() => null);
-    const adminIds = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-    const isAdmin = adminIds.includes(req.usuarioId);
+    const isAdmin = !!painel?.is_admin;
     res.json({ usuarioId: req.usuarioId, nome: usuario?.nome || null, username: painel?.username || null, isAdmin });
   } catch (err) {
     res.status(500).json({ erro: err.message });
@@ -360,8 +359,8 @@ async function autenticarAdmin(req, res, next) {
   try {
     const payload = getJwt().verify(token, jwtSecret());
     req.usuarioId = payload.usuarioId;
-    const adminIds = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (!adminIds.includes(req.usuarioId)) {
+    const painel = await db.buscarUsuarioPainelPorUserId(req.usuarioId).catch(() => null);
+    if (!painel?.is_admin) {
       return res.status(403).json({ erro: 'Acesso negado: requer permissão de administrador' });
     }
     next();
