@@ -1579,6 +1579,7 @@ async function listarUsuariosNaoPagantes(filtro = 'todos') {
 
   // DISTINCT ON evita duplicatas por usuario_id (ex: duas assinaturas no banco)
   // AND pago_ate check exclui quem de fato pagou, independente do status armazenado
+  // AND NOT LIKE '%@lid' exclui dispositivos vinculados (WhatsApp multi-device) — não recebem mensagens
   const result = await pool.query(`
     SELECT DISTINCT ON (u.usuario_id)
       u.usuario_id, u.nome, a.status, a.trial_fim, a.pago_ate
@@ -1586,6 +1587,7 @@ async function listarUsuariosNaoPagantes(filtro = 'todos') {
     JOIN assinaturas a ON a.usuario_id = u.usuario_id
     WHERE ${condicaoStatus}
       AND (a.pago_ate IS NULL OR a.pago_ate::date < CURRENT_DATE)
+      AND u.usuario_id NOT LIKE '%@lid'
     ORDER BY u.usuario_id, a.atualizado_em DESC
   `);
   return result.rows;
