@@ -1571,18 +1571,22 @@ async function salvarTransacaoAssinatura(orderNsu, transactionNsu, invoiceSlug) 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
 async function listarUsuariosNaoPagantes(filtro = 'todos') {
-  let condicao;
-  if (filtro === 'trial')    condicao = `a.status = 'trial'`;
-  else if (filtro === 'expirado') condicao = `a.status = 'expirado'`;
-  else if (filtro === 'graca')    condicao = `a.status = 'graca'`;
-  else condicao = `a.status IN ('trial', 'graca', 'expirado')`;
+  let condicaoStatus;
+  if (filtro === 'trial')         condicaoStatus = `a.status = 'trial'`;
+  else if (filtro === 'expirado') condicaoStatus = `a.status = 'expirado'`;
+  else if (filtro === 'graca')    condicaoStatus = `a.status = 'graca'`;
+  else                            condicaoStatus = `a.status IN ('trial', 'graca', 'expirado')`;
 
+  // DISTINCT ON evita duplicatas por usuario_id (ex: duas assinaturas no banco)
+  // AND pago_ate check exclui quem de fato pagou, independente do status armazenado
   const result = await pool.query(`
-    SELECT u.usuario_id, u.nome, a.status, a.trial_fim, a.pago_ate
+    SELECT DISTINCT ON (u.usuario_id)
+      u.usuario_id, u.nome, a.status, a.trial_fim, a.pago_ate
     FROM usuarios u
     JOIN assinaturas a ON a.usuario_id = u.usuario_id
-    WHERE ${condicao}
-    ORDER BY u.primeiro_contato DESC
+    WHERE ${condicaoStatus}
+      AND (a.pago_ate IS NULL OR a.pago_ate::date < CURRENT_DATE)
+    ORDER BY u.usuario_id, a.atualizado_em DESC
   `);
   return result.rows;
 }

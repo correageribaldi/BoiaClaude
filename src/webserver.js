@@ -488,23 +488,33 @@ app.post('/api/admin/campanhas/enviar', autenticarAdmin, async (req, res) => {
 
     // Envio assíncrono com delay aleatório 5-15s
     (async () => {
-      console.log(`[CAMPANHA] ${campanhaId} iniciada — ${usuarios.length} destinatários`);
-      for (let i = 0; i < usuarios.length; i++) {
-        const usuario = usuarios[i];
+      // Deduplicar por usuario_id (garante que a mesma pessoa não receba duas vezes)
+      const vistos = new Set();
+      const usuariosUnicos = usuarios.filter(u => {
+        if (vistos.has(u.usuario_id)) return false;
+        vistos.add(u.usuario_id);
+        return true;
+      });
+      estado.total = usuariosUnicos.length;
+      console.log(`[CAMPANHA] ${campanhaId} iniciada — ${usuariosUnicos.length} destinatários únicos`);
+
+      for (let i = 0; i < usuariosUnicos.length; i++) {
+        const usuario = usuariosUnicos[i];
+        const nomeExibido = usuario.nome || usuario.usuario_id;
         try {
           const primeiroNome = (usuario.nome || '').split(' ')[0] || 'amigo(a)';
           const msg = mensagem.replace(/\{nome\}/gi, primeiroNome);
           await whatsappClient.sendMessage(usuario.usuario_id, msg);
           estado.enviados++;
-          estado.log.push(`✅ ${usuario.usuario_id} (${usuario.nome || '—'})`);
+          estado.log.push({ ok: true, nome: nomeExibido });
         } catch (err) {
           estado.erros++;
-          estado.log.push(`❌ ${usuario.usuario_id}: ${err.message}`);
+          estado.log.push({ ok: false, nome: nomeExibido, erro: err.message });
           console.error(`[CAMPANHA] Erro ao enviar para ${usuario.usuario_id}:`, err.message);
         }
 
         // Delay aleatório entre 5 e 15 segundos (exceto no último)
-        if (i < usuarios.length - 1) {
+        if (i < usuariosUnicos.length - 1) {
           const delay = Math.floor(5000 + Math.random() * 10000);
           await new Promise(r => setTimeout(r, delay));
         }
