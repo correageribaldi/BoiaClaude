@@ -4,6 +4,7 @@ const qrcode = require('qrcode-terminal');
 const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
+const pagamento = require('./pagamento');
 const { iniciarLembretes } = require('./lembretes');
 const { iniciarWebServer } = require('./webserver');
 
@@ -252,8 +253,26 @@ client.on('message', async (msg) => {
   if (!texto || texto.trim().length === 0) return;
 
   try {
+    // Verificar acesso por assinatura
+    const acesso = await pagamento.verificarAcesso(usuarioId);
+
+    if (!acesso.permitido) {
+      const usuario = await db.buscarUsuario(usuarioId);
+      const msgBloqueio = await pagamento.gerarMensagemBloqueio(usuarioId, usuario?.nome);
+      await msg.reply(msgBloqueio);
+      return;
+    }
+
     const resposta = await handleMessage(usuarioId, texto);
     await responderMensagem(msg, usuarioId, resposta);
+
+    // Enviar boas-vindas do trial (primeira vez) ou aviso de vencimento
+    if (acesso.ehPrimeiraVez) {
+      const nomeContato = contato?.pushname || contato?.name || null;
+      await client.sendMessage(usuarioId, pagamento.msgTrialBemVindo(nomeContato));
+    } else if (acesso.aviso) {
+      await client.sendMessage(usuarioId, acesso.aviso);
+    }
   } catch (error) {
     console.error('Erro ao processar mensagem:', error);
     await msg.reply('❌ Ocorreu um erro ao processar sua mensagem. Tente novamente.');
@@ -272,8 +291,8 @@ async function start() {
     process.exit(1);
   }
 
-  // Iniciar servidor web (painel financeiro)
-  iniciarWebServer();
+  // Iniciar servidor web (painel financeiro + webhook de pagamento)
+  iniciarWebServer(client);
 
   if (process.env.OPENAI_API_KEY) {
     console.log('🤖 IA ativa (OpenAI) - interpretação de linguagem natural habilitada.');

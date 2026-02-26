@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const db = require('./database');
+const pagamento = require('./pagamento');
 
 const app = express();
 app.use(express.json());
@@ -208,6 +209,36 @@ app.delete('/api/categories/:nome', autenticar, async (req, res) => {
   }
 });
 
+// ── Webhook de pagamento InfinityPay ──────────────────────────────────────────
+// Endpoint público (sem autenticação JWT) — InfinityPay envia confirmação aqui
+app.post('/webhook/pagamento', async (req, res) => {
+  try {
+    console.log('[WEBHOOK PAGAMENTO] Payload recebido:', JSON.stringify(req.body));
+    const usuarioId = await pagamento.processarWebhook(req.body);
+
+    if (usuarioId) {
+      // Notificar usuário via WhatsApp se o cliente estiver disponível
+      const whatsappClient = app.get('whatsappClient');
+      if (whatsappClient) {
+        try {
+          await whatsappClient.sendMessage(
+            usuarioId,
+            '✅ *Pagamento confirmado!*\n\nSeu acesso ao *Cronos* foi renovado por mais 30 dias. Pode usar à vontade! 🚀'
+          );
+        } catch (err) {
+          console.error('[WEBHOOK PAGAMENTO] Erro ao notificar usuário:', err.message);
+        }
+      }
+      res.json({ ok: true, usuario: usuarioId });
+    } else {
+      res.json({ ok: false });
+    }
+  } catch (err) {
+    console.error('[WEBHOOK PAGAMENTO] Erro:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Agenda ────────────────────────────────────────────────────────────────────
 app.get('/api/agenda', autenticar, async (req, res) => {
   try {
@@ -226,7 +257,11 @@ app.get('/api/agenda', autenticar, async (req, res) => {
 });
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
-function iniciarWebServer() {
+function iniciarWebServer(whatsappClient) {
+  if (whatsappClient) {
+    app.set('whatsappClient', whatsappClient);
+  }
+
   const port = parseInt(process.env.PORT) || 3000;
   app.listen(port, () => {
     console.log(`🌐 Painel web rodando em http://localhost:${port}`);

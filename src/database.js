@@ -367,6 +367,27 @@ async function initTables() {
     CREATE INDEX IF NOT EXISTS idx_caixinhas_usuario_id ON caixinhas(usuario_id);
   `);
 
+  // Tabela de assinaturas (controle de acesso por período de trial/pagamento)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS assinaturas (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'trial'
+        CHECK(status IN ('trial', 'ativo', 'graca', 'expirado')),
+      trial_fim TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+      pago_ate DATE,
+      order_nsu TEXT,
+      link_pagamento TEXT,
+      link_criado_em TIMESTAMPTZ,
+      avisos_enviados INTEGER NOT NULL DEFAULT 0,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_assinaturas_usuario_id ON assinaturas(usuario_id);
+    CREATE INDEX IF NOT EXISTS idx_assinaturas_order_nsu ON assinaturas(order_nsu)
+      WHERE order_nsu IS NOT NULL;
+  `);
+
   // Tabela de usuários do painel web (usuário/senha)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS painel_usuarios (
@@ -1424,6 +1445,70 @@ async function adicionarSaldoCaixinha(caixinhaId, valor) {
   return result.rows[0] || null;
 }
 
+// ─── Assinaturas ─────────────────────────────────────────────────────────────
+
+async function criarAssinatura(usuarioId) {
+  await pool.query(
+    `INSERT INTO assinaturas (usuario_id) VALUES ($1) ON CONFLICT (usuario_id) DO NOTHING`,
+    [usuarioId]
+  );
+}
+
+async function buscarAssinatura(usuarioId) {
+  const result = await pool.query(
+    `SELECT id, usuario_id, status, trial_fim, pago_ate::text as pago_ate,
+            order_nsu, link_pagamento, link_criado_em, avisos_enviados
+     FROM assinaturas WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+  return result.rows[0] || null;
+}
+
+async function buscarAssinaturaPorOrderNSU(orderNsu) {
+  const result = await pool.query(
+    `SELECT id, usuario_id, status, trial_fim, pago_ate::text as pago_ate, order_nsu
+     FROM assinaturas WHERE order_nsu = $1`,
+    [orderNsu]
+  );
+  return result.rows[0] || null;
+}
+
+async function atualizarStatusAssinatura(usuarioId, status) {
+  await pool.query(
+    `UPDATE assinaturas SET status = $1, atualizado_em = NOW() WHERE usuario_id = $2`,
+    [status, usuarioId]
+  );
+}
+
+async function ativarAssinatura(usuarioId, pagoAte) {
+  await pool.query(
+    `UPDATE assinaturas
+     SET status = 'ativo', pago_ate = $1, avisos_enviados = 0,
+         order_nsu = NULL, link_pagamento = NULL, link_criado_em = NULL,
+         atualizado_em = NOW()
+     WHERE usuario_id = $2`,
+    [pagoAte, usuarioId]
+  );
+}
+
+async function incrementarAvisosAssinatura(usuarioId) {
+  await pool.query(
+    `UPDATE assinaturas
+     SET avisos_enviados = avisos_enviados + 1, atualizado_em = NOW()
+     WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+}
+
+async function salvarLinkAssinatura(usuarioId, orderNsu, link) {
+  await pool.query(
+    `UPDATE assinaturas
+     SET order_nsu = $1, link_pagamento = $2, link_criado_em = NOW(), atualizado_em = NOW()
+     WHERE usuario_id = $3`,
+    [orderNsu, link, usuarioId]
+  );
+}
+
 module.exports = {
   pool,
   initTables,
@@ -1484,4 +1569,11 @@ module.exports = {
   listarRecorrencias,
   calcularOcorrenciasNoPerodo,
   adicionarTransacaoComRecorrencia,
+  criarAssinatura,
+  buscarAssinatura,
+  buscarAssinaturaPorOrderNSU,
+  atualizarStatusAssinatura,
+  ativarAssinatura,
+  incrementarAvisosAssinatura,
+  salvarLinkAssinatura,
 };
