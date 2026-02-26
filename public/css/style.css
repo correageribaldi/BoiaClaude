@@ -438,3 +438,48 @@ body {
 }
 .toast.success { background: var(--green); }
 .toast.error { background: var(--red); }
+
+/* ── Admin ───────────────────────────────────────────────────────────────── */
+.admin-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 20px 16px;
+  box-shadow: var(--shadow);
+}
+.admin-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  color: var(--text);
+}
+.admin-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.admin-card-header h3 { margin-bottom: 0; }
+.admin-form { display: flex; flex-direction: column; gap: 10px; }
+.admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.admin-row .input-group { flex: 1; min-width: 120px; margin-bottom: 0; }
+.admin-row .input-group input,
+.admin-row .input-group select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  outline: none;
+}
+.admin-row .input-group input:focus,
+.admin-row .input-group select:focus { border-color: var(--blue); }
+.btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+.btn-green { background: var(--green); color: white; }
+.btn-blue { background: var(--blue); color: white; }

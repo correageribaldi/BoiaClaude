@@ -1329,6 +1329,22 @@ async function handleMessage(usuarioId, texto) {
     }
   }
 
+  // Comando: cupom <CODIGO> — aplica cupom de desconto ou dias grátis
+  if (lower.startsWith('cupom ')) {
+    const codigo = texto.trim().slice(6).trim();
+    if (!codigo) return `❌ Informe o código do cupom.\n_Ex: cupom CRONOS30_`;
+    const resultado = await pagamento.aplicarCupom(usuarioId, codigo);
+    if (!resultado.ok) return `❌ ${resultado.erro}`;
+    if (resultado.tipo === 'dias_gratis') {
+      const dataFormatada = resultado.pagoAte.split('-').reverse().join('/');
+      return `🎉 *Cupom aplicado com sucesso!*\n\n✅ Seu acesso foi estendido por *${resultado.dias} dia(s)*.\n📅 Assinatura válida até: *${dataFormatada}*`;
+    }
+    if (resultado.tipo === 'desconto_percent') {
+      return `🎉 *Cupom de ${resultado.desconto}% de desconto aplicado!*\n\nUse este link para assinar com desconto:\n👉 ${resultado.link}`;
+    }
+    return `✅ Cupom aplicado com sucesso!`;
+  }
+
   // Comando: caixinhas / investimentos
   if (lower === 'caixinhas' || lower === 'investimentos' || lower === 'minhas caixinhas' || lower === 'meus investimentos') {
     return await handleListarCaixinhas(usuarioId);

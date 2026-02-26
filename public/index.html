@@ -150,6 +150,85 @@
       <div id="ag-empty" class="empty-state hidden">Nenhum lembrete neste mês.</div>
     </section>
 
+    <!-- ── Admin ────────────────────────────────────────────────────────── -->
+    <section id="tab-admin" class="tab-content hidden">
+      <div class="section-header"><h2>⚙️ Administração</h2></div>
+
+      <!-- Criar cupom -->
+      <div class="admin-card">
+        <h3>Criar Cupom</h3>
+        <div class="admin-form">
+          <div class="admin-row">
+            <div class="input-group">
+              <label>Código</label>
+              <input id="adm-cupom-codigo" type="text" placeholder="EX: CRONOS30" maxlength="30" style="text-transform:uppercase" />
+            </div>
+            <div class="input-group">
+              <label>Tipo</label>
+              <select id="adm-cupom-tipo">
+                <option value="dias_gratis">Dias Grátis</option>
+                <option value="desconto_percent">Desconto %</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label>Valor</label>
+              <input id="adm-cupom-valor" type="number" placeholder="Ex: 30" min="1" max="365" />
+            </div>
+            <div class="input-group">
+              <label>Usos máx.</label>
+              <input id="adm-cupom-usos" type="number" placeholder="1" min="1" value="1" />
+            </div>
+            <div class="input-group">
+              <label>Válido até</label>
+              <input id="adm-cupom-validade" type="date" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="adm-cupom-criar">+ Criar Cupom</button>
+        </div>
+
+        <div class="table-wrap" style="margin-top:16px">
+          <table class="data-table" id="adm-cupons-table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Tipo</th>
+                <th>Valor</th>
+                <th>Usos</th>
+                <th>Válido até</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="adm-cupons-tbody"></tbody>
+          </table>
+          <div id="adm-cupons-empty" class="empty-state hidden">Nenhum cupom criado ainda.</div>
+        </div>
+      </div>
+
+      <!-- Lista de usuários -->
+      <div class="admin-card" style="margin-top:16px">
+        <div class="admin-card-header">
+          <h3>Usuários</h3>
+          <input class="search-input" id="adm-busca" type="text" placeholder="Buscar por nome ou número..." style="max-width:220px" />
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table" id="adm-usuarios-table">
+            <thead>
+              <tr>
+                <th>Usuário</th>
+                <th>Status</th>
+                <th>Validade</th>
+                <th>Cadastro</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="adm-usuarios-tbody"></tbody>
+          </table>
+          <div id="adm-usuarios-empty" class="empty-state hidden">Nenhum usuário encontrado.</div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <nav class="bottom-nav">
@@ -168,6 +247,10 @@
     <button class="nav-btn" data-tab="agenda">
       <span class="nav-icon">📅</span>
       <span class="nav-label">Agenda</span>
+    </button>
+    <button class="nav-btn hidden" data-tab="admin" id="nav-admin">
+      <span class="nav-icon">⚙️</span>
+      <span class="nav-label">Admin</span>
     </button>
   </nav>
 

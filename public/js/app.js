@@ -8,6 +8,8 @@ function getJwt() { return localStorage.getItem('cronos_jwt'); }
 function setJwt(t) { localStorage.setItem('cronos_jwt', t); }
 function clearJwt() { localStorage.removeItem('cronos_jwt'); }
 
+let _isAdmin = false;
+
 async function verificarAuth() {
   const jwt = getJwt();
   if (!jwt) { mostrarLogin(); return; }
@@ -15,6 +17,10 @@ async function verificarAuth() {
   try {
     const me = await api('/api/auth/me');
     document.getElementById('header-user').textContent = me.username ? '👤 ' + me.username : '';
+    _isAdmin = !!me.isAdmin;
+    if (_isAdmin) {
+      document.getElementById('nav-admin').classList.remove('hidden');
+    }
     document.getElementById('app').classList.remove('hidden');
     inicializar();
   } catch {
@@ -348,6 +354,123 @@ async function carregarAgenda() {
   }
 }
 
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+let admUsuarios = [];
+
+function statusLabel(status) {
+  const map = { trial: '🟡 Trial', ativo: '🟢 Ativo', graca: '🟠 Carência', expirado: '🔴 Expirado' };
+  return map[status] || status || '—';
+}
+
+function fmtValidade(u) {
+  if (u.pago_ate) return fmtData(u.pago_ate);
+  if (u.trial_fim) return 'Trial até ' + fmtData(u.trial_fim.slice(0, 10));
+  return '—';
+}
+
+async function carregarAdmin() {
+  await Promise.all([carregarAdminUsuarios(), carregarAdminCupons()]);
+}
+
+async function carregarAdminUsuarios() {
+  try {
+    admUsuarios = await api('/api/admin/usuarios');
+    renderAdminUsuarios(admUsuarios);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function carregarAdminCupons() {
+  try {
+    const cupons = await api('/api/admin/cupons');
+    const tbody = document.getElementById('adm-cupons-tbody');
+    const empty = document.getElementById('adm-cupons-empty');
+    if (!cupons.length) {
+      tbody.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    tbody.innerHTML = cupons.map(c => `
+      <tr>
+        <td><strong>${esc(c.codigo)}</strong></td>
+        <td>${c.tipo === 'dias_gratis' ? '🎁 Dias Grátis' : '💸 Desconto %'}</td>
+        <td>${c.tipo === 'dias_gratis' ? c.valor + ' dias' : c.valor + '%'}</td>
+        <td>${c.usos} / ${c.uso_maximo}</td>
+        <td>${c.valido_ate ? fmtData(c.valido_ate) : '—'}</td>
+        <td><span class="badge ${c.ativo ? 'badge-pago' : 'badge-pendente'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function renderAdminUsuarios(lista) {
+  const tbody = document.getElementById('adm-usuarios-tbody');
+  const empty = document.getElementById('adm-usuarios-empty');
+  if (!lista.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  tbody.innerHTML = lista.map(u => `
+    <tr>
+      <td>
+        <div style="font-weight:600;font-size:12px">${esc(u.nome || '—')}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${esc(u.usuario_id)}</div>
+      </td>
+      <td>${statusLabel(u.status)}</td>
+      <td style="font-size:12px">${fmtValidade(u)}</td>
+      <td style="font-size:11px;color:var(--text-muted)">${u.primeiro_contato ? fmtData(u.primeiro_contato.slice(0, 10)) : '—'}</td>
+      <td>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-green" onclick="adminAtivar('${esc(u.usuario_id)}')">✅ Ativar</button>
+          <button class="btn btn-sm btn-blue" onclick="adminLink('${esc(u.usuario_id)}', this)">🔗 Link</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function adminAtivar(usuarioId) {
+  if (!confirm(`Ativar assinatura por 30 dias para:\n${usuarioId}?`)) return;
+  try {
+    const r = await api('/api/admin/ativar', {
+      method: 'POST',
+      body: JSON.stringify({ usuarioId }),
+    });
+    toast('✅ Assinatura ativada até ' + fmtData(r.pagoAte), 'success');
+    carregarAdminUsuarios();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function adminLink(usuarioId, btn) {
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    const r = await api('/api/admin/link', {
+      method: 'POST',
+      body: JSON.stringify({ usuarioId }),
+    });
+    if (r.link) {
+      prompt('Link de pagamento (copie):', r.link);
+    } else {
+      toast('InfinityPay não configurado', 'error');
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔗 Link';
+  }
+}
+
 // ── Navegação ─────────────────────────────────────────────────────────────────
 let tabAtual = 'dashboard';
 
@@ -362,6 +485,7 @@ function ativarTab(tab) {
   if (tab === 'transactions') carregarTransacoes();
   if (tab === 'categories') carregarCategorias();
   if (tab === 'agenda') carregarAgenda();
+  if (tab === 'admin') carregarAdmin();
 }
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -429,6 +553,41 @@ function inicializar() {
   document.getElementById('ag-next').addEventListener('click', () => {
     const e = estado.ag; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarAgenda();
   });
+
+  // Admin: criar cupom
+  if (_isAdmin) {
+    document.getElementById('adm-cupom-criar').addEventListener('click', async () => {
+      const codigo = document.getElementById('adm-cupom-codigo').value.trim().toUpperCase();
+      const tipo = document.getElementById('adm-cupom-tipo').value;
+      const valor = document.getElementById('adm-cupom-valor').value;
+      const usoMaximo = document.getElementById('adm-cupom-usos').value;
+      const validoAte = document.getElementById('adm-cupom-validade').value || null;
+
+      if (!codigo || !valor) { toast('Preencha código e valor', 'error'); return; }
+      try {
+        await api('/api/admin/cupom', {
+          method: 'POST',
+          body: JSON.stringify({ codigo, tipo, valor, usoMaximo, validoAte }),
+        });
+        toast('✅ Cupom criado!', 'success');
+        document.getElementById('adm-cupom-codigo').value = '';
+        document.getElementById('adm-cupom-valor').value = '';
+        document.getElementById('adm-cupom-usos').value = '1';
+        document.getElementById('adm-cupom-validade').value = '';
+        carregarAdminCupons();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+
+    // Admin: busca de usuários
+    document.getElementById('adm-busca').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      const filtrado = admUsuarios.filter(u =>
+        (u.nome || '').toLowerCase().includes(q) ||
+        (u.usuario_id || '').toLowerCase().includes(q)
+      );
+      renderAdminUsuarios(filtrado);
+    });
+  }
 
   carregarDashboard();
 }

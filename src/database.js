@@ -421,6 +421,22 @@ async function initTables() {
       ON painel_usuarios(usuario_id);
   `);
 
+  // Tabela de cupons de desconto/período grátis
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cupons (
+      id SERIAL PRIMARY KEY,
+      codigo TEXT NOT NULL UNIQUE,
+      tipo TEXT NOT NULL CHECK(tipo IN ('dias_gratis', 'desconto_percent')),
+      valor INTEGER NOT NULL,
+      uso_maximo INTEGER NOT NULL DEFAULT 1,
+      usos INTEGER NOT NULL DEFAULT 0,
+      valido_ate DATE,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_cupons_codigo ON cupons(codigo);
+  `);
+
   const categoriasPadrao = [
     'Alimentação', 'Transporte', 'Moradia', 'Saúde',
     'Educação', 'Lazer', 'Vestuário', 'Salário',
@@ -1547,6 +1563,49 @@ async function salvarTransacaoAssinatura(orderNsu, transactionNsu, invoiceSlug) 
   );
 }
 
+// ─── Admin ────────────────────────────────────────────────────────────────────
+
+async function listarUsuariosAdmin() {
+  const result = await pool.query(`
+    SELECT u.usuario_id, u.nome, u.primeiro_contato,
+           a.status, a.trial_fim, a.pago_ate, a.order_nsu, a.atualizado_em
+    FROM usuarios u
+    LEFT JOIN assinaturas a ON a.usuario_id = u.usuario_id
+    ORDER BY u.primeiro_contato DESC
+  `);
+  return result.rows;
+}
+
+// ─── Cupons ───────────────────────────────────────────────────────────────────
+
+async function criarCupom(codigo, tipo, valor, usoMaximo, validoAte) {
+  await pool.query(
+    `INSERT INTO cupons (codigo, tipo, valor, uso_maximo, valido_ate)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [codigo.toUpperCase().trim(), tipo, valor, usoMaximo || 1, validoAte || null]
+  );
+}
+
+async function buscarCupom(codigo) {
+  const result = await pool.query(
+    `SELECT * FROM cupons WHERE codigo = $1`,
+    [codigo.toUpperCase().trim()]
+  );
+  return result.rows[0] || null;
+}
+
+async function incrementarUsoCupom(id) {
+  await pool.query(`UPDATE cupons SET usos = usos + 1 WHERE id = $1`, [id]);
+}
+
+async function listarCupons() {
+  const result = await pool.query(
+    `SELECT id, codigo, tipo, valor, uso_maximo, usos, valido_ate, ativo, criado_em
+     FROM cupons ORDER BY criado_em DESC`
+  );
+  return result.rows;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -1616,4 +1675,9 @@ module.exports = {
   incrementarAvisosAssinatura,
   salvarLinkAssinatura,
   salvarTransacaoAssinatura,
+  listarUsuariosAdmin,
+  criarCupom,
+  buscarCupom,
+  incrementarUsoCupom,
+  listarCupons,
 };

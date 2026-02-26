@@ -67,7 +67,9 @@ app.get('/api/auth/me', autenticar, async (req, res) => {
   try {
     const usuario = await db.buscarUsuario(req.usuarioId).catch(() => null);
     const painel = await db.buscarUsuarioPainelPorUserId(req.usuarioId).catch(() => null);
-    res.json({ usuarioId: req.usuarioId, nome: usuario?.nome || null, username: painel?.username || null });
+    const adminIds = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const isAdmin = adminIds.includes(req.usuarioId);
+    res.json({ usuarioId: req.usuarioId, nome: usuario?.nome || null, username: painel?.username || null, isAdmin });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
@@ -344,6 +346,101 @@ app.get('/api/agenda', autenticar, async (req, res) => {
 
     res.json(await db.buscarLembretesGeraisPorPeriodo(req.usuarioId, dataInicio, dataFim));
   } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+async function autenticarAdmin(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ erro: 'Token ausente' });
+
+  try {
+    const payload = getJwt().verify(token, jwtSecret());
+    req.usuarioId = payload.usuarioId;
+    const adminIds = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!adminIds.includes(req.usuarioId)) {
+      return res.status(403).json({ erro: 'Acesso negado: requer permissão de administrador' });
+    }
+    next();
+  } catch {
+    return res.status(401).json({ erro: 'Token inválido ou expirado' });
+  }
+}
+
+// Lista todos os usuários com status de assinatura
+app.get('/api/admin/usuarios', autenticarAdmin, async (req, res) => {
+  try {
+    const usuarios = await db.listarUsuariosAdmin();
+    res.json(usuarios);
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/usuarios:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Ativa assinatura manualmente por 30 dias
+app.post('/api/admin/ativar', autenticarAdmin, async (req, res) => {
+  try {
+    const { usuarioId } = req.body || {};
+    if (!usuarioId) return res.status(400).json({ erro: 'usuarioId obrigatório' });
+    const pagoAteStr = await pagamento.ativarManualmente(usuarioId);
+    const whatsappClient = app.get('whatsappClient');
+    if (whatsappClient) {
+      const dataFormatada = pagoAteStr.split('-').reverse().join('/');
+      await whatsappClient.sendMessage(usuarioId,
+        `✅ *Assinatura ativada!*\n\nSua assinatura do *Cronos* está ativa até *${dataFormatada}*. 🚀`
+      ).catch(e => console.error('[ADMIN] Erro ao notificar WhatsApp:', e.message));
+    }
+    res.json({ ok: true, pagoAte: pagoAteStr });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/ativar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Gera/retorna link de pagamento para um usuário
+app.post('/api/admin/link', autenticarAdmin, async (req, res) => {
+  try {
+    const { usuarioId } = req.body || {};
+    if (!usuarioId) return res.status(400).json({ erro: 'usuarioId obrigatório' });
+    const assinatura = await db.buscarAssinatura(usuarioId);
+    const link = await pagamento.obterLinkPagamento(usuarioId, assinatura);
+    res.json({ link: link || null });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/link:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Cria um cupom de desconto ou dias grátis
+app.post('/api/admin/cupom', autenticarAdmin, async (req, res) => {
+  try {
+    const { codigo, tipo, valor, usoMaximo, validoAte } = req.body || {};
+    if (!codigo || !tipo || !valor) return res.status(400).json({ erro: 'codigo, tipo e valor são obrigatórios' });
+    if (!['dias_gratis', 'desconto_percent'].includes(tipo)) {
+      return res.status(400).json({ erro: 'tipo deve ser dias_gratis ou desconto_percent' });
+    }
+    await db.criarCupom(codigo, tipo, parseInt(valor), parseInt(usoMaximo) || 1, validoAte || null);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.message?.includes('unique') || err.code === '23505') {
+      return res.status(409).json({ erro: 'Já existe um cupom com esse código' });
+    }
+    console.error('[ADMIN] /api/admin/cupom:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Lista todos os cupons criados
+app.get('/api/admin/cupons', autenticarAdmin, async (req, res) => {
+  try {
+    const cupons = await db.listarCupons();
+    res.json(cupons);
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/cupons:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });

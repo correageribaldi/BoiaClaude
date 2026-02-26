@@ -447,6 +447,90 @@ async function processarRedirectPagamento(query) {
   return { usuarioId: assinatura.usuario_id, pagoAteStr, receipt_url: receipt_url || null };
 }
 
+// ─── Cupons ───────────────────────────────────────────────────────────────────
+
+/**
+ * Valida e aplica um cupom para o usuário.
+ * - dias_gratis: estende a assinatura diretamente (sem pagamento)
+ * - desconto_percent: gera link InfinityPay com preço reduzido
+ * Retorna: { ok, tipo, dias?, pagoAte?, desconto?, link?, erro? }
+ */
+async function aplicarCupom(usuarioId, codigo) {
+  const cupom = await db.buscarCupom(codigo);
+
+  if (!cupom) return { ok: false, erro: 'Cupom inválido. Verifique o código e tente novamente.' };
+  if (!cupom.ativo) return { ok: false, erro: 'Este cupom foi desativado.' };
+  if (cupom.usos >= cupom.uso_maximo) return { ok: false, erro: 'Este cupom já foi totalmente utilizado.' };
+  if (cupom.valido_ate && new Date(cupom.valido_ate + 'T23:59:59') < new Date()) {
+    return { ok: false, erro: 'Este cupom expirou.' };
+  }
+
+  if (cupom.tipo === 'dias_gratis') {
+    const assinatura = await db.buscarAssinatura(usuarioId);
+    const agora = new Date();
+
+    // Base: se tem assinatura ativa no futuro, estender a partir dela; senão, de hoje
+    let dataBase = agora;
+    if (assinatura?.pago_ate) {
+      const pagoAte = new Date(assinatura.pago_ate + 'T23:59:59');
+      if (pagoAte > agora) dataBase = pagoAte;
+    } else if (assinatura?.status === 'trial') {
+      const trialFim = new Date(assinatura.trial_fim);
+      if (trialFim > agora) dataBase = trialFim;
+    }
+
+    const novaData = new Date(dataBase);
+    novaData.setDate(novaData.getDate() + cupom.valor);
+    const pagoAteStr = novaData.toISOString().slice(0, 10);
+
+    await db.ativarAssinatura(usuarioId, pagoAteStr);
+    await db.incrementarUsoCupom(cupom.id);
+    console.log(`[CUPOM] ✅ ${codigo} aplicado para ${usuarioId}: +${cupom.valor} dias → pago_ate=${pagoAteStr}`);
+
+    return { ok: true, tipo: 'dias_gratis', dias: cupom.valor, pagoAte: pagoAteStr };
+  }
+
+  if (cupom.tipo === 'desconto_percent') {
+    const handle = process.env.INFINITYPAY_HANDLE;
+    const webhookBase = process.env.WEBHOOK_BASE_URL;
+
+    if (!handle || !webhookBase) {
+      return { ok: false, erro: 'Sistema de pagamento não configurado.' };
+    }
+
+    const precoDesconto = Math.round(PRECO_CENTS * (1 - cupom.valor / 100));
+    const nsu = `cronos_${usuarioId.replace(/\D/g, '')}_${Date.now()}`;
+
+    try {
+      const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/links', {
+        handle,
+        items: [{
+          quantity: 1,
+          price: precoDesconto,
+          description: `Cronos Assistente - Assinatura mensal (${cupom.valor}% OFF)`,
+        }],
+        order_nsu: nsu,
+        webhook_url: `${webhookBase}/webhook/pagamento`,
+        redirect_url: `${webhookBase}/pagamento/sucesso`,
+      });
+
+      const link = res.url || res.link || res.checkout_url || null;
+      if (!link) return { ok: false, erro: 'Erro ao gerar link de pagamento com desconto.' };
+
+      await db.salvarLinkAssinatura(usuarioId, nsu, link);
+      await db.incrementarUsoCupom(cupom.id);
+      console.log(`[CUPOM] ✅ ${codigo} aplicado para ${usuarioId}: ${cupom.valor}% OFF → ${link}`);
+
+      return { ok: true, tipo: 'desconto_percent', desconto: cupom.valor, link };
+    } catch (err) {
+      console.error('[CUPOM] Erro ao criar link com desconto:', err.message);
+      return { ok: false, erro: 'Erro ao gerar link de pagamento.' };
+    }
+  }
+
+  return { ok: false, erro: 'Tipo de cupom desconhecido.' };
+}
+
 // ─── Polling automático de pagamentos pendentes ───────────────────────────────
 
 /**
@@ -489,6 +573,8 @@ module.exports = {
   msgTrialBemVindo,
   consultarPlano,
   ativarManualmente,
+  obterLinkPagamento,
+  aplicarCupom,
   processarWebhook,
   processarRedirectPagamento,
   iniciarPollingPagamentos,
