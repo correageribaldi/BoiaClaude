@@ -399,6 +399,12 @@ async function initTables() {
     ON CONFLICT (usuario_id) DO NOTHING
   `);
 
+  // Migração: adicionar colunas transaction_nsu e invoice_slug (InfinityPay payment_check)
+  await pool.query(`
+    ALTER TABLE assinaturas ADD COLUMN IF NOT EXISTS transaction_nsu TEXT;
+    ALTER TABLE assinaturas ADD COLUMN IF NOT EXISTS invoice_slug TEXT;
+  `);
+
   // Tabela de usuários do painel web (usuário/senha)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS painel_usuarios (
@@ -1477,6 +1483,15 @@ async function buscarAssinatura(usuarioId) {
   return result.rows[0] || null;
 }
 
+async function buscarAssinaturasPendentes() {
+  const result = await pool.query(
+    `SELECT id, usuario_id, status, order_nsu, transaction_nsu, invoice_slug, link_criado_em
+     FROM assinaturas
+     WHERE status IN ('graca', 'expirado') AND order_nsu IS NOT NULL`
+  );
+  return result.rows;
+}
+
 async function buscarAssinaturaPorOrderNSU(orderNsu) {
   const result = await pool.query(
     `SELECT id, usuario_id, status, trial_fim, pago_ate::text as pago_ate, order_nsu
@@ -1519,6 +1534,16 @@ async function salvarLinkAssinatura(usuarioId, orderNsu, link) {
      SET order_nsu = $1, link_pagamento = $2, link_criado_em = NOW(), atualizado_em = NOW()
      WHERE usuario_id = $3`,
     [orderNsu, link, usuarioId]
+  );
+}
+
+// Salva transaction_nsu e invoice_slug recebidos do webhook para uso no payment_check
+async function salvarTransacaoAssinatura(orderNsu, transactionNsu, invoiceSlug) {
+  await pool.query(
+    `UPDATE assinaturas
+     SET transaction_nsu = $1, invoice_slug = $2, atualizado_em = NOW()
+     WHERE order_nsu = $3`,
+    [transactionNsu || null, invoiceSlug || null, orderNsu]
   );
 }
 
@@ -1584,9 +1609,11 @@ module.exports = {
   adicionarTransacaoComRecorrencia,
   criarAssinatura,
   buscarAssinatura,
+  buscarAssinaturasPendentes,
   buscarAssinaturaPorOrderNSU,
   atualizarStatusAssinatura,
   ativarAssinatura,
   incrementarAvisosAssinatura,
   salvarLinkAssinatura,
+  salvarTransacaoAssinatura,
 };

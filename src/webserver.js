@@ -209,6 +209,95 @@ app.delete('/api/categories/:nome', autenticar, async (req, res) => {
   }
 });
 
+// ── Redirect pós-pagamento InfinityPay ───────────────────────────────────────
+// InfinityPay redireciona o browser do cliente aqui após pagamento confirmado
+// URL: GET /pagamento/sucesso?order_nsu=...&transaction_nsu=...&slug=...&receipt_url=...
+app.get('/pagamento/sucesso', async (req, res) => {
+  try {
+    console.log('[REDIRECT PAGAMENTO] Params recebidos:', JSON.stringify(req.query));
+
+    const resultado = await pagamento.processarRedirectPagamento(req.query);
+
+    const whatsappClient = app.get('whatsappClient');
+
+    if (resultado) {
+      const { usuarioId, pagoAteStr, receipt_url } = resultado;
+      const dataFormatada = pagoAteStr.split('-').reverse().join('/');
+
+      // Notificar usuário via WhatsApp
+      if (whatsappClient) {
+        try {
+          let msg = `✅ *Pagamento confirmado!*\n\nSua assinatura do *Cronos* está ativa até *${dataFormatada}*. Obrigado! 🚀`;
+          if (receipt_url) msg += `\n\n🧾 Comprovante: ${receipt_url}`;
+          await whatsappClient.sendMessage(usuarioId, msg);
+        } catch (err) {
+          console.error('[REDIRECT PAGAMENTO] Erro ao notificar WhatsApp:', err.message);
+        }
+      }
+
+      // Página de confirmação para o cliente
+      res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pagamento Confirmado - Cronos</title>
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; margin: 0; background: #f0fdf4; }
+    .card { background: white; border-radius: 16px; padding: 40px 32px; text-align: center;
+            max-width: 400px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
+    .icon { font-size: 64px; margin-bottom: 16px; }
+    h1 { color: #16a34a; margin: 0 0 8px; font-size: 24px; }
+    p { color: #555; margin: 8px 0; }
+    .data { font-weight: bold; color: #111; }
+    .footer { margin-top: 24px; font-size: 13px; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Pagamento confirmado!</h1>
+    <p>Sua assinatura do <strong>Cronos</strong> está ativa.</p>
+    <p>Válida até: <span class="data">${dataFormatada}</span></p>
+    <p class="footer">Volte ao WhatsApp — uma mensagem de confirmação foi enviada para você.</p>
+  </div>
+</body>
+</html>`);
+    } else {
+      // Pagamento não confirmado ainda (pode ser raro, InfinityPay redireciona após aprovação)
+      res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aguardando confirmação - Cronos</title>
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; margin: 0; background: #fffbeb; }
+    .card { background: white; border-radius: 16px; padding: 40px 32px; text-align: center;
+            max-width: 400px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
+    .icon { font-size: 64px; margin-bottom: 16px; }
+    h1 { color: #d97706; margin: 0 0 8px; font-size: 22px; }
+    p { color: #555; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">⏳</div>
+    <h1>Aguardando confirmação</h1>
+    <p>Seu pagamento está sendo processado.</p>
+    <p>Em até 5 minutos você receberá uma mensagem no WhatsApp confirmando o acesso.</p>
+  </div>
+</body>
+</html>`);
+    }
+  } catch (err) {
+    console.error('[REDIRECT PAGAMENTO] Erro:', err.message);
+    res.status(500).send('Erro interno. Tente novamente em instantes.');
+  }
+});
+
 // ── Webhook de pagamento InfinityPay ──────────────────────────────────────────
 // Endpoint público (sem autenticação JWT) — InfinityPay envia confirmação aqui
 app.post('/webhook/pagamento', async (req, res) => {

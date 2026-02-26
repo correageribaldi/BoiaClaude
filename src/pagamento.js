@@ -1,4 +1,5 @@
 const https = require('https');
+const cron = require('node-cron');
 const db = require('./database');
 
 const PRECO_CENTS = 1990; // R$ 19,90
@@ -67,7 +68,8 @@ async function obterLinkPagamento(usuarioId, assinatura) {
       handle,
       items: [{ quantity: 1, price: PRECO_CENTS, description: 'Cronos Assistente - Assinatura mensal' }],
       order_nsu: nsu,
-      webhook_url: `${webhookBase}/webhook/pagamento`,
+      webhook_url:  `${webhookBase}/webhook/pagamento`,
+      redirect_url: `${webhookBase}/pagamento/sucesso`,
     });
 
     const link = res.url || res.link || res.checkout_url || null;
@@ -101,7 +103,9 @@ async function verificarAcesso(usuarioId) {
 
   // Fallback: se está em carência/expirado e tem order_nsu pendente, verificar via API
   if ((assinatura.status === 'graca' || assinatura.status === 'expirado') && assinatura.order_nsu) {
-    const foiPago = await verificarPagamentoNSU(assinatura.order_nsu);
+    const foiPago = await verificarPagamentoNSU(
+      assinatura.order_nsu, assinatura.transaction_nsu, assinatura.invoice_slug
+    );
     if (foiPago) {
       const pagoAteStr = await ativarManualmente(usuarioId);
       console.log(`[PAGAMENTO] ✅ Ativado via payment_check fallback: ${usuarioId}`);
@@ -322,19 +326,20 @@ async function ativarManualmente(usuarioId) {
 
 // ─── Verificação de pagamento via API (fallback sem webhook) ─────────────────
 
-async function verificarPagamentoNSU(orderNsu) {
+// transactionNsu e invoiceSlug são opcionais mas melhoram a precisão da consulta
+async function verificarPagamentoNSU(orderNsu, transactionNsu, invoiceSlug) {
   const handle = process.env.INFINITYPAY_HANDLE;
   if (!handle || !orderNsu) return false;
   try {
-    // Requer handle + order_nsu conforme documentação InfinityPay
-    const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/payment_check', {
-      handle,
-      order_nsu: orderNsu,
-    });
+    // Envia todos os campos disponíveis conforme documentação InfinityPay
+    const body = { handle, order_nsu: orderNsu };
+    if (transactionNsu) body.transaction_nsu = transactionNsu;
+    if (invoiceSlug)    body.slug = invoiceSlug;
+
+    const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/payment_check', body);
     console.log(`[PAGAMENTO] payment_check nsu=${orderNsu}:`, JSON.stringify(res));
     // Resposta: { success, paid, amount, paid_amount, ... }
-    const pago = res.success === true && res.paid === true;
-    return pago;
+    return res.success === true && res.paid === true;
   } catch (err) {
     console.error('[PAGAMENTO] Erro ao chamar payment_check:', err.message);
     return false;
@@ -360,9 +365,12 @@ async function processarWebhook(payload) {
       return false;
     }
 
+    // Extrair campos InfinityPay para uso futuro no payment_check
+    const transaction_nsu = payload?.transaction_nsu || null;
+    const invoice_slug    = payload?.invoice_slug || payload?.slug || null;
+
     // Validação flexível: aceita se paid_amount > 0, ou se campos ausentes (InfinityPay só dispara em pagamento confirmado)
-    const valorPago  = Number(payload.paid_amount ?? payload.amount_paid ?? -1);
-    const valorTotal = Number(payload.amount ?? payload.total ?? 0);
+    const valorPago = Number(payload.paid_amount ?? payload.amount_paid ?? -1);
     if (valorPago === 0) {
       console.log(`[PAGAMENTO] Webhook indica valor zero: nsu=${order_nsu}, payload=${JSON.stringify(payload)}`);
       return false;
@@ -373,6 +381,12 @@ async function processarWebhook(payload) {
     if (!assinatura) {
       console.error('[PAGAMENTO] Webhook: nenhuma assinatura encontrada para nsu:', order_nsu);
       return false;
+    }
+
+    // Salvar transaction_nsu e invoice_slug antes de ativar (limpeza do order_nsu ocorre no ativarAssinatura)
+    if (transaction_nsu || invoice_slug) {
+      await db.salvarTransacaoAssinatura(order_nsu, transaction_nsu, invoice_slug);
+      console.log(`[PAGAMENTO] Transação salva: transaction_nsu=${transaction_nsu} slug=${invoice_slug}`);
     }
 
     const pagoAte = new Date();
@@ -389,6 +403,83 @@ async function processarWebhook(payload) {
   }
 }
 
+// ─── Redirect pós-pagamento (InfinityPay redireciona browser do cliente) ──────
+
+/**
+ * Chamado quando InfinityPay redireciona o browser para GET /pagamento/sucesso?...
+ * Recebe: order_nsu, transaction_nsu, slug, receipt_url, capture_method
+ * Retorna: { usuarioId, pagoAteStr } se ativado, null se não encontrado/não pago.
+ */
+async function processarRedirectPagamento(query) {
+  const { order_nsu, transaction_nsu, slug, receipt_url } = query;
+
+  if (!order_nsu) {
+    console.log('[PAGAMENTO] Redirect sem order_nsu. Params:', JSON.stringify(query));
+    return null;
+  }
+
+  console.log(`[PAGAMENTO] Redirect recebido: order_nsu=${order_nsu} transaction_nsu=${transaction_nsu} slug=${slug}`);
+
+  // Salvar transaction_nsu e slug para uso no payment_check
+  if (transaction_nsu || slug) {
+    await db.salvarTransacaoAssinatura(order_nsu, transaction_nsu || null, slug || null);
+  }
+
+  // Confirmar pagamento via API com todos os campos disponíveis
+  const foiPago = await verificarPagamentoNSU(order_nsu, transaction_nsu, slug);
+  if (!foiPago) {
+    console.log(`[PAGAMENTO] Redirect: payment_check não confirmou pagamento para nsu=${order_nsu}`);
+    return null;
+  }
+
+  // Buscar assinatura pelo order_nsu para obter usuarioId
+  const assinatura = await db.buscarAssinaturaPorOrderNSU(order_nsu);
+  if (!assinatura) {
+    console.error('[PAGAMENTO] Redirect: assinatura não encontrada para order_nsu:', order_nsu);
+    return null;
+  }
+
+  const pagoAteStr = await ativarManualmente(assinatura.usuario_id);
+  console.log(`[PAGAMENTO] ✅ Ativado via redirect: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
+  return { usuarioId: assinatura.usuario_id, pagoAteStr, receipt_url: receipt_url || null };
+}
+
+// ─── Polling automático de pagamentos pendentes ───────────────────────────────
+
+/**
+ * Inicia cron que verifica a cada 5 minutos se algum order_nsu pendente foi pago.
+ * Complementa o webhook: garante ativação mesmo quando o webhook falha.
+ */
+function iniciarPollingPagamentos(whatsappClient) {
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const pendentes = await db.buscarAssinaturasPendentes();
+      if (pendentes.length === 0) return;
+
+      console.log(`[PAGAMENTO] 🔄 Polling: verificando ${pendentes.length} pagamento(s) pendente(s)...`);
+      for (const assinatura of pendentes) {
+        const foiPago = await verificarPagamentoNSU(
+          assinatura.order_nsu, assinatura.transaction_nsu, assinatura.invoice_slug
+        );
+        if (foiPago) {
+          const pagoAteStr = await ativarManualmente(assinatura.usuario_id);
+          console.log(`[PAGAMENTO] ✅ Ativado via polling: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
+          if (whatsappClient) {
+            const dataFormatada = pagoAteStr.split('-').reverse().join('/');
+            await whatsappClient.sendMessage(
+              assinatura.usuario_id,
+              `✅ *Pagamento confirmado!* Sua assinatura do Cronos está ativa até *${dataFormatada}*. Obrigado! 🎉`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[PAGAMENTO] Erro no polling de pagamentos:', err.message);
+    }
+  });
+  console.log('[PAGAMENTO] 🔄 Polling de pagamentos iniciado (verificação a cada 5 minutos).');
+}
+
 module.exports = {
   verificarAcesso,
   gerarMensagemBloqueio,
@@ -396,4 +487,6 @@ module.exports = {
   consultarPlano,
   ativarManualmente,
   processarWebhook,
+  processarRedirectPagamento,
+  iniciarPollingPagamentos,
 };

@@ -39,6 +39,9 @@ client.on('ready', () => {
 
   // Iniciar sistema de lembretes automáticos
   iniciarLembretes(client);
+
+  // Iniciar polling de pagamentos pendentes (fallback do webhook)
+  pagamento.iniciarPollingPagamentos(client);
 });
 
 client.on('authenticated', () => {
