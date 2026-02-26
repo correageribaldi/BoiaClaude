@@ -354,6 +354,105 @@ async function carregarAgenda() {
   }
 }
 
+// ── Admin — Campanhas ─────────────────────────────────────────────────────────
+
+let campPollTimer = null;
+
+async function campPreview() {
+  const filtro = document.getElementById('adm-camp-filtro').value;
+  const countEl = document.getElementById('adm-camp-count');
+  countEl.textContent = '…';
+  try {
+    const r = await api('/api/admin/campanhas/destinatarios?filtro=' + filtro);
+    countEl.textContent = `${r.total} destinatário(s)`;
+  } catch (err) {
+    countEl.textContent = err.message;
+  }
+}
+
+async function campEnviar() {
+  const mensagem = document.getElementById('adm-camp-msg').value.trim();
+  const filtro = document.getElementById('adm-camp-filtro').value;
+  const statusEl = document.getElementById('adm-camp-status');
+  const progressoEl = document.getElementById('adm-camp-progresso');
+  const btn = document.getElementById('adm-camp-enviar');
+
+  if (!mensagem) { toast('Digite a mensagem da campanha', 'error'); return; }
+
+  const previewCount = document.getElementById('adm-camp-count').textContent;
+  if (!confirm(`Confirmar envio da campanha para:\n${previewCount || 'destinatários selecionados'}?\n\nO envio será feito com delay aleatório entre mensagens.`)) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Iniciando...';
+  statusEl.textContent = '';
+  progressoEl.classList.add('hidden');
+
+  try {
+    const r = await api('/api/admin/campanhas/enviar', {
+      method: 'POST',
+      body: JSON.stringify({ mensagem, filtro }),
+    });
+
+    if (r.total === 0) {
+      statusEl.textContent = r.aviso || 'Nenhum destinatário encontrado.';
+      btn.disabled = false;
+      btn.textContent = '📤 Enviar Campanha';
+      return;
+    }
+
+    progressoEl.classList.remove('hidden');
+    document.getElementById('adm-camp-prog-label').textContent = 'Enviando...';
+    document.getElementById('adm-camp-prog-nums').textContent = `0 / ${r.total}`;
+    document.getElementById('adm-camp-barra').style.width = '0%';
+    document.getElementById('adm-camp-log').innerHTML = '';
+    btn.textContent = '⏳ Enviando...';
+
+    campStartPolling(r.campanhaId, r.total);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '📤 Enviar Campanha';
+  }
+}
+
+function campStartPolling(campanhaId, total) {
+  if (campPollTimer) clearInterval(campPollTimer);
+
+  campPollTimer = setInterval(async () => {
+    try {
+      const s = await api('/api/admin/campanhas/' + campanhaId);
+      const feitos = s.enviados + s.erros;
+      const pct = total > 0 ? Math.round((feitos / total) * 100) : 0;
+
+      document.getElementById('adm-camp-prog-nums').textContent = `${feitos} / ${total}`;
+      document.getElementById('adm-camp-barra').style.width = pct + '%';
+
+      const logEl = document.getElementById('adm-camp-log');
+      const logAtual = logEl.children.length;
+      const novos = s.log.slice(logAtual);
+      for (const item of novos) {
+        const div = document.createElement('div');
+        div.className = 'camp-log-item ' + (item.ok ? 'camp-log-ok' : 'camp-log-erro');
+        div.textContent = (item.ok ? '✅ ' : '❌ ') + item.nome + (item.erro ? ` — ${item.erro}` : '');
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      if (s.finalizado) {
+        clearInterval(campPollTimer);
+        campPollTimer = null;
+        document.getElementById('adm-camp-prog-label').textContent =
+          `Concluído! ${s.enviados} enviados, ${s.erros} erros.`;
+        document.getElementById('adm-camp-barra').style.width = '100%';
+        const btnFim = document.getElementById('adm-camp-enviar');
+        btnFim.disabled = false;
+        btnFim.textContent = '📤 Enviar Campanha';
+        toast(`Campanha concluída: ${s.enviados} mensagens enviadas!`, 'success');
+      }
+    } catch (_) {}
+  }, 3000);
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 let admUsuarios = [];
@@ -577,6 +676,10 @@ function inicializar() {
         carregarAdminCupons();
       } catch (err) { toast(err.message, 'error'); }
     });
+
+    // Admin: campanhas
+    document.getElementById('adm-camp-preview').addEventListener('click', campPreview);
+    document.getElementById('adm-camp-enviar').addEventListener('click', campEnviar);
 
     // Admin: busca de usuários
     document.getElementById('adm-busca').addEventListener('input', e => {

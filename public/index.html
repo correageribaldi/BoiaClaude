@@ -154,6 +154,51 @@
     <section id="tab-admin" class="tab-content hidden">
       <div class="section-header"><h2>⚙️ Administração</h2></div>
 
+      <!-- Campanhas -->
+      <div class="admin-card">
+        <h3>📣 Enviar Campanha</h3>
+
+        <div class="admin-row" style="margin-bottom:10px">
+          <div class="input-group" style="flex:1;min-width:160px">
+            <label>Público-alvo</label>
+            <select id="adm-camp-filtro">
+              <option value="todos">Todos não pagantes</option>
+              <option value="trial">Em período de teste</option>
+              <option value="expirado">Expirados</option>
+              <option value="graca">Em carência</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <button class="btn btn-sm" id="adm-camp-preview" style="background:#f0f2f5;color:var(--text)">🔍 Ver destinatários</button>
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <span id="adm-camp-count" style="font-size:13px;color:var(--text-muted);padding:6px 0"></span>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label>Mensagem <span style="color:var(--text-muted);font-weight:400">— use {nome} para personalizar</span></label>
+          <textarea id="adm-camp-msg" rows="5" placeholder="Olá {nome}! Sabia que o Cronos pode te ajudar a controlar suas finanças pelo WhatsApp?..." style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;resize:vertical;font-family:inherit"></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-primary" id="adm-camp-enviar">📤 Enviar Campanha</button>
+          <span id="adm-camp-status" style="font-size:13px;color:var(--text-muted)"></span>
+        </div>
+
+        <!-- Progresso -->
+        <div id="adm-camp-progresso" class="hidden" style="margin-top:16px">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+            <span id="adm-camp-prog-label">Enviando...</span>
+            <span id="adm-camp-prog-nums"></span>
+          </div>
+          <div class="camp-barra-bg">
+            <div class="camp-barra-fill" id="adm-camp-barra"></div>
+          </div>
+          <div id="adm-camp-log" class="camp-log"></div>
+        </div>
+      </div>
+
       <!-- Criar cupom -->
       <div class="admin-card">
         <h3>Criar Cupom</h3>

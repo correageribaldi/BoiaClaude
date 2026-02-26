@@ -351,6 +351,9 @@ app.get('/api/agenda', autenticar, async (req, res) => {
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
+// Estado em memória das campanhas em andamento
+const campanhasAtivas = new Map();
+
 async function autenticarAdmin(req, res, next) {
   const auth = req.headers.authorization || '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
@@ -442,6 +445,84 @@ app.get('/api/admin/cupons', autenticarAdmin, async (req, res) => {
     console.error('[ADMIN] /api/admin/cupons:', err.message);
     res.status(500).json({ erro: err.message });
   }
+});
+
+// ── Campanhas ─────────────────────────────────────────────────────────────────
+
+// Lista usuários elegíveis para campanha com contagem prévia
+app.get('/api/admin/campanhas/destinatarios', autenticarAdmin, async (req, res) => {
+  try {
+    const { filtro } = req.query;
+    const usuarios = await db.listarUsuariosNaoPagantes(filtro || 'todos');
+    res.json({ total: usuarios.length, usuarios });
+  } catch (err) {
+    console.error('[CAMPANHA] /destinatarios:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Inicia envio em massa com delay aleatório entre mensagens
+app.post('/api/admin/campanhas/enviar', autenticarAdmin, async (req, res) => {
+  try {
+    const { mensagem, filtro } = req.body || {};
+    if (!mensagem?.trim()) return res.status(400).json({ erro: 'Mensagem obrigatória' });
+
+    const usuarios = await db.listarUsuariosNaoPagantes(filtro || 'todos');
+    if (usuarios.length === 0) {
+      return res.json({ ok: true, total: 0, campanhaId: null, aviso: 'Nenhum usuário encontrado para este filtro.' });
+    }
+
+    const campanhaId = Date.now().toString();
+    const estado = { enviados: 0, total: usuarios.length, erros: 0, finalizado: false, log: [] };
+    campanhasAtivas.set(campanhaId, estado);
+
+    // Responde imediatamente — envio ocorre em background
+    res.json({ ok: true, total: usuarios.length, campanhaId });
+
+    const whatsappClient = app.get('whatsappClient');
+    if (!whatsappClient) {
+      estado.finalizado = true;
+      estado.log.push('WhatsApp client não disponível.');
+      return;
+    }
+
+    // Envio assíncrono com delay aleatório 5-15s
+    (async () => {
+      console.log(`[CAMPANHA] ${campanhaId} iniciada — ${usuarios.length} destinatários`);
+      for (let i = 0; i < usuarios.length; i++) {
+        const usuario = usuarios[i];
+        try {
+          const primeiroNome = (usuario.nome || '').split(' ')[0] || 'amigo(a)';
+          const msg = mensagem.replace(/\{nome\}/gi, primeiroNome);
+          await whatsappClient.sendMessage(usuario.usuario_id, msg);
+          estado.enviados++;
+          estado.log.push(`✅ ${usuario.usuario_id} (${usuario.nome || '—'})`);
+        } catch (err) {
+          estado.erros++;
+          estado.log.push(`❌ ${usuario.usuario_id}: ${err.message}`);
+          console.error(`[CAMPANHA] Erro ao enviar para ${usuario.usuario_id}:`, err.message);
+        }
+
+        // Delay aleatório entre 5 e 15 segundos (exceto no último)
+        if (i < usuarios.length - 1) {
+          const delay = Math.floor(5000 + Math.random() * 10000);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      estado.finalizado = true;
+      console.log(`[CAMPANHA] ${campanhaId} finalizada — enviados: ${estado.enviados}, erros: ${estado.erros}`);
+    })();
+  } catch (err) {
+    console.error('[CAMPANHA] /enviar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Consulta status de uma campanha em andamento
+app.get('/api/admin/campanhas/:id', autenticarAdmin, (req, res) => {
+  const estado = campanhasAtivas.get(req.params.id);
+  if (!estado) return res.status(404).json({ erro: 'Campanha não encontrada' });
+  res.json(estado);
 });
 
 // ── Inicialização ─────────────────────────────────────────────────────────────

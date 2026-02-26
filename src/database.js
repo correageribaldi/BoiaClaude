@@ -1570,6 +1570,23 @@ async function salvarTransacaoAssinatura(orderNsu, transactionNsu, invoiceSlug) 
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
+async function listarUsuariosNaoPagantes(filtro = 'todos') {
+  let condicao;
+  if (filtro === 'trial')    condicao = `a.status = 'trial'`;
+  else if (filtro === 'expirado') condicao = `a.status = 'expirado'`;
+  else if (filtro === 'graca')    condicao = `a.status = 'graca'`;
+  else condicao = `a.status IN ('trial', 'graca', 'expirado')`;
+
+  const result = await pool.query(`
+    SELECT u.usuario_id, u.nome, a.status, a.trial_fim, a.pago_ate
+    FROM usuarios u
+    JOIN assinaturas a ON a.usuario_id = u.usuario_id
+    WHERE ${condicao}
+    ORDER BY u.primeiro_contato DESC
+  `);
+  return result.rows;
+}
+
 async function listarUsuariosAdmin() {
   const result = await pool.query(`
     SELECT u.usuario_id, u.nome, u.primeiro_contato,
@@ -1680,6 +1697,7 @@ module.exports = {
   incrementarAvisosAssinatura,
   salvarLinkAssinatura,
   salvarTransacaoAssinatura,
+  listarUsuariosNaoPagantes,
   listarUsuariosAdmin,
   criarCupom,
   buscarCupom,

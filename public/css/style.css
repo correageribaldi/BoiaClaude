@@ -483,3 +483,33 @@ body {
 .btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
 .btn-green { background: var(--green); color: white; }
 .btn-blue { background: var(--blue); color: white; }
+
+/* ── Campaign progress ───────────────────────────────────────────────────── */
+.camp-barra-bg {
+  background: var(--bg);
+  border-radius: 8px;
+  height: 10px;
+  overflow: hidden;
+}
+.camp-barra-fill {
+  height: 100%;
+  background: var(--blue);
+  border-radius: 8px;
+  transition: width .4s ease;
+  width: 0%;
+}
+.camp-log {
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.camp-log-item {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.camp-log-ok { background: var(--green-light); color: var(--green); }
+.camp-log-erro { background: var(--red-light); color: var(--red); }
