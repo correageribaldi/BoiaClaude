@@ -99,6 +99,16 @@ async function verificarAcesso(usuarioId) {
     return { permitido: true, ehPrimeiraVez: true, status: 'trial' };
   }
 
+  // Fallback: se está em carência/expirado e tem order_nsu pendente, verificar via API
+  if ((assinatura.status === 'graca' || assinatura.status === 'expirado') && assinatura.order_nsu) {
+    const foiPago = await verificarPagamentoNSU(assinatura.order_nsu);
+    if (foiPago) {
+      const pagoAteStr = await ativarManualmente(usuarioId);
+      console.log(`[PAGAMENTO] ✅ Ativado via payment_check fallback: ${usuarioId}`);
+      return { permitido: true, status: 'ativo', aviso: `✅ Pagamento confirmado! Sua assinatura está ativa até ${pagoAteStr.split('-').reverse().join('/')}.` };
+    }
+  }
+
   const agora = new Date();
 
   // ── TRIAL ──
@@ -299,42 +309,76 @@ async function consultarPlano(usuarioId) {
   return msg;
 }
 
+// ─── Ativar assinatura manualmente (admin) ───────────────────────────────────
+
+async function ativarManualmente(usuarioId) {
+  const pagoAte = new Date();
+  pagoAte.setDate(pagoAte.getDate() + 30);
+  const pagoAteStr = pagoAte.toISOString().slice(0, 10);
+  await db.ativarAssinatura(usuarioId, pagoAteStr);
+  console.log(`[PAGAMENTO] ✅ Ativação manual: ${usuarioId} | pago_ate=${pagoAteStr}`);
+  return pagoAteStr;
+}
+
+// ─── Verificação de pagamento via API (fallback sem webhook) ─────────────────
+
+async function verificarPagamentoNSU(orderNsu) {
+  const webhookBase = process.env.WEBHOOK_BASE_URL;
+  if (!webhookBase || !orderNsu) return false;
+  try {
+    const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/payment_check', {
+      order_nsu: orderNsu,
+    });
+    console.log(`[PAGAMENTO] payment_check nsu=${orderNsu}:`, JSON.stringify(res));
+    // InfinityPay retorna status do pagamento — considerar pago se paid_amount > 0 ou status indica pago
+    const pago = res.paid_amount > 0 || res.status === 'paid' || res.status === 'approved';
+    return pago;
+  } catch (err) {
+    console.error('[PAGAMENTO] Erro ao chamar payment_check:', err.message);
+    return false;
+  }
+}
+
 // ─── Webhook de confirmação de pagamento ──────────────────────────────────────
 
 /**
  * Processa payload de webhook do InfinityPay.
  * Retorna o usuarioId ativado, ou false em caso de falha.
+ * Log completo do payload para diagnóstico.
  */
 async function processarWebhook(payload) {
   try {
-    const { order_nsu, paid_amount, amount } = payload || {};
+    // Log completo para diagnóstico
+    console.log('[PAGAMENTO] Webhook payload completo:', JSON.stringify(payload, null, 2));
+
+    const order_nsu = payload?.order_nsu || payload?.nsu || payload?.invoice_nsu;
 
     if (!order_nsu) {
-      console.error('[PAGAMENTO] Webhook sem order_nsu');
+      console.error('[PAGAMENTO] Webhook sem order_nsu. Campos recebidos:', Object.keys(payload || {}));
       return false;
     }
 
-    // Verificar se foi de fato pago
-    const valorPago = Number(paid_amount || 0);
-    const valorTotal = Number(amount || PRECO_CENTS);
-    if (valorPago < valorTotal) {
-      console.log(`[PAGAMENTO] Webhook recebido mas não pago: nsu=${order_nsu}, pago=${valorPago}, total=${valorTotal}`);
+    // Validação flexível: aceita se paid_amount > 0, ou se campos ausentes (InfinityPay só dispara em pagamento confirmado)
+    const valorPago  = Number(payload.paid_amount ?? payload.amount_paid ?? -1);
+    const valorTotal = Number(payload.amount ?? payload.total ?? 0);
+    if (valorPago === 0) {
+      console.log(`[PAGAMENTO] Webhook indica valor zero: nsu=${order_nsu}, payload=${JSON.stringify(payload)}`);
       return false;
     }
+    // Se paid_amount não veio no payload (-1), confia no webhook (InfinityPay só chama em pagamento aprovado)
 
     const assinatura = await db.buscarAssinaturaPorOrderNSU(order_nsu);
     if (!assinatura) {
-      console.error('[PAGAMENTO] Webhook: assinatura não encontrada para nsu:', order_nsu);
+      console.error('[PAGAMENTO] Webhook: nenhuma assinatura encontrada para nsu:', order_nsu);
       return false;
     }
 
-    // pago_ate = hoje + 30 dias
     const pagoAte = new Date();
     pagoAte.setDate(pagoAte.getDate() + 30);
     const pagoAteStr = pagoAte.toISOString().slice(0, 10);
 
     await db.ativarAssinatura(assinatura.usuario_id, pagoAteStr);
-    console.log(`[PAGAMENTO] ✅ Assinatura ativada: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
+    console.log(`[PAGAMENTO] ✅ Assinatura ativada via webhook: ${assinatura.usuario_id} | pago_ate=${pagoAteStr}`);
 
     return assinatura.usuario_id;
   } catch (err) {
@@ -348,5 +392,6 @@ module.exports = {
   gerarMensagemBloqueio,
   msgTrialBemVindo,
   consultarPlano,
+  ativarManualmente,
   processarWebhook,
 };

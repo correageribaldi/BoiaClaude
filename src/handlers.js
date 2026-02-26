@@ -1313,6 +1313,22 @@ async function handleMessage(usuarioId, texto) {
     return await pagamento.consultarPlano(usuarioId);
   }
 
+  // Comando admin: ativar <numero> — ativa assinatura manualmente
+  if (lower.startsWith('ativar ')) {
+    const admins = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (admins.includes(usuarioId)) {
+      const numeroRaw = texto.trim().slice(7).trim();
+      const numero = numeroRaw.replace(/\D/g, '');
+      if (numero.length >= 10) {
+        const digits = numero.startsWith('55') ? numero : `55${numero}`;
+        const alvoId = `${digits}@c.us`;
+        const pagoAteStr = await pagamento.ativarManualmente(alvoId);
+        return `✅ Assinatura ativada para *${alvoId}* até *${pagoAteStr.split('-').reverse().join('/')}*`;
+      }
+      return `❌ Número inválido. Use: _ativar 5511999999999_`;
+    }
+  }
+
   // Comando: caixinhas / investimentos
   if (lower === 'caixinhas' || lower === 'investimentos' || lower === 'minhas caixinhas' || lower === 'meus investimentos') {
     return await handleListarCaixinhas(usuarioId);
