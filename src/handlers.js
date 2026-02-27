@@ -1298,9 +1298,13 @@ async function handleMessage(usuarioId, texto) {
     return await handleIniciarRemocaoContato(usuarioId, msg);
   }
 
-  // Comando: despesa / receita (direto)
+  // Comando: despesa / receita (direto) — só roteia se 2ª palavra for um valor numérico.
+  // Se não for número (ex: "receita de bolinho de arroz"), cai na IA para interpretar corretamente.
   if (lower.startsWith('despesa ') || lower.startsWith('receita ')) {
-    return await handleTransacao(usuarioId, msg);
+    const segundaPalavra = msg.trim().split(/\s+/)[1] || '';
+    if (parseValor(segundaPalavra) !== null) {
+      return await handleTransacao(usuarioId, msg);
+    }
   }
 
   // Comando: resumo
