@@ -1863,7 +1863,7 @@ async function handleLiquidar(usuarioId, msg) {
     `📂 ${transacao.categoria}`;
 }
 
-async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOriginal) {
+async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOriginal, enviarAck) {
   const lower = (textoOriginal || '').toLowerCase();
   if (!resultado) {
     if (fallbackMsg) return fallbackMsg;
@@ -2271,7 +2271,7 @@ async function handleMensagemIA(usuarioId, texto, enviarAck) {
     }
   }
 
-  return await processarResultadoIA(usuarioId, resultado, null, texto);
+  return await processarResultadoIA(usuarioId, resultado, null, texto, enviarAck);
 }
 
 async function handleImageMessage(usuarioId, base64Data, mimetype) {
