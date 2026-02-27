@@ -275,7 +275,8 @@ client.on('message', async (msg) => {
       return;
     }
 
-    const resposta = await handleMessage(usuarioId, texto);
+    const enviarAck = (ackTexto) => msg.reply(ackTexto);
+    const resposta = await handleMessage(usuarioId, texto, enviarAck);
     await responderMensagem(msg, usuarioId, resposta);
 
     // Enviar boas-vindas do trial (primeira vez) ou aviso de vencimento

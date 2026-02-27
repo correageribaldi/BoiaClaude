@@ -1181,7 +1181,64 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
   return `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo, tudo anotado! 🎉`;
 }
 
-async function handleMessage(usuarioId, texto) {
+// Mensagens de ack enquanto o bot vai buscar informações
+function gerarMensagemAck(acao, contexto = '') {
+  const ctx = contexto.toLowerCase();
+  const isComida = /receita|bolo|prato|cozin|jantar|almoç|sabor|ingrediente|tempero|culiná|pão|doce|torta|massa|sopa|arroz|feijão|frango|carne/.test(ctx);
+  const isTreinamento = /exerc|treino|academia|muscu|corrida|yoga|pilates|malhar|alongar/.test(ctx);
+
+  if (acao === 'assistente' && isComida) {
+    const msgs = [
+      'Se algum dia eu puder sentir sabor, vou querer isso... já procuro! 🍽️',
+      'Me deu uma fome digital só de ler isso. Um segundo! 🤌',
+      'Consultando meus circuitos gastronômicos... 👨‍🍳',
+      'Já busco! _ps: na minha lista de desejos tá sentir cheiro de comida_ 😄',
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+
+  if (acao === 'assistente' && isTreinamento) {
+    const msgs = [
+      'Consultando meu lado atlético virtual... 💪',
+      'Já busco! _ps: eu nunca canso, mas você vai_ 😅',
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+
+  if (acao === 'assistente') {
+    const msgs = [
+      'Boa pergunta! Um segundo... 🧠',
+      'Deixa eu pensar nisso... ⚡',
+      'Consultando meus arquivos mentais... 📚',
+      'Processando... _(não, de verdade, isso leva um segundo)_ 🤖',
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+
+  if (acao === 'pesquisa') {
+    const msgs = [
+      'Já vou perguntar pro Google pra você... 🔍',
+      'Pesquisando nos confins da internet... 🌐',
+      'Ligando pro meu parente robótico... 🤖',
+      'Um segundo, vou vasculhar a web! 🔎',
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+
+  if (acao === 'busca_local') {
+    const msgs = [
+      'Analisando a sua vizinhança... 📍',
+      'Consultando o mapa! 🗺️',
+      'Verificando o que tem por aí... 📡',
+      'Deixa eu dar uma olhada pra você! 🗺️',
+    ];
+    return msgs[Math.floor(Math.random() * msgs.length)];
+  }
+
+  return 'Um segundo... ⏳';
+}
+
+async function handleMessage(usuarioId, texto, enviarAck) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
 
@@ -1429,7 +1486,7 @@ async function handleMessage(usuarioId, texto) {
   }
 
   // IA interpreta tudo: saudações, transações, consultas, etc. (incluindo reset)
-  return await handleMensagemIA(usuarioId, msg);
+  return await handleMensagemIA(usuarioId, msg, enviarAck);
 }
 
 async function handleTransacao(usuarioId, msg) {
@@ -1932,8 +1989,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   // Assistente do dia a dia - respostas rápidas e práticas
   if (resultado.acao === 'assistente') {
-    // Segunda chamada dedicada com prompt conversacional e sem limite curto de tokens
     const pergunta = resultado.pergunta || textoOriginal;
+    if (enviarAck) await enviarAck(gerarMensagemAck('assistente', textoOriginal)).catch(() => {});
     const resposta = await responderAssistente(pergunta);
     return resposta || '❌ Não consegui processar sua pergunta. Tente de novo!';
   }
@@ -1947,14 +2004,17 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     if (deveForcarBuscaLocal) {
       const resultadoLocal = montarResultadoBuscaLocal(resultado, textoOriginal);
       console.log(`[BUSCA LOCAL] Forcando busca_local (acao original: pesquisa) query="${resultadoLocal.query}"`);
+      if (enviarAck) await enviarAck(gerarMensagemAck('busca_local', textoOriginal)).catch(() => {});
       return await handleBuscaLocal(usuarioId, resultadoLocal);
     }
 
+    if (enviarAck) await enviarAck(gerarMensagemAck('pesquisa', textoOriginal)).catch(() => {});
     return await handlePesquisa(resultado);
   }
 
   // Busca local (por localização)
   if (resultado.acao === 'busca_local') {
+    if (enviarAck) await enviarAck(gerarMensagemAck('busca_local', textoOriginal)).catch(() => {});
     return await handleBuscaLocal(usuarioId, montarResultadoBuscaLocal(resultado, textoOriginal));
   }
 
@@ -2194,7 +2254,7 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
   return await salvarTransacao(usuarioId, pendente.tipo, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, pendente.status || 'pendente');
 }
 
-async function handleMensagemIA(usuarioId, texto) {
+async function handleMensagemIA(usuarioId, texto, enviarAck) {
   // Detectar reset ANTES da IA interpretar (para funcionar em áudio também)
   const lower = texto.toLowerCase().trim().replace(/[.,!?]+$/g, '');
   if (lower === 'resetar' || lower.includes('começar do zero') || lower.includes('comecar do zero') || lower === 'limpar tudo' || lower === 'zerar dados') {
