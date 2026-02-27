@@ -535,6 +535,25 @@ app.get('/api/admin/campanhas/:id', autenticarAdmin, (req, res) => {
   res.json(estado);
 });
 
+// Envia mensagem individual para um usuário específico
+app.post('/api/admin/enviar-individual', autenticarAdmin, async (req, res) => {
+  try {
+    const { usuarioId, mensagem } = req.body || {};
+    if (!usuarioId || !mensagem?.trim()) {
+      return res.status(400).json({ erro: 'usuarioId e mensagem são obrigatórios' });
+    }
+    const whatsappClient = app.get('whatsappClient');
+    if (!whatsappClient) return res.status(503).json({ erro: 'WhatsApp não disponível' });
+
+    await whatsappClient.sendMessage(usuarioId, mensagem.trim());
+    console.log(`[ADMIN] Mensagem individual enviada para ${usuarioId}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[ADMIN] /enviar-individual:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function iniciarWebServer(whatsappClient) {
   if (whatsappClient) {

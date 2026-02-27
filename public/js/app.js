@@ -453,6 +453,110 @@ function campStartPolling(campanhaId, total) {
   }, 3000);
 }
 
+// ── Admin — Envio Individual ──────────────────────────────────────────────────
+
+const admInd = { pagina: 1, ppp: 10, busca: '' };
+
+function renderEnvioIndividual() {
+  const lista = admUsuarios.filter(u =>
+    !u.usuario_id.includes('@lid') && (
+      (u.nome || '').toLowerCase().includes(admInd.busca) ||
+      (u.usuario_id || '').toLowerCase().includes(admInd.busca)
+    )
+  );
+
+  const total = lista.length;
+  const totalPags = Math.max(1, Math.ceil(total / admInd.ppp));
+  if (admInd.pagina > totalPags) admInd.pagina = 1;
+
+  const inicio = (admInd.pagina - 1) * admInd.ppp;
+  const pagina_items = lista.slice(inicio, inicio + admInd.ppp);
+
+  const listaEl = document.getElementById('adm-ind-lista');
+  listaEl.innerHTML = '';
+
+  if (!pagina_items.length) {
+    listaEl.innerHTML = '<div class="empty-state">Nenhum usuário encontrado.</div>';
+    document.getElementById('adm-ind-pag').innerHTML = '';
+    return;
+  }
+
+  for (const u of pagina_items) {
+    const uid = u.usuario_id;
+    const nome = u.nome || '—';
+    const numero = uid.replace('@c.us', '').replace(/^55/, '');
+    const item = document.createElement('div');
+    item.className = 'adm-ind-item';
+    item.dataset.uid = uid;
+    item.innerHTML = `
+      <div class="adm-ind-info">
+        <span class="adm-ind-nome">${esc(nome)}</span>
+        <span class="adm-ind-num">${esc(numero)}</span>
+        <span class="adm-ind-status">${statusLabel(u.status)}</span>
+      </div>
+      <button class="btn btn-sm btn-blue adm-ind-btn-abrir" onclick="toggleEnvioIndForm('${esc(uid)}')">✉️ Enviar</button>
+      <div class="adm-ind-form hidden" id="adm-ind-form-${esc(uid)}">
+        <textarea class="adm-ind-textarea" placeholder="Mensagem para ${esc(nome)}..." rows="3"></textarea>
+        <button class="btn btn-sm btn-green" onclick="enviarIndividual('${esc(uid)}', '${esc(nome)}', this)">📤 Enviar</button>
+      </div>
+    `;
+    listaEl.appendChild(item);
+  }
+
+  // Paginação
+  const pagEl = document.getElementById('adm-ind-pag');
+  pagEl.innerHTML = '';
+  if (totalPags <= 1) return;
+
+  const addBtn = (label, ativo, onclick) => {
+    const btn = document.createElement('button');
+    btn.className = 'page-btn' + (ativo ? ' active' : '');
+    btn.textContent = label;
+    btn.onclick = onclick;
+    pagEl.appendChild(btn);
+  };
+
+  addBtn('‹', false, () => { if (admInd.pagina > 1) { admInd.pagina--; renderEnvioIndividual(); } });
+  const span = document.createElement('span');
+  span.style.cssText = 'font-size:13px;color:var(--text-muted);padding:0 4px';
+  span.textContent = `${admInd.pagina} / ${totalPags}`;
+  pagEl.appendChild(span);
+  addBtn('›', false, () => { if (admInd.pagina < totalPags) { admInd.pagina++; renderEnvioIndividual(); } });
+}
+
+function toggleEnvioIndForm(uid) {
+  const formEl = document.getElementById('adm-ind-form-' + uid);
+  if (!formEl) return;
+  formEl.classList.toggle('hidden');
+  if (!formEl.classList.contains('hidden')) {
+    formEl.querySelector('textarea')?.focus();
+  }
+}
+
+async function enviarIndividual(usuarioId, nome, btn) {
+  const formEl = document.getElementById('adm-ind-form-' + usuarioId);
+  const textarea = formEl?.querySelector('textarea');
+  const mensagem = textarea?.value.trim();
+  if (!mensagem) { toast('Digite uma mensagem', 'error'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    await api('/api/admin/enviar-individual', {
+      method: 'POST',
+      body: JSON.stringify({ usuarioId, mensagem }),
+    });
+    toast(`✅ Mensagem enviada para ${nome}`, 'success');
+    textarea.value = '';
+    formEl.classList.add('hidden');
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 Enviar';
+  }
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 let admUsuarios = [];
@@ -476,6 +580,7 @@ async function carregarAdminUsuarios() {
   try {
     admUsuarios = await api('/api/admin/usuarios');
     renderAdminUsuarios(admUsuarios);
+    renderEnvioIndividual();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -675,6 +780,13 @@ function inicializar() {
         document.getElementById('adm-cupom-validade').value = '';
         carregarAdminCupons();
       } catch (err) { toast(err.message, 'error'); }
+    });
+
+    // Admin: envio individual
+    document.getElementById('adm-ind-busca').addEventListener('input', e => {
+      admInd.busca = e.target.value.toLowerCase().trim();
+      admInd.pagina = 1;
+      renderEnvioIndividual();
     });
 
     // Admin: campanhas
