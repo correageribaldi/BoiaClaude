@@ -749,13 +749,13 @@ function inicializar() {
   });
 
   // Alertas de atrasados → ir para transações pendentes
-  document.getElementById('alert-receber').addEventListener('click', () => {
+  document.getElementById('alert-receber')?.addEventListener('click', () => {
     const e = estado.dash;
     estado.tx.mes = e.mes; estado.tx.ano = e.ano;
     estado.tx.filtroStatus = 'pendente'; estado.tx.filtroTipo = 'receita'; estado.tx.pagina = 1;
     ativarTab('transactions');
   });
-  document.getElementById('alert-pagar').addEventListener('click', () => {
+  document.getElementById('alert-pagar')?.addEventListener('click', () => {
     const e = estado.dash;
     estado.tx.mes = e.mes; estado.tx.ano = e.ano;
     estado.tx.filtroStatus = 'pendente'; estado.tx.filtroTipo = 'despesa'; estado.tx.pagina = 1;
