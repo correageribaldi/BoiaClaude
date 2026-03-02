@@ -279,6 +279,7 @@ client.on('message', async (msg) => {
     if (acesso.ehPrimeiraVez) {
       setOnboardingState(usuarioId, 'aguardando_nome');
       await msg.reply(mensagemApresentacao());
+      await new Promise(r => setTimeout(r, 2000));
       await client.sendMessage(usuarioId, mensagemPerguntaNome());
       return;
     }

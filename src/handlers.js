@@ -582,9 +582,8 @@ async function handleOnboardingNome(usuarioId, texto) {
   await db.atualizarNomeUsuario(usuarioId, nome);
   setOnboardingState(usuarioId, 'aguardando_inicio');
 
-  const primeiroNome = nome.split(' ')[0];
   return (
-    `A partir de agora eu te chamo de *${primeiroNome}* 😊\n\n` +
+    `A partir de agora eu te chamo de *${nome}* 😊\n\n` +
     `Agora me diz...\n` +
     `Como você prefere começar?\n\n` +
     `🎯 *Organizar tudo agora*\n` +
@@ -2372,6 +2371,7 @@ async function handleMensagemIA(usuarioId, texto, enviarAck) {
     limparPontoZero(usuarioId);
     setOnboardingState(usuarioId, 'aguardando_nome');
     if (enviarAck) await enviarAck(mensagemApresentacao()).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
     return mensagemPerguntaNome();
   }
 
