@@ -653,7 +653,65 @@ async function resumoMensal(usuarioId, mes, ano) {
     [uid, inicioMes, fimMes]
   );
 
-  return { mes: m, ano: a, totais: totaisResult.rows, porCategoria: catResult.rows, atrasadas: atrasadasResult.rows };
+  // Merge recorrências projetadas para o mês selecionado (evita dupla contagem)
+  const regras = await listarRecorrencias(uid);
+  const totais = [...totaisResult.rows];
+  const porCategoria = [...catResult.rows];
+  const atrasadas = [...atrasadasResult.rows];
+
+  if (regras.length > 0) {
+    const inicioMesObj = new Date(a, m - 1, 1);
+    const fimMesObj    = new Date(a, m, 0);
+    const ocorrencias  = calcularOcorrenciasNoPerodo(regras, inicioMesObj, fimMesObj);
+    if (ocorrencias.length > 0) {
+      const ids    = [...new Set(ocorrencias.map(o => o.recorrencia_id))];
+      const anoMes = `${a}-${mesStr}`;
+      const existRes = await pool.query(
+        `SELECT DISTINCT recorrencia_id FROM transacoes
+         WHERE usuario_id = $1
+           AND recorrencia_id = ANY($2::int[])
+           AND TO_CHAR(data, 'YYYY-MM') = $3`,
+        [uid, ids, anoMes]
+      );
+      const jaTemTransacao = new Set(existRes.rows.map(row => row.recorrencia_id));
+      const hoje = dataHojeBR();
+
+      for (const o of ocorrencias) {
+        if (jaTemTransacao.has(o.recorrencia_id)) continue;
+
+        // Adicionar à lista de totais como pendente
+        const existingTotais = totais.find(t => t.tipo === o.tipo && t.status === 'pendente');
+        if (existingTotais) {
+          existingTotais.total += o.valor;
+          existingTotais.quantidade += 1;
+        } else {
+          totais.push({ tipo: o.tipo, status: 'pendente', total: o.valor, quantidade: 1 });
+        }
+
+        // Adicionar à lista por categoria
+        const catEx = porCategoria.find(c => c.tipo === o.tipo && c.categoria === (o.categoria || 'Outros'));
+        if (catEx) {
+          catEx.total += o.valor;
+          catEx.quantidade += 1;
+        } else {
+          porCategoria.push({ tipo: o.tipo, categoria: o.categoria || 'Outros', total: o.valor, quantidade: 1 });
+        }
+
+        // Se data já passou → atrasada
+        if (o.data < hoje) {
+          const atrasadaEx = atrasadas.find(at => at.tipo === o.tipo);
+          if (atrasadaEx) {
+            atrasadaEx.total += o.valor;
+            atrasadaEx.quantidade += 1;
+          } else {
+            atrasadas.push({ tipo: o.tipo, quantidade: 1, total: o.valor });
+          }
+        }
+      }
+    }
+  }
+
+  return { mes: m, ano: a, totais, porCategoria, atrasadas };
 }
 
 async function resumoAnual(usuarioId, ano) {
