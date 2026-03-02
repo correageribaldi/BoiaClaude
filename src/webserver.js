@@ -343,7 +343,19 @@ app.get('/api/agenda', autenticar, async (req, res) => {
     const dataInicio = `${ano}-${mesStr}-01`;
     const dataFim = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
-    res.json(await db.buscarLembretesGeraisPorPeriodo(req.usuarioId, dataInicio, dataFim));
+    const [gerais, recorrentes] = await Promise.all([
+      db.buscarLembretesGeraisPorPeriodo(req.usuarioId, dataInicio, dataFim),
+      db.buscarLembretesRecorrentesPorMes(req.usuarioId, ano, mes),
+    ]);
+
+    // Mescla e ordena por data_disparo + hora
+    const todos = [...gerais, ...recorrentes].sort((a, b) => {
+      const ka = (a.data_disparo || '') + (a.hora || '');
+      const kb = (b.data_disparo || '') + (b.hora || '');
+      return ka.localeCompare(kb);
+    });
+
+    res.json(todos);
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }

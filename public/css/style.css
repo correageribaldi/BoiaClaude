@@ -608,8 +608,14 @@ body {
 }
 .ag-icon { font-size: 22px; flex-shrink: 0; }
 .ag-info { flex: 1; }
-.ag-data { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
+.ag-data { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ag-msg { font-size: 14px; font-weight: 500; }
+.ag-badge-rec {
+  font-size: 10px; font-weight: 600;
+  background: #e8f0fe; color: #3d6ecf;
+  padding: 1px 6px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: .3px;
+}
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */
 .empty-state {

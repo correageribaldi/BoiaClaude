@@ -1270,6 +1270,54 @@ async function buscarLembretesGeraisPorPeriodo(usuarioId, dataInicio, dataFim) {
   return result.rows;
 }
 
+// Projeta lembretes recorrentes ativos dentro de um mês (para agenda do painel)
+async function buscarLembretesRecorrentesPorMes(usuarioId, ano, mes) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, mensagem, TO_CHAR(horario, 'HH24:MI') as horario,
+            frequencia, dia_semana, dia_mes,
+            TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim
+     FROM lembretes_recorrentes
+     WHERE usuario_id = $1 AND ativo = TRUE AND oculto = FALSE
+       AND (data_fim IS NULL OR data_fim >= make_date($2, $3, 1))
+     ORDER BY horario ASC`,
+    [uid, ano, mes]
+  );
+
+  const mesStr = String(mes).padStart(2, '0');
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const ocorrencias = [];
+
+  for (const r of result.rows) {
+    for (let dia = 1; dia <= ultimoDia; dia++) {
+      const date = new Date(ano, mes - 1, dia);
+      let dispara = false;
+
+      if      (r.frequencia === 'diario')  dispara = true;
+      else if (r.frequencia === 'semanal') dispara = (date.getDay() === r.dia_semana);
+      else if (r.frequencia === 'mensal')  dispara = (dia === r.dia_mes);
+
+      if (!dispara) continue;
+      if (r.data_fim) {
+        const fim = new Date(r.data_fim + 'T23:59:59');
+        if (date > fim) continue;
+      }
+
+      const diaStr = String(dia).padStart(2, '0');
+      ocorrencias.push({
+        id: `R${r.id}`,
+        mensagem: r.mensagem,
+        horario: `${diaStr}/${mesStr} ${r.horario}`,
+        data_disparo: `${ano}-${mesStr}-${diaStr}`,
+        hora: r.horario,
+        recorrente: true,
+      });
+    }
+  }
+
+  return ocorrencias;
+}
+
 // Verificar limite e gastos de uma categoria no mês atual
 // subcategorias: array de categorias de transação que compõem esse bucket (ex: ['Alimentacao','Transporte'])
 async function verificarLimite(usuarioId, categoria, subcategorias = null) {
@@ -1749,6 +1797,7 @@ module.exports = {
   verificarLimite,
   limparDadosUsuario,
   buscarLembretesGeraisPorPeriodo,
+  buscarLembretesRecorrentesPorMes,
   vincularContato,
   listarContatosCompartilhados,
   obterVinculoSecundario,

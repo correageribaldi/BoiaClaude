@@ -421,10 +421,12 @@ async function carregarAgenda() {
   for (const l of lembretes) {
     const item = document.createElement('div');
     item.className = 'ag-item';
+    const icone = l.recorrente ? '🔄' : '🔔';
+    const badge = l.recorrente ? '<span class="ag-badge-rec">Recorrente</span>' : '';
     item.innerHTML = `
-      <span class="ag-icon">🔔</span>
+      <span class="ag-icon">${icone}</span>
       <div class="ag-info">
-        <div class="ag-data">📅 ${esc(l.horario || l.data_disparo || '—')}</div>
+        <div class="ag-data">📅 ${esc(l.horario || l.data_disparo || '—')} ${badge}</div>
         <div class="ag-msg">${esc(l.mensagem)}</div>
       </div>
     `;
