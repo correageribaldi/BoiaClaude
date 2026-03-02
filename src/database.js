@@ -642,7 +642,18 @@ async function resumoMensal(usuarioId, mes, ano) {
     [uid, inicioMes, fimMes]
   );
 
-  return { mes: m, ano: a, totais: totaisResult.rows, porCategoria: catResult.rows };
+  const atrasadasResult = await pool.query(
+    `SELECT tipo, COUNT(*)::int as quantidade, SUM(valor)::float as total
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND status = 'pendente'
+       AND data >= $2 AND data <= $3
+       AND data < CURRENT_DATE
+     GROUP BY tipo`,
+    [uid, inicioMes, fimMes]
+  );
+
+  return { mes: m, ano: a, totais: totaisResult.rows, porCategoria: catResult.rows, atrasadas: atrasadasResult.rows };
 }
 
 async function resumoAnual(usuarioId, ano) {

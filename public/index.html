@@ -61,10 +61,28 @@
       </div>
 
       <div class="cards-grid">
-        <div class="card card-neutral"><div class="card-label">Saldo Atual</div><div class="card-value" id="c-saldo">—</div></div>
-        <div class="card card-green"><div class="card-label">Receitas Pagas</div><div class="card-value" id="c-receitas">—</div></div>
-        <div class="card card-red"><div class="card-label">Despesas Pagas</div><div class="card-value" id="c-despesas">—</div></div>
-        <div class="card card-orange"><div class="card-label">A Pagar</div><div class="card-value" id="c-pendentes">—</div></div>
+        <div class="card card-neutral card-full">
+          <div class="card-label" id="c-saldo-label">Saldo Atual</div>
+          <div class="card-value" id="c-saldo">—</div>
+        </div>
+        <div class="card card-green">
+          <div class="card-label">Receitas</div>
+          <div class="card-value" id="c-receitas">—</div>
+        </div>
+        <div class="card card-red">
+          <div class="card-label">Despesas</div>
+          <div class="card-value" id="c-despesas">—</div>
+        </div>
+        <div class="card card-teal">
+          <div class="card-label">A Receber</div>
+          <div class="card-value" id="c-a-receber">—</div>
+          <div class="card-alert hidden" id="alert-receber"></div>
+        </div>
+        <div class="card card-orange">
+          <div class="card-label">A Pagar</div>
+          <div class="card-value" id="c-a-pagar">—</div>
+          <div class="card-alert hidden" id="alert-pagar"></div>
+        </div>
       </div>
 
       <div class="charts-row">

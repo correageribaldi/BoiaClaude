@@ -196,13 +196,50 @@ async function carregarDashboard() {
   catch (err) { if (err.message !== 'Sessão expirada') toast('Erro ao carregar dashboard', 'error'); return; }
 
   const { resumo, saldos } = data;
-  // Saldo atual sempre em tempo real; receitas/despesas filtradas pelo mês selecionado
   const totais = resumo.totais || [];
+  const atrasadas = resumo.atrasadas || [];
   const findTotal = (tipo, status) => totais.find(r => r.tipo === tipo && r.status === status)?.total || 0;
-  document.getElementById('c-saldo').textContent = fmtMoeda(saldos.saldoAtual);
-  document.getElementById('c-receitas').textContent = fmtMoeda(findTotal('receita', 'pago'));
-  document.getElementById('c-despesas').textContent = fmtMoeda(findTotal('despesa', 'pago'));
-  document.getElementById('c-pendentes').textContent = fmtMoeda(findTotal('despesa', 'pendente'));
+  const findAtrasada = (tipo) => atrasadas.find(r => r.tipo === tipo);
+
+  // Saldo: atual no mês corrente, resultado do mês nos demais
+  const agora = new Date();
+  const ehMesAtual = (mes === agora.getMonth() + 1 && ano === agora.getFullYear());
+  if (ehMesAtual) {
+    document.getElementById('c-saldo-label').textContent = 'Saldo Atual';
+    document.getElementById('c-saldo').textContent = fmtMoeda(saldos.saldoAtual);
+  } else {
+    document.getElementById('c-saldo-label').textContent = 'Resultado do Mês';
+    const resultado = (findTotal('receita', 'pago') + findTotal('receita', 'pendente'))
+                    - (findTotal('despesa', 'pago') + findTotal('despesa', 'pendente'));
+    document.getElementById('c-saldo').textContent = fmtMoeda(resultado);
+  }
+
+  // Totais do mês (pago + pendente)
+  document.getElementById('c-receitas').textContent = fmtMoeda(findTotal('receita', 'pago') + findTotal('receita', 'pendente'));
+  document.getElementById('c-despesas').textContent = fmtMoeda(findTotal('despesa', 'pago') + findTotal('despesa', 'pendente'));
+
+  // Pendentes do mês
+  document.getElementById('c-a-receber').textContent = fmtMoeda(findTotal('receita', 'pendente'));
+  document.getElementById('c-a-pagar').textContent = fmtMoeda(findTotal('despesa', 'pendente'));
+
+  // Alertas de atrasados
+  const atRec = findAtrasada('receita');
+  const elAlertRec = document.getElementById('alert-receber');
+  if (atRec && atRec.quantidade > 0) {
+    elAlertRec.textContent = `⚠️ ${atRec.quantidade} receita${atRec.quantidade > 1 ? 's' : ''} atrasada${atRec.quantidade > 1 ? 's' : ''} — ver`;
+    elAlertRec.classList.remove('hidden');
+  } else {
+    elAlertRec.classList.add('hidden');
+  }
+
+  const atDesp = findAtrasada('despesa');
+  const elAlertPag = document.getElementById('alert-pagar');
+  if (atDesp && atDesp.quantidade > 0) {
+    elAlertPag.textContent = `⚠️ ${atDesp.quantidade} despesa${atDesp.quantidade > 1 ? 's' : ''} atrasada${atDesp.quantidade > 1 ? 's' : ''} — ver`;
+    elAlertPag.classList.remove('hidden');
+  } else {
+    elAlertPag.classList.add('hidden');
+  }
 
   renderChartCategorias(resumo.porCategoria || []);
   await renderChartMensal();
@@ -709,6 +746,20 @@ function inicializar() {
   });
   document.getElementById('dash-next').addEventListener('click', () => {
     const e = estado.dash; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarDashboard();
+  });
+
+  // Alertas de atrasados → ir para transações pendentes
+  document.getElementById('alert-receber').addEventListener('click', () => {
+    const e = estado.dash;
+    estado.tx.mes = e.mes; estado.tx.ano = e.ano;
+    estado.tx.filtroStatus = 'pendente'; estado.tx.filtroTipo = 'receita'; estado.tx.pagina = 1;
+    ativarTab('transactions');
+  });
+  document.getElementById('alert-pagar').addEventListener('click', () => {
+    const e = estado.dash;
+    estado.tx.mes = e.mes; estado.tx.ano = e.ano;
+    estado.tx.filtroStatus = 'pendente'; estado.tx.filtroTipo = 'despesa'; estado.tx.pagina = 1;
+    ativarTab('transactions');
   });
 
   // Transações nav
