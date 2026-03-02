@@ -1055,9 +1055,8 @@ _Aproveite!_`;
 function buildPainelUrl() {
   const port = parseInt(process.env.PORT) || 3000;
   let base = (process.env.PAINEL_BASE_URL || `http://localhost:${port}`).replace(/\/$/, '');
-  // Se a URL não tem porta explícita, adiciona a porta configurada
-  const hostPart = base.replace(/^https?:\/\//, '').split('/')[0];
-  if (!hostPart.includes(':')) {
+  // Só adiciona porta se for localhost (sem domínio configurado)
+  if (!process.env.PAINEL_BASE_URL) {
     base = `${base}:${port}`;
   }
   return `${base}/painel`;
