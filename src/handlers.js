@@ -527,6 +527,107 @@ function limparRemocaoContatoPendente(usuarioId) {
   removerContatoPendente.delete(usuarioId);
 }
 
+// ── Onboarding de novos usuários ─────────────────────────────────────────────
+// Estados: 'aguardando_nome' → 'aguardando_inicio' → null (concluído)
+const onboardingEstados = new Map();
+
+function setOnboardingState(usuarioId, estado) {
+  if (estado === null) {
+    onboardingEstados.delete(usuarioId);
+  } else {
+    // Expira em 30 min caso o usuário abandone o fluxo
+    onboardingEstados.set(usuarioId, { estado, expiraEm: Date.now() + 30 * 60 * 1000 });
+  }
+}
+
+function getOnboardingState(usuarioId) {
+  const dados = onboardingEstados.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { onboardingEstados.delete(usuarioId); return null; }
+  return dados.estado;
+}
+
+function mensagemApresentacao() {
+  return (
+    `Fala! 👋 Eu sou o *Cronos*.\n` +
+    `Teu assistente pessoal no WhatsApp, começo organizando tuas finanças, mas vou bem além disso.\n\n` +
+    `💰 *Finanças sem complicação*\n` +
+    `Receitas, despesas, saldo, contas do mês e gastos recorrentes, limites por categoria, tudo direto na conversa.\n` +
+    `Sem app, sem planilha, sem bagunça.\n\n` +
+    `🧠 *Assistente pra tudo*\n` +
+    `• Lembretes e compromissos (inclusive recorrentes)\n` +
+    `• Respostas pra qualquer pergunta _(tipo: "me dá uma receita de bolo")_\n` +
+    `• Ajuda no dia a dia: organização, decisões e tarefas\n\n` +
+    `📍 *Pesquiso lugares perto de você*\n` +
+    `Quer encontrar mercado, restaurante, farmácia ou algum serviço?\n` +
+    `Você me manda sua localização por aqui e eu te mostro os melhores lugares próximos de você (pelas avaliações do Google) e mando o link pra abrir no Maps.\n\n` +
+    `_E isso é só o começo… ao longo do tempo vou aprendendo e te ajudando no seu dia a dia 😉_`
+  );
+}
+
+function mensagemPerguntaNome() {
+  return (
+    `Agora me diz uma coisa…\n` +
+    `Como você prefere que eu te chame?\n\n` +
+    `Seu nome, apelido ou algo estilo _"meu rei"_, _"minha rainha"_, _"chefe supremo"_? 😅`
+  );
+}
+
+async function handleOnboardingNome(usuarioId, texto) {
+  const nome = texto.trim();
+  if (!nome || nome.length < 1 || nome.length > 50) {
+    return `Me diz como quer ser chamado(a)! Pode ser seu nome, apelido… até _"Imperador do Cosmos"_ eu aceito 👑`;
+  }
+
+  await db.atualizarNomeUsuario(usuarioId, nome);
+  setOnboardingState(usuarioId, 'aguardando_inicio');
+
+  const primeiroNome = nome.split(' ')[0];
+  return (
+    `A partir de agora eu te chamo de *${primeiroNome}* 😊\n\n` +
+    `Agora me diz...\n` +
+    `Como você prefere começar?\n\n` +
+    `🎯 *Organizar tudo agora*\n` +
+    `Eu te faço algumas perguntas rápidas e já deixo teu financeiro completo (saldo, receitas, despesas e contas do mês).\n\n` +
+    `📝 *Ir cadastrando aos poucos*\n` +
+    `Você vai me dizendo o que gastou ou recebeu no dia a dia, e eu organizo automaticamente.\n\n` +
+    `👉 Recomendo organizar tudo agora pra você já ter uma visão clara do teu dinheiro. 💪`
+  );
+}
+
+async function handleOnboardingInicio(usuarioId, texto) {
+  const lower = texto.toLowerCase().trim();
+  setOnboardingState(usuarioId, null);
+
+  const querOrganizar = /organizar|agora|tudo|^1$|🎯/.test(lower);
+  const querPoucos   = /poucos|gradual|^2$|📝|cadastrando/.test(lower);
+
+  if (querPoucos && !querOrganizar) {
+    return (
+      `Ótimo! É bem simples. 😊\n\n` +
+      `É só me contar o que você gastou ou recebeu, assim:\n\n` +
+      `_"gastei 50 de gasolina"_\n` +
+      `_"paguei 150 de conta de luz"_\n` +
+      `_"recebi 2000 de salário"_\n` +
+      `_"comprei R$ 80 no mercado"_\n\n` +
+      `Pode mandar por texto, áudio ou foto de nota/boleto — eu registro e organizo tudo pra você!`
+    );
+  }
+
+  if (querOrganizar || !querPoucos) {
+    // Default: organizar (inclusive se a resposta não for clara)
+    return await iniciarPontoZero(usuarioId);
+  }
+
+  // Não entendeu — pergunta de novo
+  setOnboardingState(usuarioId, 'aguardando_inicio');
+  return (
+    `Qual prefere?\n\n` +
+    `🎯 *Organizar tudo agora* — te faço algumas perguntas rápidas\n` +
+    `📝 *Ir cadastrando aos poucos* — você vai mandando conforme acontecer`
+  );
+}
+
 // Estado de cadastro do painel web (aguardando usuário/senha) — expira em 5 min
 const cadastroPainelEstados = new Map();
 
@@ -1241,6 +1342,15 @@ function gerarMensagemAck(acao, contexto = '') {
 async function handleMessage(usuarioId, texto, enviarAck) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
+
+  // Verificar se está no fluxo de onboarding (novo usuário)
+  const estadoOnboarding = getOnboardingState(usuarioId);
+  if (estadoOnboarding === 'aguardando_nome') {
+    return await handleOnboardingNome(usuarioId, msg);
+  }
+  if (estadoOnboarding === 'aguardando_inicio') {
+    return await handleOnboardingInicio(usuarioId, msg);
+  }
 
   // Verificar se está no fluxo de cadastro do painel web
   const cadastroPainel = obterCadastroPainel(usuarioId);
@@ -4632,4 +4742,4 @@ async function handleAssessorCompra(usuarioId, resultado) {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome };

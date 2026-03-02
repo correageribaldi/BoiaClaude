@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const pagamento = require('./pagamento');
@@ -275,15 +275,19 @@ client.on('message', async (msg) => {
       return;
     }
 
+    // Novo usuário: iniciar fluxo de onboarding, não processar a primeira mensagem
+    if (acesso.ehPrimeiraVez) {
+      setOnboardingState(usuarioId, 'aguardando_nome');
+      await msg.reply(mensagemApresentacao());
+      await client.sendMessage(usuarioId, mensagemPerguntaNome());
+      return;
+    }
+
     const enviarAck = (ackTexto) => msg.reply(ackTexto);
     const resposta = await handleMessage(usuarioId, texto, enviarAck);
     await responderMensagem(msg, usuarioId, resposta);
 
-    // Enviar boas-vindas do trial (primeira vez) ou aviso de vencimento
-    if (acesso.ehPrimeiraVez) {
-      const nomeContato = contato?.pushname || contato?.name || null;
-      await client.sendMessage(usuarioId, pagamento.msgTrialBemVindo(nomeContato));
-    } else if (acesso.aviso) {
+    if (acesso.aviso) {
       await client.sendMessage(usuarioId, acesso.aviso);
     }
   } catch (error) {

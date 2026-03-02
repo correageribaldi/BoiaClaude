@@ -1593,6 +1593,13 @@ async function listarUsuariosNaoPagantes(filtro = 'todos') {
   return result.rows;
 }
 
+async function atualizarNomeUsuario(usuarioId, nome) {
+  await pool.query(
+    `UPDATE usuarios SET nome = $1 WHERE usuario_id = $2`,
+    [nome, usuarioId]
+  );
+}
+
 async function listarUsuariosAdmin() {
   const result = await pool.query(`
     SELECT u.usuario_id, u.nome, u.primeiro_contato,
@@ -1703,6 +1710,7 @@ module.exports = {
   incrementarAvisosAssinatura,
   salvarLinkAssinatura,
   salvarTransacaoAssinatura,
+  atualizarNomeUsuario,
   listarUsuariosNaoPagantes,
   listarUsuariosAdmin,
   criarCupom,
