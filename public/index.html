@@ -51,28 +51,60 @@
 
     <!-- ── Visão Geral ─────────────────────────────────────────────────── -->
     <section id="tab-dashboard" class="tab-content active">
-      <div class="section-header">
-        <h2>Visão Geral</h2>
-        <div class="month-nav">
-          <button class="btn-icon" id="dash-prev">‹</button>
-          <span id="dash-mes-label">—</span>
-          <button class="btn-icon" id="dash-next">›</button>
+
+      <!-- Hero card -->
+      <div class="dash-hero">
+        <!-- Linha superior: avatar | mês | cupom -->
+        <div class="dash-hero-top">
+          <div class="dash-avatar" id="dash-avatar">?</div>
+          <div class="dash-month-row">
+            <button class="dash-nav-btn" id="dash-prev">‹</button>
+            <span id="dash-mes-label" class="dash-month-label">—</span>
+            <button class="dash-nav-btn" id="dash-next">›</button>
+          </div>
+          <button class="dash-cupom-btn hidden" id="dash-cupom-btn" title="Cupom de desconto ativo">
+            🎁<span class="dash-cupom-dot"></span>
+          </button>
+        </div>
+
+        <!-- Saldo central -->
+        <div class="dash-hero-saldo">
+          <div class="dash-saldo-label" id="c-saldo-label">Saldo em contas</div>
+          <div class="dash-saldo-valor" id="c-saldo">—</div>
+          <button class="dash-eye-btn" id="dash-toggle-saldo" title="Mostrar/ocultar saldo">
+            <svg id="dash-eye-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Receitas e Despesas -->
+        <div class="dash-hero-bottom">
+          <div class="dash-hero-item">
+            <div class="dash-circle dash-circle-green">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </div>
+            <div>
+              <div class="dash-item-label">Receitas</div>
+              <div class="dash-item-valor dash-green" id="c-receitas">—</div>
+            </div>
+          </div>
+          <div class="dash-hero-divider"></div>
+          <div class="dash-hero-item">
+            <div class="dash-circle dash-circle-red">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+            </div>
+            <div>
+              <div class="dash-item-label">Despesas</div>
+              <div class="dash-item-valor dash-red" id="c-despesas">—</div>
+            </div>
+          </div>
         </div>
       </div>
 
+      <!-- Cards: A Receber e A Pagar -->
       <div class="cards-grid">
-        <div class="card card-neutral card-full">
-          <div class="card-label" id="c-saldo-label">Saldo Atual</div>
-          <div class="card-value" id="c-saldo">—</div>
-        </div>
-        <div class="card card-green">
-          <div class="card-label">Receitas</div>
-          <div class="card-value" id="c-receitas">—</div>
-        </div>
-        <div class="card card-red">
-          <div class="card-label">Despesas</div>
-          <div class="card-value" id="c-despesas">—</div>
-        </div>
         <div class="card card-teal">
           <div class="card-label">A Receber</div>
           <div class="card-value" id="c-a-receber">—</div>

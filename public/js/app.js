@@ -9,6 +9,8 @@ function setJwt(t) { localStorage.setItem('cronos_jwt', t); }
 function clearJwt() { localStorage.removeItem('cronos_jwt'); }
 
 let _isAdmin = false;
+let _saldoOculto = false;
+let _saldoAtual = null; // valor real armazenado para o toggle
 
 async function verificarAuth() {
   const jwt = getJwt();
@@ -18,6 +20,9 @@ async function verificarAuth() {
     const me = await api('/api/auth/me');
     document.getElementById('header-user').textContent = me.username ? '👤 ' + me.username : '';
     _isAdmin = !!me.isAdmin;
+    // Avatar: primeira letra do nome ou do username
+    const avatarEl = document.getElementById('dash-avatar');
+    if (avatarEl) avatarEl.textContent = ((me.nome || me.username || '?')[0]).toUpperCase();
     if (_isAdmin) {
       document.getElementById('nav-admin').classList.remove('hidden');
     }
@@ -206,14 +211,14 @@ async function carregarDashboard() {
   const ehMesAtual = (mes === agora.getMonth() + 1 && ano === agora.getFullYear());
   const saldoLabel = document.getElementById('c-saldo-label');
   if (ehMesAtual) {
-    if (saldoLabel) saldoLabel.textContent = 'Saldo Atual';
-    document.getElementById('c-saldo').textContent = fmtMoeda(saldos.saldoAtual);
+    if (saldoLabel) saldoLabel.textContent = 'Saldo em contas';
+    _saldoAtual = saldos.saldoAtual;
   } else {
     if (saldoLabel) saldoLabel.textContent = 'Resultado do Mês';
-    const resultado = (findTotal('receita', 'pago') + findTotal('receita', 'pendente'))
-                    - (findTotal('despesa', 'pago') + findTotal('despesa', 'pendente'));
-    document.getElementById('c-saldo').textContent = fmtMoeda(resultado);
+    _saldoAtual = (findTotal('receita', 'pago') + findTotal('receita', 'pendente'))
+                - (findTotal('despesa', 'pago') + findTotal('despesa', 'pendente'));
   }
+  document.getElementById('c-saldo').textContent = _saldoOculto ? '••••••' : fmtMoeda(_saldoAtual);
 
   // Totais do mês (pago + pendente)
   document.getElementById('c-receitas').textContent = fmtMoeda(findTotal('receita', 'pago') + findTotal('receita', 'pendente'));
@@ -746,6 +751,20 @@ function inicializar() {
   });
 
   document.getElementById('btn-logout').addEventListener('click', logout);
+
+  // Dashboard: toggle saldo visível/oculto
+  document.getElementById('dash-toggle-saldo')?.addEventListener('click', () => {
+    _saldoOculto = !_saldoOculto;
+    const saldoEl = document.getElementById('c-saldo');
+    if (saldoEl) saldoEl.textContent = _saldoOculto ? '••••••' : fmtMoeda(_saldoAtual);
+    // Troca ícone do olho
+    const icon = document.getElementById('dash-eye-icon');
+    if (icon) {
+      icon.innerHTML = _saldoOculto
+        ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>'
+        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+  });
 
   // Dashboard nav
   document.getElementById('dash-prev').addEventListener('click', () => {
