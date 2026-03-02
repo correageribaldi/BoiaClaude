@@ -196,10 +196,13 @@ async function carregarDashboard() {
   catch (err) { if (err.message !== 'Sessão expirada') toast('Erro ao carregar dashboard', 'error'); return; }
 
   const { resumo, saldos } = data;
+  // Saldo atual sempre em tempo real; receitas/despesas filtradas pelo mês selecionado
+  const totais = resumo.totais || [];
+  const findTotal = (tipo, status) => totais.find(r => r.tipo === tipo && r.status === status)?.total || 0;
   document.getElementById('c-saldo').textContent = fmtMoeda(saldos.saldoAtual);
-  document.getElementById('c-receitas').textContent = fmtMoeda(saldos.receitasPagas);
-  document.getElementById('c-despesas').textContent = fmtMoeda(saldos.despesasPagas);
-  document.getElementById('c-pendentes').textContent = fmtMoeda(saldos.despesasPendentes);
+  document.getElementById('c-receitas').textContent = fmtMoeda(findTotal('receita', 'pago'));
+  document.getElementById('c-despesas').textContent = fmtMoeda(findTotal('despesa', 'pago'));
+  document.getElementById('c-pendentes').textContent = fmtMoeda(findTotal('despesa', 'pendente'));
 
   renderChartCategorias(resumo.porCategoria || []);
   await renderChartMensal();
