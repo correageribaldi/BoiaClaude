@@ -10,7 +10,33 @@ function clearJwt() { localStorage.removeItem('cronos_jwt'); }
 
 let _isAdmin = false;
 let _saldoOculto = false;
-let _saldoAtual = null; // valor real armazenado para o toggle
+let _saldoAtual = null;
+let _meNome = '';
+
+// ── Helpers de avatar / settings ──────────────────────────────────────────────
+function _aplicarAvatar(nomeBase) {
+  const foto = localStorage.getItem('cronos_avatar_photo');
+  const avatarEl  = document.getElementById('dash-avatar');
+  const settingsEl = document.getElementById('settings-avatar-preview');
+  if (avatarEl) {
+    if (foto) {
+      avatarEl.style.backgroundImage = `url(${foto})`;
+      avatarEl.style.backgroundSize = 'cover';
+      avatarEl.style.backgroundPosition = 'center';
+      avatarEl.textContent = '';
+    } else {
+      avatarEl.style.backgroundImage = '';
+      avatarEl.textContent = (nomeBase[0] || '?').toUpperCase();
+    }
+  }
+  if (settingsEl) {
+    if (foto) {
+      settingsEl.innerHTML = `<img src="${foto}" alt="foto">`;
+    } else {
+      settingsEl.textContent = (nomeBase[0] || '?').toUpperCase();
+    }
+  }
+}
 
 async function verificarAuth() {
   const jwt = getJwt();
@@ -18,11 +44,11 @@ async function verificarAuth() {
 
   try {
     const me = await api('/api/auth/me');
-    document.getElementById('header-user').textContent = me.username ? '👤 ' + me.username : '';
     _isAdmin = !!me.isAdmin;
-    // Avatar: primeira letra do nome ou do username
-    const avatarEl = document.getElementById('dash-avatar');
-    if (avatarEl) avatarEl.textContent = ((me.nome || me.username || '?')[0]).toUpperCase();
+    // Avatar: foto salva ou inicial do nome
+    _aplicarAvatar(me.nome || me.username || '?');
+    // Nome na tela de settings
+    _meNome = me.nome || me.username || '';
     if (_isAdmin) {
       document.getElementById('nav-admin').classList.remove('hidden');
     }
@@ -750,7 +776,74 @@ function inicializar() {
     btn.addEventListener('click', () => ativarTab(btn.dataset.tab));
   });
 
-  document.getElementById('btn-logout').addEventListener('click', logout);
+  // ── Avatar dropdown ──────────────────────────────────────────────────────
+  const avatarEl   = document.getElementById('dash-avatar');
+  const dropdown   = document.getElementById('avatar-dropdown');
+
+  avatarEl?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown?.classList.toggle('hidden');
+  });
+  document.addEventListener('click', () => dropdown?.classList.add('hidden'));
+
+  document.getElementById('avatar-dd-sair')?.addEventListener('click', logout);
+
+  document.getElementById('avatar-dd-foto')?.addEventListener('click', () => {
+    dropdown?.classList.add('hidden');
+    document.getElementById('input-photo')?.click();
+  });
+
+  document.getElementById('input-photo')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      localStorage.setItem('cronos_avatar_photo', ev.target.result);
+      _aplicarAvatar(_meNome);
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('avatar-dd-config')?.addEventListener('click', () => {
+    dropdown?.classList.add('hidden');
+    _abrirSettings();
+  });
+
+  // ── Settings modal ────────────────────────────────────────────────────────
+  function _abrirSettings() {
+    const nome = localStorage.getItem('cronos_settings_nome') || _meNome;
+    const email = localStorage.getItem('cronos_settings_email') || '';
+    const nomeDisplay = document.getElementById('settings-nome-display');
+    if (nomeDisplay) nomeDisplay.textContent = nome || '—';
+    const inputNome = document.getElementById('settings-input-nome');
+    if (inputNome) inputNome.value = nome;
+    const inputEmail = document.getElementById('settings-input-email');
+    if (inputEmail) inputEmail.value = email;
+    _aplicarAvatar(_meNome); // atualiza preview no modal
+    document.getElementById('modal-settings')?.classList.remove('hidden');
+  }
+
+  document.getElementById('btn-settings-close')?.addEventListener('click', () => {
+    document.getElementById('modal-settings')?.classList.add('hidden');
+  });
+  document.getElementById('modal-settings')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('modal-settings'))
+      document.getElementById('modal-settings').classList.add('hidden');
+  });
+
+  document.getElementById('btn-settings-salvar')?.addEventListener('click', () => {
+    const nome  = document.getElementById('settings-input-nome')?.value.trim();
+    const email = document.getElementById('settings-input-email')?.value.trim();
+    if (nome)  { localStorage.setItem('cronos_settings_nome', nome); _meNome = nome; }
+    if (email) localStorage.setItem('cronos_settings_email', email);
+    _aplicarAvatar(_meNome);
+    document.getElementById('modal-settings')?.classList.add('hidden');
+    toast('✅ Configurações salvas!', 'success');
+  });
+
+  document.getElementById('btn-change-photo-modal')?.addEventListener('click', () => {
+    document.getElementById('input-photo')?.click();
+  });
 
   // Dashboard: toggle saldo visível/oculto
   document.getElementById('dash-toggle-saldo')?.addEventListener('click', () => {
@@ -923,7 +1016,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       setJwt(res.token);
-      document.getElementById('header-user').textContent = '👤 ' + res.username;
       document.getElementById('tela-login').classList.add('hidden');
       document.getElementById('app').classList.remove('hidden');
       inicializar();

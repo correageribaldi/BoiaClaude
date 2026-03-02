@@ -36,17 +36,6 @@
 <!-- ── App principal ─────────────────────────────────────────────────────── -->
 <div id="app" class="hidden">
 
-  <header class="header">
-    <div class="header-left">
-      <span class="header-logo">💸</span>
-      <span class="header-title">Cronos</span>
-    </div>
-    <div class="header-right">
-      <span class="header-user" id="header-user"></span>
-      <button class="btn-logout" id="btn-logout" title="Sair">⏏</button>
-    </div>
-  </header>
-
   <main class="main-content">
 
     <!-- ── Visão Geral ─────────────────────────────────────────────────── -->
@@ -56,7 +45,17 @@
       <div class="dash-hero">
         <!-- Linha superior: avatar | mês | cupom -->
         <div class="dash-hero-top">
-          <div class="dash-avatar" id="dash-avatar">?</div>
+          <!-- Avatar com dropdown -->
+          <div class="dash-avatar-wrap">
+            <div class="dash-avatar" id="dash-avatar">?</div>
+            <div class="avatar-dropdown hidden" id="avatar-dropdown">
+              <button class="avatar-dd-item" id="avatar-dd-config">⚙️ Configurações</button>
+              <button class="avatar-dd-item" id="avatar-dd-foto">📷 Alterar foto</button>
+              <div class="avatar-dd-sep"></div>
+              <button class="avatar-dd-item avatar-dd-danger" id="avatar-dd-sair">⏏ Sair</button>
+            </div>
+            <input type="file" id="input-photo" accept="image/*" class="hidden">
+          </div>
           <div class="dash-month-row">
             <button class="dash-nav-btn" id="dash-prev">‹</button>
             <span id="dash-mes-label" class="dash-month-label">—</span>
@@ -338,6 +337,49 @@
     </section>
 
   </main>
+
+  <!-- ── Modal de Configurações ───────────────────────────────────────────── -->
+  <div class="modal-overlay hidden" id="modal-settings">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Configurações</h3>
+        <button class="modal-close" id="btn-settings-close">✕</button>
+      </div>
+
+      <!-- Foto de perfil -->
+      <div class="settings-avatar-wrap">
+        <div class="settings-avatar-preview" id="settings-avatar-preview">?</div>
+        <div class="settings-avatar-info">
+          <span class="settings-avatar-name" id="settings-nome-display">—</span>
+          <button class="btn-link" id="btn-change-photo-modal">📷 Alterar foto</button>
+        </div>
+      </div>
+
+      <!-- Dados pessoais -->
+      <div class="settings-section">
+        <div class="settings-section-title">Dados Pessoais</div>
+        <div class="input-group">
+          <label>Como quer ser chamado</label>
+          <input type="text" id="settings-input-nome" placeholder="Seu nome" />
+        </div>
+        <div class="input-group">
+          <label>E-mail</label>
+          <input type="email" id="settings-input-email" placeholder="seu@email.com" />
+        </div>
+        <button class="btn btn-primary" id="btn-settings-salvar">Salvar alterações</button>
+      </div>
+
+      <!-- Google Calendar (em desenvolvimento) -->
+      <div class="settings-section settings-section-disabled">
+        <div class="settings-section-header">
+          <div class="settings-section-title" style="margin-bottom:0">Google Calendar</div>
+          <span class="badge-dev">Em desenvolvimento</span>
+        </div>
+        <p class="settings-hint">Sincronize sua agenda do Google com o Cronos para visualizar compromissos integrados.</p>
+        <button class="btn btn-google" disabled>🗓 Conectar com Google</button>
+      </div>
+    </div>
+  </div>
 
   <nav class="bottom-nav">
     <button class="nav-btn active" data-tab="dashboard">
