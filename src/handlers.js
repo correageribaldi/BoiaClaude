@@ -2369,7 +2369,10 @@ async function handleMensagemIA(usuarioId, texto, enviarAck) {
   const lower = texto.toLowerCase().trim().replace(/[.,!?]+$/g, '');
   if (lower === 'resetar' || lower.includes('começar do zero') || lower.includes('comecar do zero') || lower === 'limpar tudo' || lower === 'zerar dados') {
     await db.limparDadosUsuario(usuarioId);
-    return mensagemBoasVindas();
+    limparPontoZero(usuarioId);
+    setOnboardingState(usuarioId, 'aguardando_nome');
+    if (enviarAck) await enviarAck(mensagemApresentacao()).catch(() => {});
+    return mensagemPerguntaNome();
   }
 
   const resultado = await interpretarMensagem(texto);
