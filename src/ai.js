@@ -162,7 +162,18 @@ COMO DIFERENCIAR DE TRANSAÇÃO:
   - "quero comprar um notebook, vale a pena?" → assessor_compra (tem "vale a pena?")
   - "vou pagar 200 de jaqueta dia 22" → transacao despesa pendente
 
-17. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
+17. SUGESTÃO / COMANDO AMBÍGUO (mensagem curta que parece ser um comando financeiro mas usa linguagem informal ou abreviação não listada):
+{"acao": "sugestao", "acao_sugerida": "saldo|resumo|lista|pendentes|agenda|caixinhas|listar_lembretes", "texto_sugestao": "mensagem curta e natural perguntando se é isso, ex: 'Quer ver seu saldo? 💰'"}
+Use `sugestao` quando a mensagem tem 1 a 4 palavras e parece ser uma variação informal de um comando:
+- "caixa", "dinheiro?", "balanço", "quanto tenho?" → acao_sugerida: "saldo"
+- "extrato", "movimentação", "movimento", "lançamentos" → acao_sugerida: "lista"
+- "esse mês", "mês atual", "balanço mensal", "fechamento" → acao_sugerida: "resumo"
+- "vencimentos", "vence", "o que vence", "o que falta pagar" → acao_sugerida: "pendentes"
+- "agenda", "compromissos", "hoje" (sozinho) → acao_sugerida: "agenda"
+- "reservas", "poupança", "investido" → acao_sugerida: "caixinhas"
+Use `nenhuma` APENAS para pedidos claramente fora do escopo financeiro (programação, redações, medicina, etc).
+
+18. BLOQUEADO (programação, código, redações, textos longos, trabalhos acadêmicos, etc):
 {"acao": "nenhuma"}
 
 REGRAS GERAIS:

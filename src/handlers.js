@@ -547,6 +547,21 @@ function getOnboardingState(usuarioId) {
   return dados.estado;
 }
 
+// ── Sugestão fuzzy (quando a IA retorna acao=sugestao) ────────────────────────
+const sugestaoEstados = new Map();
+
+function setSugestaoEstado(usuarioId, acao) {
+  sugestaoEstados.set(usuarioId, { acao, expiraEm: Date.now() + 5 * 60 * 1000 });
+}
+
+function getSugestaoEstado(usuarioId) {
+  const dados = sugestaoEstados.get(usuarioId);
+  if (!dados) return null;
+  sugestaoEstados.delete(usuarioId); // one-shot: limpa ao ler
+  if (Date.now() > dados.expiraEm) return null;
+  return dados.acao;
+}
+
 function mensagemApresentacao() {
   return (
     `Fala! 👋 Eu sou o *Cronos*.\n` +
@@ -1338,6 +1353,20 @@ function gerarMensagemAck(acao, contexto = '') {
   return 'Um segundo... ⏳';
 }
 
+async function executarAcaoSugerida(usuarioId, acao, textoOriginal) {
+  const mapa = {
+    saldo:            { acao: 'comando', dica: 'saldo' },
+    resumo:           { acao: 'comando', dica: 'resumo' },
+    lista:            { acao: 'comando', dica: 'lista' },
+    pendentes:        { acao: 'comando', dica: 'pendentes' },
+    agenda:           { acao: 'agenda', periodo: 'hoje' },
+    caixinhas:        { acao: 'caixinhas' },
+    listar_lembretes: { acao: 'listar_lembretes' },
+  };
+  const resultado = mapa[acao] || { acao: 'comando', dica: acao };
+  return await processarResultadoIA(usuarioId, resultado, null, textoOriginal, null);
+}
+
 async function handleMessage(usuarioId, texto, enviarAck) {
   const msg = texto.trim();
   const lower = msg.toLowerCase();
@@ -1349,6 +1378,15 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
   if (estadoOnboarding === 'aguardando_inicio') {
     return await handleOnboardingInicio(usuarioId, msg);
+  }
+
+  // Verificar se há sugestão fuzzy aguardando confirmação
+  const sugestao = getSugestaoEstado(usuarioId);
+  if (sugestao) {
+    if (/^(sim|s|isso|exato|certo|yes|pode|quero|vai|é isso|e isso|iss|isso mesmo)$/.test(lower.trim())) {
+      return await executarAcaoSugerida(usuarioId, sugestao, msg);
+    }
+    return `Ok, sem problema! Me diz o que precisa 😊`;
   }
 
   // Verificar se está no fluxo de cadastro do painel web
@@ -1978,6 +2016,12 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     if (fallbackMsg) return fallbackMsg;
     const usuario = await db.buscarUsuario(usuarioId);
     return foraDoEscopoMsg(usuario?.nome || null);
+  }
+
+  // Sugestão fuzzy — perguntar ao usuário se era isso que queria
+  if (resultado.acao === 'sugestao') {
+    setSugestaoEstado(usuarioId, resultado.acao_sugerida);
+    return `${resultado.texto_sugestao}\n\n_Responde "sim" pra confirmar ou "não" pra cancelar._`;
   }
 
   // Finanças em Dia - organizar finanças
