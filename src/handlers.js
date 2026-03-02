@@ -3292,19 +3292,31 @@ async function iniciarPontoZero(usuarioId) {
   return `E aí! 😄 Bora deixar tudo em dia?\n\nEm poucos minutos organizo teu financeiro completo.\n\nPrimeiro: *quanto tu tem disponível hoje em conta corrente, carteira e pix?*\n\n⚠️ _Não inclua investimentos (poupança, CDB, etc.) — eles serão registrados em seguida como caixinhas._\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
 }
 
-function coletarItens(item, lista) {
+function coletarItens(item, lista, etapa) {
   if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
     let msg = '';
+    const incompletos = [];
     for (const it of item.itens) {
-      lista.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
-      msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
+      const campo = proximoCampoFaltante(it, etapa);
+      if (campo) {
+        incompletos.push({
+          descricao: it.descricao,
+          valor: it.valor || null,
+          dia: it.dia || null,
+          categoria: it.categoria || null,
+          esperandoCampo: campo,
+        });
+      } else {
+        lista.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
+        msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
+      }
     }
-    return { ok: true, msg, quantidade: item.itens.length };
+    return { ok: true, msg, quantidade: item.itens.length - incompletos.length, incompletos };
   }
   if (item.tipo === 'item' && item.valor) {
     lista.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
     const msg = `✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}`;
-    return { ok: true, msg, quantidade: 1 };
+    return { ok: true, msg, quantidade: 1, incompletos: [] };
   }
   return { ok: false };
 }
@@ -3401,13 +3413,25 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
     estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
                                            estado.despesasFixas;
   lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
+  const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
+
+  // Se há mais itens incompletos na fila, perguntar o próximo
+  if (estado.itensPendentes && estado.itensPendentes.length > 0) {
+    const [proximo, ...resto] = estado.itensPendentes;
+    estado.itemParcial = { ...proximo };
+    if (resto.length > 0) estado.itensPendentes = resto;
+    else delete estado.itensPendentes;
+    salvarPontoZero(usuarioId, estado);
+    return `${confirmacao}\n\nAinda faltou uma info em *${proximo.descricao}* 👇\n\n${perguntarCampoFaltante(proximo.esperandoCampo, proximo.descricao)}`;
+  }
+
+  delete estado.itensPendentes;
   salvarPontoZero(usuarioId, estado);
 
   const nomeEtapa =
     estado.etapa === 'receitas_fixas'     ? 'receita fixa'     :
     estado.etapa === 'receitas_variaveis' ? 'receita variável' :
                                            'despesa';
-  const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
   return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
 }
 
@@ -3592,11 +3616,20 @@ async function handlePontoZero(usuarioId, texto, estado) {
         salvarPontoZero(usuarioId, estado);
         return `Beleza! E *receitas variáveis*? (freelas, bicos, vendas, comissões — o que entra mas não é todo mês igual)\n\n_Ex: "Freela dia 20 R$ 500 e venda R$ 200"_\n_Se não tem, manda "não"._`;
       }
-      const res = coletarItens(item, estado.receitasFixas);
+      const res = coletarItens(item, estado.receitasFixas, estado.etapa);
       if (res.ok) {
+        if (res.incompletos && res.incompletos.length > 0) {
+          const [primeiro, ...restante] = res.incompletos;
+          estado.itemParcial = { ...primeiro };
+          if (restante.length > 0) estado.itensPendentes = restante;
+          else delete estado.itensPendentes;
+          salvarPontoZero(usuarioId, estado);
+          const confirmacaoValidos = res.msg ? `Anotei:\n\n${res.msg}\n` : '';
+          return `${confirmacaoValidos}Mas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+        }
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} receitas fixas anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\n\nTem mais alguma receita fixa ou pode passar pra frente?`;
+        return `${mais}:\n\n${res.msg}\nTem mais alguma receita fixa ou pode passar pra frente?`;
       }
       if (item.tipo === 'item' && item.descricao) {
         const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
@@ -3615,11 +3648,20 @@ async function handlePontoZero(usuarioId, texto, estado) {
         salvarPontoZero(usuarioId, estado);
         return `Ótimo! Agora as *despesas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
       }
-      const res = coletarItens(item, estado.receitasVariaveis);
+      const res = coletarItens(item, estado.receitasVariaveis, estado.etapa);
       if (res.ok) {
+        if (res.incompletos && res.incompletos.length > 0) {
+          const [primeiro, ...restante] = res.incompletos;
+          estado.itemParcial = { ...primeiro };
+          if (restante.length > 0) estado.itensPendentes = restante;
+          else delete estado.itensPendentes;
+          salvarPontoZero(usuarioId, estado);
+          const confirmacaoValidos = res.msg ? `Anotei:\n\n${res.msg}\n` : '';
+          return `${confirmacaoValidos}Mas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+        }
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} receitas variáveis anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\n\nTem mais alguma receita variável ou pode passar pra frente?`;
+        return `${mais}:\n\n${res.msg}\nTem mais alguma receita variável ou pode passar pra frente?`;
       }
       if (item.tipo === 'item' && item.descricao) {
         const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
@@ -3638,11 +3680,20 @@ async function handlePontoZero(usuarioId, texto, estado) {
         salvarPontoZero(usuarioId, estado);
         return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
       }
-      const res = coletarItens(item, estado.despesasFixas);
+      const res = coletarItens(item, estado.despesasFixas, estado.etapa);
       if (res.ok) {
+        if (res.incompletos && res.incompletos.length > 0) {
+          const [primeiro, ...restante] = res.incompletos;
+          estado.itemParcial = { ...primeiro };
+          if (restante.length > 0) estado.itensPendentes = restante;
+          else delete estado.itensPendentes;
+          salvarPontoZero(usuarioId, estado);
+          const confirmacaoValidos = res.msg ? `Anotei:\n\n${res.msg}\n` : '';
+          return `${confirmacaoValidos}Mas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+        }
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} despesas anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\n\nTem mais alguma despesa ou pode passar pra frente?`;
+        return `${mais}:\n\n${res.msg}\nTem mais alguma despesa ou pode passar pra frente?`;
       }
       if (item.tipo === 'item' && item.descricao) {
         const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
