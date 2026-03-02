@@ -770,6 +770,19 @@ function ativarTab(tab) {
   if (tab === 'admin') carregarAdmin();
 }
 
+function abrirSettings() {
+  const nome = localStorage.getItem('cronos_settings_nome') || _meNome;
+  const email = localStorage.getItem('cronos_settings_email') || '';
+  const nomeDisplay = document.getElementById('settings-nome-display');
+  if (nomeDisplay) nomeDisplay.textContent = nome || '—';
+  const inputNome = document.getElementById('settings-input-nome');
+  if (inputNome) inputNome.value = nome;
+  const inputEmail = document.getElementById('settings-input-email');
+  if (inputEmail) inputEmail.value = email;
+  _aplicarAvatar(_meNome);
+  document.getElementById('modal-settings')?.classList.remove('hidden');
+}
+
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function inicializar() {
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -806,22 +819,8 @@ function inicializar() {
 
   document.getElementById('avatar-dd-config')?.addEventListener('click', () => {
     dropdown?.classList.add('hidden');
-    _abrirSettings();
+    abrirSettings();
   });
-
-  // ── Settings modal ────────────────────────────────────────────────────────
-  function _abrirSettings() {
-    const nome = localStorage.getItem('cronos_settings_nome') || _meNome;
-    const email = localStorage.getItem('cronos_settings_email') || '';
-    const nomeDisplay = document.getElementById('settings-nome-display');
-    if (nomeDisplay) nomeDisplay.textContent = nome || '—';
-    const inputNome = document.getElementById('settings-input-nome');
-    if (inputNome) inputNome.value = nome;
-    const inputEmail = document.getElementById('settings-input-email');
-    if (inputEmail) inputEmail.value = email;
-    _aplicarAvatar(_meNome); // atualiza preview no modal
-    document.getElementById('modal-settings')?.classList.remove('hidden');
-  }
 
   document.getElementById('btn-settings-close')?.addEventListener('click', () => {
     document.getElementById('modal-settings')?.classList.add('hidden');
@@ -1001,6 +1000,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnLogin.textContent = 'Entrando...';
     erroEl.classList.add('hidden');
 
+    let loginOk = false;
     try {
       const data = await fetch('/api/auth/login', {
         method: 'POST',
@@ -1016,15 +1016,20 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       setJwt(res.token);
-      document.getElementById('tela-login').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
-      inicializar();
-    } catch {
+      loginOk = true;
+    } catch (err) {
       erroEl.textContent = 'Erro de conexão. Tente novamente.';
       erroEl.classList.remove('hidden');
+      console.error('[login] fetch error:', err);
     } finally {
       btnLogin.disabled = false;
       btnLogin.textContent = 'Entrar';
+    }
+
+    if (loginOk) {
+      document.getElementById('tela-login').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      inicializar();
     }
   });
 
