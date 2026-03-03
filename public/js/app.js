@@ -14,25 +14,44 @@ let _saldoAtual = null;
 let _meNome = '';
 
 // ── Helpers de avatar / settings ──────────────────────────────────────────────
+let _avatarData = null; // data URL da foto vinda do servidor
+
 function _aplicarAvatar(nomeBase) {
-  const foto = localStorage.getItem('cronos_avatar_photo');
-  const avatarEl  = document.getElementById('dash-avatar');
+  const avatarEl   = document.getElementById('dash-avatar');
   const settingsEl = document.getElementById('settings-avatar-preview');
   if (avatarEl) {
-    if (foto) {
-      avatarEl.innerHTML = `<img src="${foto}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;pointer-events:none;display:block;">`;
+    if (_avatarData) {
+      avatarEl.innerHTML = `<img src="${_avatarData}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;pointer-events:none;display:block;">`;
     } else {
       avatarEl.innerHTML = '';
       avatarEl.textContent = (nomeBase[0] || '?').toUpperCase();
     }
   }
   if (settingsEl) {
-    if (foto) {
-      settingsEl.innerHTML = `<img src="${foto}" alt="foto">`;
+    if (_avatarData) {
+      settingsEl.innerHTML = `<img src="${_avatarData}" alt="foto">`;
     } else {
       settingsEl.textContent = (nomeBase[0] || '?').toUpperCase();
     }
   }
+}
+
+function _comprimirImagem(file, callback) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 256;
+      const scale = Math.min(MAX / img.width, MAX / img.height, 1);
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      callback(canvas.toDataURL('image/jpeg', 0.75));
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 async function verificarAuth() {
@@ -42,7 +61,8 @@ async function verificarAuth() {
   try {
     const me = await api('/api/auth/me');
     _isAdmin = !!me.isAdmin;
-    // Avatar: foto salva ou inicial do nome
+    // Avatar do servidor
+    _avatarData = me.avatarData || null;
     _aplicarAvatar(me.nome || me.username || '?');
     // Nome na tela de settings
     _meNome = me.nome || me.username || '';
@@ -806,12 +826,16 @@ function inicializar() {
   document.getElementById('input-photo')?.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      localStorage.setItem('cronos_avatar_photo', ev.target.result);
-      _aplicarAvatar(_meNome);
-    };
-    reader.readAsDataURL(file);
+    _comprimirImagem(file, async (dataUrl) => {
+      try {
+        await api('/api/auth/avatar', { method: 'POST', body: JSON.stringify({ avatarData: dataUrl }) });
+        _avatarData = dataUrl;
+        _aplicarAvatar(_meNome);
+        toast('✅ Foto atualizada!', 'success');
+      } catch (err) {
+        toast('Erro ao salvar foto: ' + err.message, 'error');
+      }
+    });
   });
 
   document.getElementById('avatar-dd-config')?.addEventListener('click', () => {
@@ -830,8 +854,7 @@ function inicializar() {
   document.getElementById('btn-settings-salvar')?.addEventListener('click', () => {
     const nome  = document.getElementById('settings-input-nome')?.value.trim();
     const email = document.getElementById('settings-input-email')?.value.trim();
-    if (nome)  { localStorage.setItem('cronos_settings_nome', nome); _meNome = nome; }
-    if (email) localStorage.setItem('cronos_settings_email', email);
+    if (nome) _meNome = nome;
     _aplicarAvatar(_meNome);
     document.getElementById('modal-settings')?.classList.add('hidden');
     toast('✅ Configurações salvas!', 'success');

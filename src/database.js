@@ -426,6 +426,11 @@ async function initTables() {
     ALTER TABLE painel_usuarios ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 
+  // Migração: coluna avatar_data em painel_usuarios
+  await pool.query(`
+    ALTER TABLE painel_usuarios ADD COLUMN IF NOT EXISTS avatar_data TEXT;
+  `);
+
   // Tabela de cupons de desconto/período grátis
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cupons (
@@ -1487,10 +1492,18 @@ async function buscarUsuarioPainelPorUsername(username) {
 async function buscarUsuarioPainelPorUserId(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT id, username, is_admin FROM painel_usuarios WHERE usuario_id = $1 LIMIT 1`,
+    `SELECT id, username, is_admin, avatar_data FROM painel_usuarios WHERE usuario_id = $1 LIMIT 1`,
     [uid]
   );
   return result.rows[0] || null;
+}
+
+async function salvarAvatarPainel(usuarioId, avatarData) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query(
+    `UPDATE painel_usuarios SET avatar_data = $1 WHERE usuario_id = $2`,
+    [avatarData, uid]
+  );
 }
 
 async function usernameDisponivel(username) {
@@ -1806,6 +1819,7 @@ module.exports = {
   criarUsuarioPainel,
   buscarUsuarioPainelPorUsername,
   buscarUsuarioPainelPorUserId,
+  salvarAvatarPainel,
   usernameDisponivel,
   criarCategoria,
   excluirCategoria,

@@ -68,8 +68,25 @@ app.get('/api/auth/me', autenticar, async (req, res) => {
     const usuario = await db.buscarUsuario(req.usuarioId).catch(() => null);
     const painel = await db.buscarUsuarioPainelPorUserId(req.usuarioId).catch(() => null);
     const isAdmin = !!painel?.is_admin;
-    res.json({ usuarioId: req.usuarioId, nome: usuario?.nome || null, username: painel?.username || null, isAdmin });
+    res.json({ usuarioId: req.usuarioId, nome: usuario?.nome || null, username: painel?.username || null, isAdmin, avatarData: painel?.avatar_data || null });
   } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/auth/avatar', autenticar, async (req, res) => {
+  try {
+    const { avatarData } = req.body || {};
+    if (!avatarData || !avatarData.startsWith('data:image/')) {
+      return res.status(400).json({ erro: 'Dados de imagem inválidos' });
+    }
+    if (avatarData.length > 300000) {
+      return res.status(400).json({ erro: 'Imagem muito grande (máx 300KB)' });
+    }
+    await db.salvarAvatarPainel(req.usuarioId, avatarData);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] /api/auth/avatar:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
