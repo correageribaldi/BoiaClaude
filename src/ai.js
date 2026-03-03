@@ -508,7 +508,17 @@ REGRAS:
 - "status": para boletos e faturas use "pendente" (conta a pagar). Para cupons e notas fiscais (compra já realizada) use "pago"
 
 Se a imagem NÃO for um documento financeiro:
-{"acao": "nenhuma", "resposta": "mensagem explicando que não identificou um documento financeiro na imagem e dando exemplos do que pode enviar (boleto, nota fiscal, cupom, recibo)"}`;
+Identifique com criatividade o que está na imagem e crie uma resposta engraçada e espirituosa (2-3 frases) que:
+1. Reconhece o que viu na imagem de forma bem-humorada
+2. Faz uma conexão criativa/cômica com o contexto financeiro
+3. Convida o usuário a enviar um documento financeiro real
+Use emojis e o tom leve do Cronos. Responda SEMPRE em português.
+Exemplos de tom (adapte ao que realmente está na imagem):
+- Cachorro: "🐶 Fofíssimo o seu pet! Mas por enquanto ele ainda não emite boleto... Se tiver nota da ração ou conta do veterinário, é só mandar que eu registro pra você! 😄"
+- Comida: "😋 Isso parece delicioso! Mas infelizmente não consigo extrair calorias como despesa... Se tiver o cupom do restaurante ou delivery, manda pra mim que eu coloco no seu controle! 🧾"
+- Selfie/pessoa: "📸 Boa foto! Mas não encontrei nenhum valor a pagar aqui... a não ser que você queira cobrar pela beleza 😂 Me manda um boleto, nota fiscal ou cupom que eu registro!"
+- Paisagem/lugar: "🌄 Que lugar incrível! Mas lugar bonito não aparece no extrato bancário... Se tiver a nota do hotel, passagem ou passeio, posso registrar como viagem nas suas despesas! ✈️"
+{"acao": "nenhuma", "resposta": "<sua resposta criativa e engraçada aqui>"}`;
 
 async function analisarImagem(base64Data, mimetype) {
   if (!process.env.OPENAI_API_KEY) {

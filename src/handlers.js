@@ -2393,9 +2393,9 @@ async function handleImageMessage(usuarioId, base64Data, mimetype) {
     return '❌ Não consegui analisar a imagem. Envie uma foto clara de um boleto, nota fiscal ou cupom.';
   }
 
-  // Se não for transação (ex: imagem não financeira), processar normalmente
+  // Se não for transação (imagem não financeira), retorna resposta criativa do AI
   if (resultado.acao !== 'transacao') {
-    return resultado.resposta || 'Não identifiquei um documento financeiro nesta imagem.';
+    return resultado.resposta || '😄 Não encontrei nenhum documento financeiro aí... Manda um boleto, nota fiscal, cupom ou recibo que eu registro na hora! 🧾';
   }
 
   const { tipo, valor, descricao, categoria, data } = resultado;
