@@ -142,15 +142,13 @@ function renderChartCategorias(porCategoria) {
     return;
   }
 
-  // Recriar canvas se necessário
-  if (!document.getElementById('chart-categorias')) {
-    const canvas = document.createElement('canvas');
-    canvas.id = 'chart-categorias';
-    wrap.innerHTML = '';
-    wrap.appendChild(canvas);
-  }
+  // Sempre recriar o canvas — garante estado limpo após destroy()
+  wrap.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'chart-categorias';
+  wrap.appendChild(canvas);
 
-  estado.charts.categorias = new Chart(document.getElementById('chart-categorias'), {
+  estado.charts.categorias = new Chart(canvas, {
     type: 'doughnut',
     data: {
       labels: despesas.map(r => r.categoria),
@@ -189,14 +187,14 @@ async function renderChartMensal() {
   const wrap = document.getElementById('chart-mensal')?.parentElement;
   if (!wrap) return;
   if (estado.charts.mensal) { estado.charts.mensal.destroy(); estado.charts.mensal = null; }
-  if (!document.getElementById('chart-mensal')) {
-    const canvas = document.createElement('canvas');
-    canvas.id = 'chart-mensal';
-    wrap.innerHTML = '';
-    wrap.appendChild(canvas);
-  }
 
-  estado.charts.mensal = new Chart(document.getElementById('chart-mensal'), {
+  // Sempre recriar o canvas — garante estado limpo após destroy()
+  wrap.innerHTML = '';
+  const canvasMensal = document.createElement('canvas');
+  canvasMensal.id = 'chart-mensal';
+  wrap.appendChild(canvasMensal);
+
+  estado.charts.mensal = new Chart(canvasMensal, {
     type: 'bar',
     data: {
       labels: mesesLabels.slice(start, end),
