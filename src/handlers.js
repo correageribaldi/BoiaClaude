@@ -1,7 +1,7 @@
 const db = require('./database');
 const fmt = require('./formatters');
 const pagamento = require('./pagamento');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -2304,6 +2304,13 @@ function extrairValorDoTexto(texto) {
   return null;
 }
 
+// Wrapper robusto: tenta regex primeiro, usa IA como fallback para texto livre
+async function extrairValorRobusto(texto) {
+  const valor = extrairValorDoTexto(texto);
+  if (valor !== null) return valor;
+  return await extrairValorMonetario(texto);
+}
+
 // Extrai data de um texto usando todas as estratégias
 function extrairDataDoTexto(texto) {
   const lower = texto.toLowerCase().trim();
@@ -2348,7 +2355,7 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
   // Preencher campo que está faltando
   if (!pendente.valor) {
     // Aguardando valor
-    const valor = extrairValorDoTexto(texto);
+    const valor = await extrairValorRobusto(texto);
     if (!valor || valor <= 0) {
       return '❌ Não entendi o valor. Me diz só o número:\n\n_Ex: "150", "R$ 1.200,50", "50 reais"_\n\n_Ou manda "cancelar" pra desistir._';
     }
@@ -3396,7 +3403,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   const campo = ip.esperandoCampo;
 
   if (campo === 'valor') {
-    const valor = extrairValorDoTexto(texto);
+    const valor = await extrairValorRobusto(texto);
     if (!valor || valor <= 0) {
       return `Não entendi o valor 😅 Me diz quanto é ${ip.descricao ? `o *${ip.descricao}*` : 'esse item'}.\n_Ex: "R$ 500" ou "500"_`;
     }
@@ -3466,7 +3473,7 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
   switch (cc.campo) {
 
     case 'limiteTotal': {
-      const valor = extrairValorDoTexto(texto);
+      const valor = await extrairValorRobusto(texto);
       if (!valor || valor <= 0) {
         return `Não entendi o valor 😅 Qual o limite total do *${cc.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
       }
@@ -3501,7 +3508,7 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
     case 'valorFatura': {
       let valorFatura = 0;
       if (lower !== '0' && lower !== 'zero' && lower !== 'nao sei' && lower !== 'não sei') {
-        const valor = extrairValorDoTexto(texto);
+        const valor = await extrairValorRobusto(texto);
         if (valor === null) {
           return `Não entendi o valor 😅 Qual o valor médio da fatura do *${cc.nome}*?\n_Ex: "R$ 1.200" — ou manda "0" se não sabe._`;
         }
@@ -3535,7 +3542,7 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
   switch (inv.campo) {
 
     case 'saldo': {
-      const valor = extrairValorDoTexto(texto);
+      const valor = await extrairValorRobusto(texto);
       if (!valor || valor <= 0) {
         return `Não entendi o valor 😅 Quanto você tem guardado na *${inv.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
       }
@@ -3546,7 +3553,7 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
     }
 
     case 'meta': {
-      inv.meta = isPular ? null : (extrairValorDoTexto(texto) || null);
+      inv.meta = isPular ? null : ((await extrairValorRobusto(texto)) || null);
       inv.campo = 'tipo';
       salvarPontoZero(usuarioId, estado);
       return `Que *tipo* de investimento é essa caixinha?\n_Ex: "Renda fixa", "Ações", "Emergência", "Viagem"... ou "pular"._`;
@@ -3562,7 +3569,7 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
     case 'rendimento': {
       let rendimento = null;
       if (!isPular) {
-        const val = extrairValorDoTexto(texto);
+        const val = await extrairValorRobusto(texto);
         if (val !== null) rendimento = val;
       }
       estado.investimentos.push({

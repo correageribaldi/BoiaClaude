@@ -997,4 +997,30 @@ Exemplos que NÃO são confirmação: "quanto é?", "como pago?", "preciso pagar
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento };
+// Extrai valor monetário de texto livre quando o regex não consegue
+async function extrairValorMonetario(texto) {
+  if (!process.env.OPENAI_API_KEY) return null;
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'Você extrai valores monetários de texto em português brasileiro. Retorne APENAS o número decimal (ex: 30000.00 para "trinta mil reais", 1500.50 para "mil e quinhentos e cinquenta centavos"). Sem texto extra, sem R$, sem formatação. Se não houver valor claro, retorne null.',
+        },
+        { role: 'user', content: texto },
+      ],
+      temperature: 0,
+      max_tokens: 20,
+    });
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content || content === 'null') return null;
+    const num = parseFloat(content.replace(',', '.'));
+    return isNaN(num) ? null : num;
+  } catch (err) {
+    console.error('[AI] Erro ao extrair valor monetário:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario };
