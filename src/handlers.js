@@ -1,7 +1,7 @@
 const db = require('./database');
 const fmt = require('./formatters');
 const pagamento = require('./pagamento');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding } = require('./ai');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -599,7 +599,11 @@ function mensagemPerguntaNome() {
 }
 
 async function handleOnboardingNome(usuarioId, texto) {
-  const nome = texto.trim();
+  if (!texto.trim() || texto.trim().length < 1) {
+    return `Me diz como quer ser chamado(a)! Pode ser seu nome, apelido… até _"Imperador do Cosmos"_ eu aceito 👑`;
+  }
+
+  const nome = await extrairNomeOnboarding(texto.trim());
   if (!nome || nome.length < 1 || nome.length > 50) {
     return `Me diz como quer ser chamado(a)! Pode ser seu nome, apelido… até _"Imperador do Cosmos"_ eu aceito 👑`;
   }

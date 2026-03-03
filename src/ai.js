@@ -1029,4 +1029,45 @@ async function extrairValorMonetario(texto) {
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario };
+// Extrai o nome/apelido de uma frase de apresentação
+async function extrairNomeOnboarding(texto) {
+  const t = texto.trim();
+
+  // Se curto (até 3 palavras), usar como está
+  if (t.split(/\s+/).length <= 3) return t;
+
+  // Regex para padrões comuns de apresentação
+  const padroes = [
+    /\b(?:me chama(?:m)? de|pode(?:m)? me chamar de|pode chamar de|me chamam de)\s+([^\s,!.?]+(?:\s+[^\s,!.?]+)?)/i,
+    /\b(?:meu nome [eéê]|me chamo|meu nome:)\s*([^\s,!.?]+(?:\s+[^\s,!.?]+)?)/i,
+    /\b(?:eu sou [ao]?\s*|sou [ao]?\s*)([A-ZÀ-Ùa-zà-ù][^\s,!.?]*)/i,
+  ];
+
+  for (const regex of padroes) {
+    const match = t.match(regex);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  // IA como fallback para frases mais complexas
+  if (!process.env.OPENAI_API_KEY) return t;
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'Extraia APENAS o nome ou apelido pelo qual a pessoa quer ser chamada. Retorne somente o nome/apelido, sem pontuação, sem texto extra. Exemplos: "Ane eu sou a Ane" → "Ane" | "pode me chamar de Beto" → "Beto" | "meu nome é Ana Paula" → "Ana Paula" | "meu rei" → "meu rei".',
+        },
+        { role: 'user', content: t },
+      ],
+      temperature: 0,
+      max_tokens: 30,
+    });
+    const nome = response.choices[0]?.message?.content?.trim();
+    return nome && nome.length > 0 && nome.length <= 50 ? nome : t;
+  } catch {
+    return t;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding };
