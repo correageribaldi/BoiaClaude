@@ -2827,6 +2827,10 @@ async function handleDepositoCaixinha(usuarioId, resultado) {
   const atualizada = await db.adicionarSaldoCaixinha(caixinha.id, valor);
   const novoSaldo = atualizada.saldo;
 
+  // Registrar o aporte como despesa na conta corrente (dinheiro saiu da conta para o investimento)
+  const hojeISO = dateParaISO(new Date());
+  await db.adicionarTransacao(usuarioId, 'despesa', valor, `Aporte - ${atualizada.nome}`, 'Investimentos', hojeISO, 'pago');
+
   let msg = `✅ *${fmt.formatarMoeda(valor)}* adicionado à *${atualizada.nome}*! 💰\n\n`;
   msg += `  Saldo anterior: ${fmt.formatarMoeda(saldoAnterior)}\n`;
   msg += `  Novo saldo: *${fmt.formatarMoeda(novoSaldo)}*`;
@@ -3926,6 +3930,16 @@ function calcularDataPendente(dia) {
   return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}`;
 }
 
+// Versão para setup inicial: sempre registra no mês corrente mesmo que o dia já tenha passado
+function calcularDataPendenteMesAtual(dia) {
+  const hoje = new Date();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth();
+  const ultimoDia = new Date(ano, mes + 1, 0).getDate();
+  const diaFinal = dia && dia > 0 ? Math.min(dia, ultimoDia) : ultimoDia;
+  return `${ano}-${String(mes + 1).padStart(2, '0')}-${String(diaFinal).padStart(2, '0')}`;
+}
+
 async function salvarDadosPontoZero(usuarioId, estado) {
   // Saldo inicial → receita já paga hoje (entra no saldoAtual imediatamente)
   if (estado.saldoInicial > 0) {
@@ -3933,41 +3947,42 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.adicionarTransacao(usuarioId, 'receita', estado.saldoInicial, 'Saldo inicial', 'Outros', hojeISO, 'pago');
   }
 
-  // Receitas fixas → regra de recorrência + transação pendente para o mês atual
+  // Receitas fixas → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
   for (const r of estado.receitasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros',
       'mensal', r.dia || 1, null, null, null
     );
-    const dataStr = calcularDataPendente(r.dia);
+    const dataStr = calcularDataPendenteMesAtual(r.dia);
     await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
   }
 
-  // Receitas variáveis → transação pendente apenas (sem recorrência)
+  // Receitas variáveis → transação pendente no mês atual
   for (const r of estado.receitasVariaveis || []) {
-    const dataStr = calcularDataPendente(r.dia);
+    const dataStr = calcularDataPendenteMesAtual(r.dia);
     await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente');
   }
 
-  // Despesas fixas → regra de recorrência + transação pendente para o mês atual
+  // Despesas fixas → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
   for (const d of estado.despesasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros',
       'mensal', d.dia || 1, null, null, null
     );
-    const dataStr = calcularDataPendente(d.dia);
+    const dataStr = calcularDataPendenteMesAtual(d.dia);
     await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
   }
 
-  // Cartões → regra de recorrência + transação pendente para o mês atual
+  // Cartões → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
   for (const c of estado.cartoes || []) {
     const recorrenciaId = await db.criarRecorrencia(
-      usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Outros',
+      usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
       'mensal', c.diaVencimento || 1, null, null, null
     );
     if (c.valorFatura && c.valorFatura > 0) {
-      const dataStr = calcularDataPendente(c.diaVencimento);
-      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Outros', dataStr, 'pendente', recorrenciaId);
+      // No setup inicial sempre registra no mês corrente (mesmo que o dia já tenha passado)
+      const dataStr = calcularDataPendenteMesAtual(c.diaVencimento);
+      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataStr, 'pendente', recorrenciaId);
     }
   }
 
