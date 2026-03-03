@@ -3689,6 +3689,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
   const item = await interpretarItemFinanceiro(texto);
 
+  // Detecta qualquer variante de "quero avançar para o próximo passo"
+  const querAvancar = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai))\b/.test(lower);
+
   switch (estado.etapa) {
 
     case 'saldo': {
@@ -3702,7 +3705,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'receitas_fixas': {
-      if (item.tipo === 'nao') {
+      if (item.tipo === 'nao' || (querAvancar && estado.receitasFixas.length > 0)) {
         estado.etapa = 'receitas_variaveis';
         salvarPontoZero(usuarioId, estado);
         return `Beleza! E *receitas variáveis*? (freelas, bicos, vendas, comissões — o que entra mas não é todo mês igual)\n\n_Ex: "Freela dia 20 R$ 500 e venda R$ 200"_\n_Se não tem, manda "não"._`;
@@ -3734,7 +3737,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'receitas_variaveis': {
-      if (item.tipo === 'nao') {
+      if (item.tipo === 'nao' || querAvancar) {
         estado.etapa = 'despesas_fixas';
         salvarPontoZero(usuarioId, estado);
         return `Ótimo! Agora as *despesas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
@@ -3766,7 +3769,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'despesas_fixas': {
-      if (item.tipo === 'nao') {
+      if (item.tipo === 'nao' || (querAvancar && estado.despesasFixas.length > 0)) {
         estado.etapa = 'investimentos';
         salvarPontoZero(usuarioId, estado);
         return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
@@ -3798,7 +3801,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'investimentos': {
-      if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
+      if (item.tipo === 'nao' || querAvancar) {
         if (estado.standalone === 'caixinha') {
           // Modo standalone: salvar caixinhas diretamente e encerrar
           for (const inv of estado.investimentos || []) {
@@ -3825,7 +3828,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'cartoes': {
-      if (item.tipo === 'nao' || lower === 'nao' || lower === 'não' || lower === 'nenhum') {
+      if (item.tipo === 'nao' || querAvancar) {
         if (estado.standalone === 'cartao') {
           // Modo standalone: salvar cartões diretamente e encerrar
           for (const c of estado.cartoes || []) {
