@@ -596,12 +596,17 @@ async function handleOnboardingNome(usuarioId, texto) {
 
 async function handleOnboardingInicio(usuarioId, texto) {
   const lower = texto.toLowerCase().trim();
-  setOnboardingState(usuarioId, null);
 
   const querOrganizar = /organizar|agora|tudo|^1$|🎯/.test(lower);
   const querPoucos   = /poucos|gradual|^2$|📝|cadastrando/.test(lower);
 
+  if (querOrganizar && !querPoucos) {
+    setOnboardingState(usuarioId, null);
+    return await iniciarPontoZero(usuarioId);
+  }
+
   if (querPoucos && !querOrganizar) {
+    setOnboardingState(usuarioId, null);
     return (
       `Ótimo! É bem simples. 😊\n\n` +
       `É só me contar o que você gastou ou recebeu, assim:\n\n` +
@@ -613,15 +618,20 @@ async function handleOnboardingInicio(usuarioId, texto) {
     );
   }
 
-  if (querOrganizar || !querPoucos) {
-    // Default: organizar (inclusive se a resposta não for clara)
-    return await iniciarPontoZero(usuarioId);
-  }
-
-  // Não entendeu — pergunta de novo
+  // Fora de contexto: piada com o que disse + volta à pergunta
   setOnboardingState(usuarioId, 'aguardando_inicio');
+  const promptPiada = (
+    `O usuário está no onboarding de um app financeiro chamado Cronos. ` +
+    `Ele acabou de ser perguntado se prefere "Organizar tudo agora" (opção 1) ou "Ir cadastrando aos poucos" (opção 2). ` +
+    `Em vez de responder, ele mandou: "${texto}". ` +
+    `Faça uma piada curta e espirituosa (máx 2 frases) sobre o que ele disse, com um toque financeiro se possível. ` +
+    `Depois devolva com leveza à pergunta original, pedindo para escolher entre as duas opções. ` +
+    `Não use emojis em excesso. Responda em português brasileiro.`
+  );
+  const piada = await responderAssistente(usuarioId, promptPiada);
   return (
-    `Qual prefere?\n\n` +
+    `${piada}\n\n` +
+    `Mas voltando... 😄\n` +
     `🎯 *Organizar tudo agora* — te faço algumas perguntas rápidas\n` +
     `📝 *Ir cadastrando aos poucos* — você vai mandando conforme acontecer`
   );
