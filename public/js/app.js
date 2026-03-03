@@ -20,12 +20,9 @@ function _aplicarAvatar(nomeBase) {
   const settingsEl = document.getElementById('settings-avatar-preview');
   if (avatarEl) {
     if (foto) {
-      avatarEl.style.backgroundImage = `url(${foto})`;
-      avatarEl.style.backgroundSize = 'cover';
-      avatarEl.style.backgroundPosition = 'center';
-      avatarEl.textContent = '';
+      avatarEl.innerHTML = `<img src="${foto}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;pointer-events:none;display:block;">`;
     } else {
-      avatarEl.style.backgroundImage = '';
+      avatarEl.innerHTML = '';
       avatarEl.textContent = (nomeBase[0] || '?').toUpperCase();
     }
   }
