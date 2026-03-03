@@ -2255,18 +2255,32 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
       }
     }
 
-    return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
+    // Verificar se a compra foi feita em um cartão de crédito cadastrado
+    let cartaoId = null;
+    if (resultado.cartao_nome && tipo === 'despesa') {
+      const cartoes = await db.buscarCartoesPorNome(usuarioId, resultado.cartao_nome);
+      if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+    }
+
+    return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
+  }
+
+  if (resultado.acao === 'uso_cartao') {
+    return await handleUsoCartao(usuarioId, resultado.cartao_nome || null);
   }
 
   return foraDoEscopoMsg();
 }
 
-async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal) {
-  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal);
+async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null) {
+  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
   const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
 
   let emoji, label;
-  if (statusFinal === 'pendente') {
+  if (cartaoId) {
+    emoji = '💳';
+    label = 'Compra no cartão registrada';
+  } else if (statusFinal === 'pendente') {
     emoji = tipo === 'receita' ? '⏳💰' : '⏳💸';
     label = tipo === 'receita' ? 'Receita a receber' : 'Despesa a pagar';
   } else {
@@ -2281,16 +2295,27 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
     `📅 Data: ${dataExibir}\n` +
     `🆔 ID: #${result.lastInsertRowid}`;
 
-  if (statusFinal === 'pendente') {
+  if (cartaoId) {
+    // Mostrar uso atualizado do cartão
+    try {
+      const cartoes = await db.listarCartoes(usuarioId);
+      const cartao = cartoes.find(c => c.id === cartaoId);
+      if (cartao) {
+        const { total } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
+        const disponivel = cartao.limite_total ? cartao.limite_total - total : null;
+        msg += `\n\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(total)} usado no ciclo`;
+        if (disponivel !== null) msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
+      }
+    } catch { /* silencia erro secundário */ }
+  } else if (statusFinal === 'pendente') {
     const quando = tipo === 'receita' ? 'receber' : 'pagar';
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
   }
 
-  // Verificar limite de gastos (apenas para despesas)
-  if (tipo === 'despesa' && categoria) {
+  // Verificar limite de gastos (apenas para despesas diretas — sem cartão)
+  if (tipo === 'despesa' && categoria && !cartaoId) {
     const budgetCat = await resolverBudgetCategoria(categoria);
     if (budgetCat) {
-      // subcats: categorias hardcoded do bucket + a própria categoria (cobre categorias novas)
       const subcats = [...(MAPA_BUDGET[budgetCat] || []), categoria].filter((v, i, a) => a.indexOf(v) === i);
       const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
       if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
@@ -2788,6 +2813,34 @@ async function handleListarCaixinhas(usuarioId) {
   }
   msg += `━━━━━━━━━━━━━━━\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
   return msg;
+}
+
+async function handleUsoCartao(usuarioId, nomeCartao) {
+  const cartoes = nomeCartao
+    ? await db.buscarCartoesPorNome(usuarioId, nomeCartao)
+    : await db.listarCartoes(usuarioId);
+
+  if (cartoes.length === 0) {
+    return `Não encontrei nenhum cartão cadastrado.\n_Cadastre com "novo cartão" ou pelo fluxo Finanças em Dia._`;
+  }
+
+  let msg = `💳 *Cartões de crédito:*\n\n`;
+  for (const c of cartoes) {
+    const { total, qtd, inicioStr } = await db.calcularUsoCartao(c.id, c.dia_fechamento);
+    const limite = c.limite_total;
+    const disponivel = limite ? limite - total : null;
+    const pct = limite ? Math.round((total / limite) * 100) : null;
+    const cor = pct !== null ? (pct >= 80 ? '🔴' : pct >= 50 ? '🟡' : '🟢') : '🔵';
+
+    msg += `*${c.nome}*`;
+    if (c.dia_vencimento) msg += ` — vence dia ${c.dia_vencimento}`;
+    msg += `\n`;
+    msg += `  💸 Gasto no ciclo: *${fmt.formatarMoeda(total)}* (${qtd} compras)\n`;
+    if (limite) msg += `  💳 Limite: ${fmt.formatarMoeda(limite)} ${cor} ${pct}% usado\n`;
+    if (disponivel !== null) msg += `  ✅ Disponível: *${fmt.formatarMoeda(disponivel)}*\n`;
+    msg += `  📅 Ciclo desde: ${inicioStr}\n\n`;
+  }
+  return msg.trim();
 }
 
 async function handleDepositoCaixinha(usuarioId, resultado) {
@@ -3840,6 +3893,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
         if (estado.standalone === 'cartao') {
           // Modo standalone: salvar cartões diretamente e encerrar
           for (const c of estado.cartoes || []) {
+            // Persistir o cartão para vínculo de compras futuras
+            await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
+
             const recorrenciaId = await db.criarRecorrencia(
               usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
               'mensal', c.diaVencimento || 1, null, null, null
@@ -3975,6 +4031,9 @@ async function salvarDadosPontoZero(usuarioId, estado) {
 
   // Cartões → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
   for (const c of estado.cartoes || []) {
+    // Persistir o cartão para vínculo de compras futuras
+    await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
+
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
       'mensal', c.diaVencimento || 1, null, null, null

@@ -501,6 +501,30 @@ async function initTables() {
       [budgetCat, nome]
     );
   }
+
+  // Tabela de cartões de crédito
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cartoes (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      limite_total NUMERIC(12,2),
+      dia_fechamento INT,
+      dia_vencimento INT,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_cartoes_usuario ON cartoes(usuario_id);
+  `);
+
+  // Migração: coluna cartao_id em transacoes para rastrear compras no cartão
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS cartao_id INTEGER REFERENCES cartoes(id);
+  `);
+
+  // Categoria padrão para cartões
+  await pool.query(`
+    INSERT INTO categorias (nome) VALUES ('Cartão') ON CONFLICT (nome) DO NOTHING;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -575,29 +599,29 @@ function calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj) {
 }
 
 // Cria transação com vínculo à regra de recorrência
-async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId) {
+async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId, cartaoId = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id, numero_usuario`,
     [uid, tipo, valor, descricao, categoria || 'Outros',
-     data || dataHojeBR(), status || 'pago', recorrenciaId || null]
+     data || dataHojeBR(), status || 'pago', recorrenciaId || null, cartaoId || null]
   );
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status) {
+async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status, cartaoId = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7,
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, cartao_id, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id, numero_usuario`,
-    [uid, tipo, valor, descricao, categoria || 'Outros', data || dataHojeBR(), status || 'pago']
+    [uid, tipo, valor, descricao, categoria || 'Outros', data || dataHojeBR(), status || 'pago', cartaoId || null]
   );
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
@@ -627,6 +651,8 @@ async function resumoMensal(usuarioId, mes, ano) {
   const inicioMes = `${a}-${mesStr}-01`;
   const fimMes = `${a}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
+  // Compras no cartão excluídas do resumo da conta corrente (cartao_id IS NULL)
+  // evitando double-counting com o pagamento da fatura (que é uma despesa separada)
   const totaisResult = await pool.query(
     `SELECT
        tipo,
@@ -636,6 +662,7 @@ async function resumoMensal(usuarioId, mes, ano) {
      FROM transacoes
      WHERE usuario_id = $1
        AND data >= $2 AND data <= $3
+       AND (cartao_id IS NULL OR tipo = 'receita')
      GROUP BY tipo, status`,
     [uid, inicioMes, fimMes]
   );
@@ -649,6 +676,7 @@ async function resumoMensal(usuarioId, mes, ano) {
      FROM transacoes
      WHERE usuario_id = $1
        AND data >= $2 AND data <= $3
+       AND (cartao_id IS NULL OR tipo = 'receita')
      GROUP BY categoria, tipo
      ORDER BY total DESC`,
     [uid, inicioMes, fimMes]
@@ -896,15 +924,16 @@ async function calcularSaldos(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
 
   // 1. Saldo atual (histórico completo de pagos) + pendentes de transações explícitas do mês
+  // Compras no cartão (cartao_id IS NOT NULL) são excluídas: não saem da conta corrente diretamente
   const result = await pool.query(
     `SELECT
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as receitas_pagas,
-       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as despesas_pagas,
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' AND cartao_id IS NULL THEN valor ELSE 0 END), 0)::float as despesas_pagas,
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pendente'
          AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
          AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
          THEN valor ELSE 0 END), 0)::float as receitas_pendentes,
-       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente'
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente' AND cartao_id IS NULL
          AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
          AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
          THEN valor ELSE 0 END), 0)::float as despesas_pendentes
@@ -1830,6 +1859,59 @@ async function listarCupons() {
   return result.rows;
 }
 
+// ─── Cartões de crédito ───────────────────────────────────────────────────────
+
+async function criarCartao(usuarioId, nome, limiteTotal, diaFechamento, diaVencimento) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `INSERT INTO cartoes (usuario_id, nome, limite_total, dia_fechamento, dia_vencimento)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [uid, nome, limiteTotal || null, diaFechamento || null, diaVencimento || null]
+  );
+  return res.rows[0]?.id || null;
+}
+
+async function listarCartoes(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento
+     FROM cartoes WHERE usuario_id = $1 ORDER BY nome`,
+    [uid]
+  );
+  return res.rows;
+}
+
+async function buscarCartoesPorNome(usuarioId, nome) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento
+     FROM cartoes WHERE usuario_id = $1 AND nome ILIKE $2`,
+    [uid, `%${nome}%`]
+  );
+  return res.rows;
+}
+
+async function calcularUsoCartao(cartaoId, diaFechamento) {
+  const hoje = new Date();
+  const diaHoje = hoje.getDate();
+  const fechamento = diaFechamento || 1;
+  let inicio;
+  if (diaHoje >= fechamento) {
+    inicio = new Date(hoje.getFullYear(), hoje.getMonth(), fechamento);
+  } else {
+    inicio = new Date(hoje.getFullYear(), hoje.getMonth() - 1, fechamento);
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  const inicioStr = `${inicio.getFullYear()}-${pad(inicio.getMonth() + 1)}-${pad(inicio.getDate())}`;
+  const hojeStr = `${hoje.getFullYear()}-${pad(hoje.getMonth() + 1)}-${pad(hoje.getDate())}`;
+  const res = await pool.query(
+    `SELECT COALESCE(SUM(valor), 0)::float as total, COUNT(*)::int as qtd
+     FROM transacoes WHERE cartao_id = $1 AND data >= $2 AND data <= $3`,
+    [cartaoId, inicioStr, hojeStr]
+  );
+  return { total: res.rows[0].total, qtd: res.rows[0].qtd, inicioStr, fimStr: hojeStr };
+}
+
 module.exports = {
   pool,
   initTables,
@@ -1913,4 +1995,8 @@ module.exports = {
   salvarFluxoAtivoDB,
   buscarFluxoAtivoDB,
   limparFluxoAtivoDB,
+  criarCartao,
+  listarCartoes,
+  buscarCartoesPorNome,
+  calcularUsoCartao,
 };

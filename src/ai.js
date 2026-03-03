@@ -42,7 +42,12 @@ TIPOS DE AÇÃO:
 {"acao": "saudacao", "resposta": "mensagem CURTA e amigável como se fosse um amigo no WhatsApp. Exemplo: 'Opa, e aí! No que posso te ajudar?' ou 'Fala! Tudo certo? Precisa de algo?'"}
 
 2. REGISTRAR TRANSAÇÃO (gastei, paguei, comprei, recebi, ganhei, etc):
-{"acao": "transacao", "tipo": "despesa|receita", "valor": 0.00, "descricao": "...", "categoria": "...", "data": null, "status": "pago|pendente"}
+{"acao": "transacao", "tipo": "despesa|receita", "valor": 0.00, "descricao": "...", "categoria": "...", "data": null, "status": "pago|pendente", "cartao_nome": null}
+- Se o usuário mencionar cartão de crédito (ex: "no Nubank", "no cartão Inter", "no crédito Bradesco"), inclua "cartao_nome" com o nome exato do cartão (ex: "Nubank"). Caso contrário, cartao_nome = null.
+- Compras "no crédito" sem nome específico → cartao_nome = "crédito".
+
+2b. CONSULTAR USO DO CARTÃO (quanto usei do cartão, limite, saldo disponível no cartão, uso do Nubank, etc):
+{"acao": "uso_cartao", "cartao_nome": "nome do cartão ou null se não especificou"}
 
 3. CONSULTA (quanto gastei, quanto recebi, me mostra, quais foram, etc):
 {"acao": "consulta", "tipo": "despesa|receita|null", "categoria": "nome da categoria ou null", "dataInicio": "YYYY-MM-DD ou null", "dataFim": "YYYY-MM-DD ou null", "descricao": "palavra-chave ou null", "pergunta": "resumo curto da pergunta"}
