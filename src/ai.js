@@ -699,17 +699,13 @@ Outros exemplos:
 async function categorizarExtrato(descricoes) {
   if (!process.env.OPENAI_API_KEY) return {};
 
+  const CHUNK_SIZE = 25;
+  const resultadoFinal = {};
+
   try {
     const categorias = (await db.listarCategorias()).join(', ');
 
-    const lista = descricoes.map((d, i) => `${i + 1}. ${d}`).join('\n');
-
-    const response = await getOpenAI().chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `Você recebe descrições de transações de um extrato bancário brasileiro.
+    const systemPrompt = `Você recebe descrições de transações de um extrato bancário brasileiro.
 Para CADA descrição, retorne:
 - "categoria": uma das categorias disponíveis: ${categorias}. Se não tiver certeza, use "Outros"
 - "descricao": nome CURTO e limpo (máximo 30 caracteres), removendo prefixos como "Compra no débito -", "Transferência enviada/recebida pelo Pix -", CPFs, agências, contas bancárias
@@ -739,20 +735,37 @@ REGRAS DE DESCRIÇÃO CURTA:
 - "Transferência Recebida - Ketlen Coelho de Carvalho - ..." → "Pix de Ketlen Coelho"
 - "Aplicação RDB" → "Aplicação RDB"
 - "Resgate RDB" → "Resgate RDB"
-- "INGLESES GAS E AGUA" → "Gás e Água"`
-        },
-        { role: 'user', content: lista },
-      ],
-      temperature: 0.2,
-      max_tokens: 2000,
-    });
+- "INGLESES GAS E AGUA" → "Gás e Água"`;
 
-    const content = response.choices[0]?.message?.content?.trim();
-    if (!content) return {};
+    // Processar em chunks para evitar truncamento do JSON de resposta
+    for (let i = 0; i < descricoes.length; i += CHUNK_SIZE) {
+      const chunk = descricoes.slice(i, i + CHUNK_SIZE);
+      const lista = chunk.map((d, j) => `${i + j + 1}. ${d}`).join('\n');
 
-    const jsonStr = content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(jsonStr);
-    return parsed.resultados || {};
+      try {
+        const response = await getOpenAI().chat.completions.create({
+          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: lista },
+          ],
+          temperature: 0.2,
+          max_tokens: 3000,
+        });
+
+        const content = response.choices[0]?.message?.content?.trim();
+        if (!content) continue;
+
+        const jsonStr = content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(jsonStr);
+        Object.assign(resultadoFinal, parsed.resultados || {});
+      } catch (chunkErr) {
+        console.error(`[AI] Erro ao categorizar chunk ${i}-${i + chunk.length}:`, chunkErr.message);
+        // Chunk falhou — itens ficam sem categoria (serão tratados como "Outros" pelo caller)
+      }
+    }
+
+    return resultadoFinal;
   } catch (err) {
     console.error('[AI] Erro ao categorizar extrato:', err.message);
     return {};
