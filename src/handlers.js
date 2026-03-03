@@ -2277,6 +2277,24 @@ function extrairValorDoTexto(texto) {
     return parseFloat(`${matchVirgula[1]}.${matchVirgula[2]}`);
   }
 
+  // Notação k/K — 30k = 30.000, 1,5k = 1.500
+  const matchK = t.match(/(\d+(?:[.,]\d+)?)\s*[kK]\b/);
+  if (matchK) {
+    return Math.round(parseFloat(matchK[1].replace(',', '.')) * 1000 * 100) / 100;
+  }
+
+  // Notação "X mil" — 30 mil, 5 mil, 1,5 mil
+  const matchMil = t.match(/(\d+(?:[.,]\d+)?)\s*mil\b/i);
+  if (matchMil) {
+    return Math.round(parseFloat(matchMil[1].replace(',', '.')) * 1000 * 100) / 100;
+  }
+
+  // Notação "X milhão/milhões" — 1 milhão, 2,5 milhões
+  const matchMilhao = t.match(/(\d+(?:[.,]\d+)?)\s*milh[ãa]o[e]?[s]?/i);
+  if (matchMilhao) {
+    return Math.round(parseFloat(matchMilhao[1].replace(',', '.')) * 1000000 * 100) / 100;
+  }
+
   // Número simples (150, 1200)
   const matchNum = t.match(/(\d+(?:\.\d+)?)/);
   if (matchNum) {
