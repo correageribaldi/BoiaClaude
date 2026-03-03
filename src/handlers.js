@@ -285,20 +285,32 @@ function salvarPontoZero(usuarioId, dados) {
     ...dados,
     expiraEm: Date.now() + 30 * 60 * 1000,
   });
+  // Persistir no banco (fire-and-forget) para sobreviver a restarts
+  db.salvarFluxoAtivoDB(usuarioId, dados).catch(e => console.error('[DB] fluxo ativo:', e));
 }
 
-function obterPontoZero(usuarioId) {
+async function obterPontoZero(usuarioId) {
   const dados = pontoZeroEstados.get(usuarioId);
-  if (!dados) return null;
-  if (Date.now() > dados.expiraEm) {
-    pontoZeroEstados.delete(usuarioId);
-    return null;
+  if (dados) {
+    if (Date.now() > dados.expiraEm) { pontoZeroEstados.delete(usuarioId); }
+    else return dados;
   }
-  return dados;
+  // Fallback: ler do banco (após restart do servidor)
+  try {
+    const dadosDB = await db.buscarFluxoAtivoDB(usuarioId);
+    if (dadosDB) {
+      pontoZeroEstados.set(usuarioId, { ...dadosDB, expiraEm: Date.now() + 30 * 60 * 1000 });
+      return dadosDB;
+    }
+  } catch (e) {
+    console.error('[DB] buscarFluxoAtivoDB:', e.message);
+  }
+  return null;
 }
 
 function limparPontoZero(usuarioId) {
   pontoZeroEstados.delete(usuarioId);
+  db.limparFluxoAtivoDB(usuarioId).catch(e => console.error('[DB] limpar fluxo:', e));
 }
 
 // Estado da análise financeira 50/30/20 (expira em 30 min)
@@ -535,16 +547,29 @@ function setOnboardingState(usuarioId, estado) {
   if (estado === null) {
     onboardingEstados.delete(usuarioId);
   } else {
-    // Expira em 30 min caso o usuário abandone o fluxo
     onboardingEstados.set(usuarioId, { estado, expiraEm: Date.now() + 30 * 60 * 1000 });
   }
+  // Persistir no banco (fire-and-forget) para sobreviver a restarts
+  db.salvarOnboardingEstadoDB(usuarioId, estado).catch(e => console.error('[DB] onboarding estado:', e));
 }
 
-function getOnboardingState(usuarioId) {
+async function getOnboardingState(usuarioId) {
   const dados = onboardingEstados.get(usuarioId);
-  if (!dados) return null;
-  if (Date.now() > dados.expiraEm) { onboardingEstados.delete(usuarioId); return null; }
-  return dados.estado;
+  if (dados) {
+    if (Date.now() > dados.expiraEm) { onboardingEstados.delete(usuarioId); }
+    else return dados.estado;
+  }
+  // Fallback: ler do banco (após restart do servidor)
+  try {
+    const estadoDB = await db.buscarOnboardingEstadoDB(usuarioId);
+    if (estadoDB) {
+      onboardingEstados.set(usuarioId, { estado: estadoDB, expiraEm: Date.now() + 30 * 60 * 1000 });
+    }
+    return estadoDB;
+  } catch (e) {
+    console.error('[DB] buscarOnboardingEstadoDB:', e.message);
+    return null;
+  }
 }
 
 function mensagemApresentacao() {
@@ -1352,12 +1377,18 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const lower = msg.toLowerCase();
 
   // Verificar se está no fluxo de onboarding (novo usuário)
-  const estadoOnboarding = getOnboardingState(usuarioId);
+  const estadoOnboarding = await getOnboardingState(usuarioId);
   if (estadoOnboarding === 'aguardando_nome') {
     return await handleOnboardingNome(usuarioId, msg);
   }
   if (estadoOnboarding === 'aguardando_inicio') {
     return await handleOnboardingInicio(usuarioId, msg);
+  }
+
+  // Verificar se está no fluxo Finanças em Dia — posição #2 para bloquear todos os outros estados
+  const pontoZero = await obterPontoZero(usuarioId);
+  if (pontoZero) {
+    return await handlePontoZero(usuarioId, msg, pontoZero);
   }
 
   // Verificar se está no fluxo de cadastro do painel web
@@ -1413,12 +1444,6 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const analise = obterAnaliseFinanceira(usuarioId);
   if (analise) {
     return await handleAnaliseFinanceiraMsg(usuarioId, msg, analise);
-  }
-
-  // Verificar se está no fluxo Finanças em Dia
-  const pontoZero = obterPontoZero(usuarioId);
-  if (pontoZero) {
-    return await handlePontoZero(usuarioId, msg, pontoZero);
   }
 
   // Comando: análise financeira (texto direto)
@@ -3607,6 +3632,38 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
   }
 }
 
+function perguntaAtualEtapa(etapa) {
+  const perguntas = {
+    saldo: 'Me diz o valor aproximado que tu tem disponível hoje.\n_Ex: "R$ 1.850" ou "uns 2 mil"_',
+    receitas_fixas: 'Me diz suas receitas fixas (salário, benefício...).\n_Ex: "Salário dia 5 R$ 3.000"_\n_Ou manda "não" se não tem._',
+    receitas_variaveis: 'Tem receitas variáveis? (freelas, bicos, comissões)\n_Ex: "Freela R$ 500 dia 20"_\n_Ou manda "não"._',
+    despesas_fixas: 'Me diz suas despesas fixas (aluguel, internet, luz...).\n_Ex: "Aluguel dia 5 R$ 1.500"_\n_Ou manda "não"._',
+    investimentos: 'Me diz o nome da sua primeira caixinha de investimento.\n_Ex: "Poupança", "CDB Nubank"_\n_Ou manda "não"._',
+    cartoes: 'Tem cartão de crédito? Me diz o nome.\n_Ex: "Nubank", "Inter"_\n_Ou manda "não"._',
+    despesas_dia_a_dia: 'Me diz os gastos do mês atual.\n_Ex: "mercado R$ 350, uber R$ 80"_\n_Ou manda "não"._',
+  };
+  return perguntas[etapa] || 'Me manda a informação que estou esperando 😊';
+}
+
+async function redireccionarPontoZero(usuarioId, texto, etapa) {
+  const etapaLabel = {
+    saldo: 'saldo atual', receitas_fixas: 'receitas fixas', receitas_variaveis: 'receitas variáveis',
+    despesas_fixas: 'despesas fixas', investimentos: 'investimentos/caixinhas',
+    cartoes: 'cartões de crédito', despesas_dia_a_dia: 'gastos do mês',
+  };
+  const prompt = (
+    `O usuário está no assistente financeiro Cronos, na etapa de cadastro de "${etapaLabel[etapa] || etapa}". ` +
+    `Em vez de responder o que foi pedido, ele mandou: "${texto}". ` +
+    `Faça uma piada curtíssima (1 frase) com toque financeiro se der. ` +
+    `Responda em português brasileiro, sem exagerar nos emojis.`
+  );
+  const piada = await responderAssistente(prompt).catch(() => null);
+  const pergunta = perguntaAtualEtapa(etapa);
+  return piada
+    ? `${piada}\n\nMas voltando ao que importa 😄\n\n${pergunta}`
+    : `Não entendi 😅\n\n${pergunta}`;
+}
+
 async function handlePontoZero(usuarioId, texto, estado) {
   const lower = texto.toLowerCase().trim();
 
@@ -3636,7 +3693,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'saldo': {
       if (item.tipo !== 'item' || !item.valor) {
-        return 'Não consegui entender o valor 😅\n\nMe diz só o valor aproximado que tu tem disponível hoje.\n_Ex: "R$ 1.850" ou "uns 2 mil"_';
+        return await redireccionarPontoZero(usuarioId, texto, 'saldo');
       }
       estado.saldoInicial = item.valor;
       estado.etapa = 'receitas_fixas';
@@ -3673,7 +3730,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(campoPendente, item.descricao);
         }
       }
-      return 'Não entendi 😅 Me diz o que entra, o valor e o dia.\n_Ex: "Salário dia 5, R$ 3.000"_\n_Ou manda "não" se não tem._';
+      return await redireccionarPontoZero(usuarioId, texto, 'receitas_fixas');
     }
 
     case 'receitas_variaveis': {
@@ -3705,7 +3762,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(campoPendente, item.descricao);
         }
       }
-      return 'Não entendi 😅 Me diz o que entra, o valor e se tem data prevista.\n_Ex: "Freela R$ 500 dia 20"_\n_Ou manda "não" se não tem._';
+      return await redireccionarPontoZero(usuarioId, texto, 'receitas_variaveis');
     }
 
     case 'despesas_fixas': {
@@ -3737,7 +3794,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(campoPendente, item.descricao);
         }
       }
-      return 'Não entendi 😅 Me diz a conta, o valor e o dia de vencimento.\n_Ex: "Aluguel dia 5, R$ 1.500"_\n_Ou manda "não" se não tem._';
+      return await redireccionarPontoZero(usuarioId, texto, 'despesas_fixas');
     }
 
     case 'investimentos': {

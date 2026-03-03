@@ -239,6 +239,13 @@ async function initTables() {
       ON usuarios(usuario_id);
   `);
 
+  // Migração: colunas de persistência de estado de onboarding e fluxo ativo
+  await pool.query(`
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS onboarding_estado TEXT;
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fluxo_ativo JSONB;
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fluxo_expira TIMESTAMP;
+  `);
+
   // Tabela de limites de gastos por categoria
   await pool.query(`
     CREATE TABLE IF NOT EXISTS limites_categoria (
@@ -1189,6 +1196,58 @@ async function buscarUsuario(usuarioId) {
   return result.rows[0] || null;
 }
 
+// Persistência de estado de onboarding no banco
+async function salvarOnboardingEstadoDB(usuarioId, estado) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query(
+    `UPDATE usuarios SET onboarding_estado = $1 WHERE usuario_id = $2`,
+    [estado, uid]
+  );
+}
+
+async function buscarOnboardingEstadoDB(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT onboarding_estado FROM usuarios WHERE usuario_id = $1`, [uid]
+  );
+  return res.rows[0]?.onboarding_estado || null;
+}
+
+// Persistência de fluxo ativo (ponto zero) no banco
+async function salvarFluxoAtivoDB(usuarioId, dados) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const expira = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2h
+  const { expiraEm, ...dadosSemExpira } = dados;
+  await pool.query(
+    `UPDATE usuarios SET fluxo_ativo = $1, fluxo_expira = $2 WHERE usuario_id = $3`,
+    [JSON.stringify(dadosSemExpira), expira, uid]
+  );
+}
+
+async function buscarFluxoAtivoDB(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT fluxo_ativo, fluxo_expira FROM usuarios WHERE usuario_id = $1`, [uid]
+  );
+  const row = res.rows[0];
+  if (!row?.fluxo_ativo) return null;
+  if (new Date() > new Date(row.fluxo_expira)) {
+    pool.query(
+      `UPDATE usuarios SET fluxo_ativo = NULL, fluxo_expira = NULL WHERE usuario_id = $1`, [uid]
+    );
+    return null;
+  }
+  return row.fluxo_ativo;
+}
+
+async function limparFluxoAtivoDB(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query(
+    `UPDATE usuarios SET fluxo_ativo = NULL, fluxo_expira = NULL, onboarding_estado = NULL WHERE usuario_id = $1`,
+    [uid]
+  );
+}
+
 async function listarCategorias() {
   const result = await pool.query('SELECT nome FROM categorias ORDER BY nome');
   return result.rows.map(r => r.nome);
@@ -1849,4 +1908,9 @@ module.exports = {
   buscarCupom,
   incrementarUsoCupom,
   listarCupons,
+  salvarOnboardingEstadoDB,
+  buscarOnboardingEstadoDB,
+  salvarFluxoAtivoDB,
+  buscarFluxoAtivoDB,
+  limparFluxoAtivoDB,
 };
