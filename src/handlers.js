@@ -628,7 +628,7 @@ async function handleOnboardingInicio(usuarioId, texto) {
     `Depois devolva com leveza à pergunta original, pedindo para escolher entre as duas opções. ` +
     `Não use emojis em excesso. Responda em português brasileiro.`
   );
-  const piada = await responderAssistente(usuarioId, promptPiada);
+  const piada = await responderAssistente(promptPiada);
   return (
     `${piada}\n\n` +
     `Mas voltando... 😄\n` +
