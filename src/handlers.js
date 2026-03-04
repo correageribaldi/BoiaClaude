@@ -2291,7 +2291,119 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     return await handleUsoCartao(usuarioId, resultado.cartao_nome || null);
   }
 
+  if (resultado.acao === 'consulta_funcionalidade') {
+    return handleConsultaFuncionalidade(resultado.funcionalidade || '');
+  }
+
   return foraDoEscopoMsg();
+}
+
+// Mapa de funcionalidades do Cronos para consulta do usuário
+const FUNCIONALIDADES_CRONOS = [
+  {
+    chaves: ['audio', 'áudio', 'voz', 'mensagem de voz', 'falar', 'gravar'],
+    suportado: true,
+    resposta: 'Sim! Pode mandar áudio à vontade 🎙️\n\nEu transcrevo automaticamente e processo como se fosse texto. Perfeito para registrar um gasto sem parar o que tá fazendo!',
+  },
+  {
+    chaves: ['foto', 'imagem', 'picture', 'boleto', 'nota fiscal', 'cupom', 'recibo', 'documento', 'comprovante'],
+    suportado: true,
+    resposta: 'Sim! Manda foto de boleto, nota fiscal, cupom ou recibo 📸\n\nEu leio o documento e registro tudo automaticamente — valor, descrição, data de vencimento e categoria.',
+  },
+  {
+    chaves: ['csv', 'extrato', 'planilha', 'importar', 'exportar extrato'],
+    suportado: true,
+    resposta: 'Sim! Pode enviar o extrato do banco em CSV 📊\n\nEu importo todas as transações, categorizo automaticamente via IA e registro tudo de uma vez.',
+  },
+  {
+    chaves: ['cartao', 'cartão', 'cartão de crédito', 'credito', 'crédito', 'limite', 'fatura'],
+    suportado: true,
+    resposta: 'Sim! Tenho controle completo de cartão de crédito 💳\n\nPosso rastrear compras por cartão, mostrar quanto você usou do limite no ciclo atual e avisar quando estiver chegando perto do limite.',
+  },
+  {
+    chaves: ['painel', 'painel web', 'dashboard', 'site', 'navegador', 'graficos', 'gráficos'],
+    suportado: true,
+    resposta: 'Sim! Tenho um painel web completo 📱💻\n\nÉ só mandar *"meu painel"* que eu te envio o link com login e senha. Lá você vê gráficos, tabelas de transações e muito mais.',
+  },
+  {
+    chaves: ['compartilhar', 'compartilhado', 'familia', 'família', 'marido', 'esposa', 'casal', 'multi usuario', 'multi-usuário', 'conta compartilhada', 'adicionar contato'],
+    suportado: true,
+    resposta: 'Sim! Dá pra compartilhar a conta com outras pessoas 👫\n\nÉ só mandar *"adicionar contato [número]"* e a pessoa receberá um convite. Tudo que qualquer membro registrar aparece para todos.',
+  },
+  {
+    chaves: ['lembrete', 'lembrar', 'notificacao', 'notificação', 'aviso', 'alerta'],
+    suportado: true,
+    resposta: 'Sim! Posso criar lembretes 🔔\n\nÉ só falar: *"me lembra amanhã às 10h de pagar o aluguel"* ou *"todo dia 5 me avisa do cartão"*. Recorrentes e únicos, com confirmação de pagamento automática.',
+  },
+  {
+    chaves: ['investimento', 'caixinha', 'poupança', 'reserva', 'guardar dinheiro'],
+    suportado: true,
+    resposta: 'Sim! Tenho caixinhas de investimento 💰\n\nVocê cria quantas quiser, cada uma com nome, meta e rendimento. É só falar *"criar caixinha"* para começar.',
+  },
+  {
+    chaves: ['analise', 'análise', 'analise financeira', 'análise financeira', '50 30 20', 'orcamento', 'orçamento'],
+    suportado: true,
+    resposta: 'Sim! Faço análise financeira completa 📈\n\nEnvie seus extratos em CSV e eu categorizo tudo, calculo a divisão 50/30/20 (necessidades, desejos e poupança) e mostro onde ajustar.',
+  },
+  {
+    chaves: ['localizacao', 'localização', 'lugares', 'perto', 'proximo', 'próximo', 'maps', 'google maps'],
+    suportado: true,
+    resposta: 'Sim! Posso encontrar lugares próximos de você 📍\n\nManda sua localização pelo WhatsApp e me diz o que procura — restaurantes, farmácias, bancos — eu mostro os melhores resultados com avaliações e endereço.',
+  },
+  {
+    chaves: ['pesquisa', 'internet', 'busca', 'google', 'preço', 'preco', 'noticias', 'notícias'],
+    suportado: true,
+    resposta: 'Sim! Posso pesquisar na internet pra você 🔍\n\nÉ só perguntar qualquer coisa — preço de produto, taxa Selic, notícias, dicas — que eu pesquiso e trago os melhores resultados.',
+  },
+  {
+    chaves: ['finanças em dia', 'financas em dia', 'setup', 'configurar', 'configuração', 'ponto zero', 'organizar tudo'],
+    suportado: true,
+    resposta: 'Sim! Tenho o *Finanças em Dia* 🎯\n\nÉ um setup guiado que organiza teu financeiro completo em poucos minutos — saldo, receitas fixas, despesas, investimentos e cartões. É só falar *"finanças em dia"* para começar.',
+  },
+  {
+    chaves: ['assessor', 'assessor de compra', 'posso comprar', 'vale a pena comprar', 'devo comprar'],
+    suportado: true,
+    resposta: 'Sim! Tenho um assessor de compra 🛒\n\nÉ só perguntar: *"posso comprar um notebook de 3 mil?"* que eu analiso seu saldo, pendências e histórico e te dou uma recomendação clara.',
+  },
+  {
+    chaves: ['ligar', 'ligacao', 'ligação', 'chamada', 'video chamada', 'vídeo chamada', 'ligar pelo whatsapp', 'call'],
+    suportado: false,
+    resposta: 'Infelizmente não consigo fazer ou receber ligações 📵\n\nO WhatsApp não permite isso via API. Mas posso enviar mensagens de texto, áudio e alertas — que na maioria dos casos resolvem bem! 😊',
+  },
+  {
+    chaves: ['pagar boleto', 'efetuar pagamento', 'pagar pelo app', 'transferir dinheiro', 'fazer pix'],
+    suportado: false,
+    resposta: 'Não consigo realizar pagamentos ou transferências 💸\n\nSou um assistente de *controle* financeiro — registro, organizo e analiso. Para pagar, você usa o app do seu banco normalmente. Posso te lembrar de pagar! 😄',
+  },
+  {
+    chaves: ['open banking', 'conectar banco', 'sincronizar banco', 'importar automatico', 'importar automático', 'conectar conta'],
+    suportado: false,
+    resposta: 'Ainda não tenho integração automática com bancos 🏦\n\nPor enquanto você importa os extratos em CSV ou registra as transações por texto, áudio ou foto. É rápido e prático!',
+  },
+  {
+    chaves: ['excel', 'exportar excel', 'exportar planilha', 'exportar dados', 'baixar dados'],
+    suportado: false,
+    resposta: 'Ainda não tenho exportação de dados para Excel ou planilha 📄\n\nO painel web (*"meu painel"*) mostra tudo com gráficos e tabelas, mas exportação em arquivo ainda não está disponível.',
+  },
+  {
+    chaves: ['video', 'vídeo', 'gif', 'sticker', 'figurinha'],
+    suportado: false,
+    resposta: 'Não processo vídeos, GIFs ou figurinhas 🙅\n\nMas aceito texto, áudio, foto de documento e CSV! Se quiser registrar algo, manda por qualquer um desses.',
+  },
+];
+
+function handleConsultaFuncionalidade(funcionalidade) {
+  const termo = funcionalidade.toLowerCase().trim();
+  if (!termo) return 'Pode perguntar! O que você queria saber se eu consigo fazer? 😊';
+
+  const match = FUNCIONALIDADES_CRONOS.find(f =>
+    f.chaves.some(chave => termo.includes(chave) || chave.includes(termo))
+  );
+
+  if (match) return match.resposta;
+
+  // Não encontrou na lista
+  return `Hmm, ainda não tenho essa funcionalidade disponível 😅\n\nSe quiser, pode sugerir! O Cronos está sempre evoluindo. 🚀\n\nAlgumas coisas que já faço: áudio, foto de boleto, CSV, cartão de crédito, lembretes, caixinhas, análise financeira e muito mais.`;
 }
 
 async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null) {

@@ -90,6 +90,17 @@ Exemplos:
 10. CONVERSA CASUAL (obrigado, valeu, legal, beleza, tá bom, haha, falou, tmj, blz, etc):
 {"acao": "conversa", "resposta": "resposta curta, humana e natural que faz sentido no contexto. Nunca redirecione para comandos financeiros aqui. Seja como um amigo respondendo no WhatsApp."}
 
+10b. PERGUNTA SOBRE FUNCIONALIDADE DO APP (posso fazer X?, dá pra Y?, você consegue Z?, o app faz W?, aceita X?, funciona com Y?):
+{"acao": "consulta_funcionalidade", "funcionalidade": "termo curto descrevendo o que o usuário quer saber, ex: audio, foto, csv, ligar, pix, video, excel"}
+Use quando o usuário perguntar se o Cronos suporta ou consegue fazer alguma coisa. Exemplos:
+- "posso mandar áudio?" → consulta_funcionalidade, funcionalidade: "audio"
+- "dá pra enviar foto de boleto?" → consulta_funcionalidade, funcionalidade: "foto"
+- "aceita CSV?" → consulta_funcionalidade, funcionalidade: "csv"
+- "você liga pra mim?" → consulta_funcionalidade, funcionalidade: "ligar"
+- "tem painel web?" → consulta_funcionalidade, funcionalidade: "painel web"
+- "posso compartilhar com minha esposa?" → consulta_funcionalidade, funcionalidade: "conta compartilhada"
+- "você faz análise financeira?" → consulta_funcionalidade, funcionalidade: "analise financeira"
+
 11. ASSISTENTE GERAL (perguntas de conhecimento geral, dúvidas técnicas, como fazer algo, explicações, dicas, programação, matemática, receitas, saúde, idiomas, conceitos, etc):
 {"acao": "assistente", "pergunta": "repita a pergunta do usuário em poucas palavras"}
 Use para: "como funciona X", "o que é Y", "como fazer Z", "qual a diferença entre A e B", "me explica", "como apagar banco de dados", "receita de bolo", "traduz essa frase", etc.
