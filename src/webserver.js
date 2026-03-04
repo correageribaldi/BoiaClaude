@@ -158,11 +158,14 @@ app.get('/api/transactions', autenticar, async (req, res) => {
         const dataFimObj = new Date(dataFim + 'T12:00:00');
         const ocorrencias = db.calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj);
 
-        // Excluir projeções já cobertas por transação real (mesmo recorrencia_id no mês)
-        const anoMes = dataInicio.substring(0, 7);
+        // Excluir projeções já cobertas por transação real (qualquer status, para cobrir itens pulados)
+        // Busca sem filtro de status para garantir que itens "pago" (pulados) também suprimam projeções
+        const todasNoMes = status
+          ? await db.consultarTransacoes(req.usuarioId, { dataInicio: dataInicio || null, dataFim: dataFim || null, limite: 1000 })
+          : transacoes;
         const idsComTransacao = new Set(
-          transacoes
-            .filter(t => t.recorrencia_id != null && (t.data || '').startsWith(anoMes))
+          todasNoMes
+            .filter(t => t.recorrencia_id != null)
             .map(t => t.recorrencia_id)
         );
 
@@ -256,6 +259,25 @@ app.delete('/api/recurrences/:id', autenticar, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[WEB] DELETE /api/recurrences/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Pula uma ocorrência de recorrência (insere como pago para suprimir a projeção)
+app.post('/api/transactions/skip-occurrence', autenticar, async (req, res) => {
+  try {
+    const { recorrencia_id, data } = req.body;
+    if (!recorrencia_id || !data) return res.status(400).json({ erro: 'recorrencia_id e data são obrigatórios' });
+    const regras = await db.listarRecorrencias(req.usuarioId);
+    const regra = regras.find(r => r.id === recorrencia_id);
+    if (!regra) return res.status(404).json({ erro: 'Recorrência não encontrada' });
+    await db.adicionarTransacaoComRecorrencia(
+      req.usuarioId, regra.tipo, regra.valor, regra.descricao, regra.categoria,
+      data, 'pago', recorrencia_id
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] POST /api/transactions/skip-occurrence:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });

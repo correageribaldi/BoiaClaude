@@ -351,7 +351,10 @@ function renderTabelaTransacoes(transacoes) {
       }</td>
       <td style="white-space:nowrap">
         ${!t.projetado && t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
-        ${!t.projetado ? `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>` : ''}
+        ${t.projetado
+          ? `<button class="action-btn" title="Excluir" onclick="excluirProjetado(${t.recorrencia_id}, '${esc(t.descricao)}', '${t.data}')">🗑️</button>`
+          : `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>`
+        }
       </td>
     `;
     tbody.appendChild(tr);
@@ -409,6 +412,25 @@ async function excluirTransacao(id) {
       const data = await res.json().catch(() => ({}));
       toast(data.erro || 'Erro ao excluir', 'error');
       return;
+    }
+    toast('Transação excluída.', 'success');
+    carregarTransacoes();
+    if (tabAtual === 'dashboard') carregarDashboard();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirProjetado(recorrenciaId, descricao, data) {
+  const somenteEste = confirm(
+    `"${descricao}" é recorrente.\n\nOK = Excluir apenas este lançamento\nCancelar = Excluir TODOS os lançamentos desta recorrência`
+  );
+  try {
+    if (somenteEste) {
+      await api('/api/transactions/skip-occurrence', {
+        method: 'POST',
+        body: JSON.stringify({ recorrencia_id: recorrenciaId, data }),
+      });
+    } else {
+      await api(`/api/recurrences/${recorrenciaId}`, { method: 'DELETE' });
     }
     toast('Transação excluída.', 'success');
     carregarTransacoes();
