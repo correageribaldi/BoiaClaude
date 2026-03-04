@@ -4050,10 +4050,86 @@ function removerItemFluxo(usuarioId, estado, query) {
   return `Não encontrei "${query}" para remover 😅\n\nManda *"listar"* para ver o que está cadastrado.`;
 }
 
-async function editarItemFluxo(usuarioId, texto, estado) {
-  const lower = texto.toLowerCase();
+// Busca todos os itens cujo nome/descrição tem match com a query (sem acentos, case-insensitive)
+function buscarItensPorNome(estado, queryNome) {
+  const lq = normalizarTextoBusca(queryNome);
+  const palavrasQuery = lq.split(/\s+/).filter(p => p.length > 2);
+  if (!palavrasQuery.length) return [];
 
-  // Editar saldo
+  const resultados = [];
+  const testar = (nome) => {
+    const n = normalizarTextoBusca(nome);
+    return palavrasQuery.some(p => n.includes(p));
+  };
+
+  for (const item of estado.receitasFixas || []) {
+    if (testar(item.descricao)) resultados.push({ item, tipo: 'receita' });
+  }
+  for (const item of estado.despesasFixas || []) {
+    if (testar(item.descricao)) resultados.push({ item, tipo: 'despesa' });
+  }
+  for (const item of estado.investimentos || []) {
+    if (testar(item.nome)) resultados.push({ item, tipo: 'investimento' });
+  }
+  for (const item of estado.cartoes || []) {
+    if (testar(item.nome)) resultados.push({ item, tipo: 'cartão' });
+  }
+  return resultados;
+}
+
+async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, textoOriginal) {
+  const { item, tipo } = candidato;
+  const nomeItem = item.descricao || item.nome;
+
+  if (campo === 'dia') {
+    const dia = novoValor || extrairDiaDoTexto(textoOriginal);
+    if (!dia) return `Qual dia? _Ex: "dia 10"_`;
+    if (tipo === 'cartão') item.diaVencimento = dia;
+    else item.dia = dia;
+    salvarPontoZero(usuarioId, estado);
+    return `✅ Data de *${nomeItem}* atualizada para dia *${dia}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+  }
+
+  // campo === 'valor'
+  const valor = novoValor || await extrairValorRobusto(textoOriginal);
+  if (!valor || valor <= 0) return `Qual o novo valor? _Ex: "R$ 3.000"_`;
+  if (tipo === 'investimento') item.saldo = valor;
+  else if (tipo === 'cartão') item.valorFatura = valor;
+  else item.valor = valor;
+  salvarPontoZero(usuarioId, estado);
+  return `✅ Valor de *${nomeItem}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+}
+
+async function handleEdicaoPendente(usuarioId, texto, estado) {
+  const { campo, novoValor, candidatos } = estado.edicaoPendente;
+  const lower = normalizarTextoBusca(texto);
+
+  // Resolve por número (ex: "1", "o primeiro")
+  const numMatch = lower.match(/\b([1-9])\b/);
+  const num = numMatch ? parseInt(numMatch[1]) : NaN;
+  if (!isNaN(num) && num >= 1 && num <= candidatos.length) {
+    delete estado.edicaoPendente;
+    return aplicarEdicao(usuarioId, estado, candidatos[num - 1], campo, novoValor, texto);
+  }
+
+  // Resolve por nome
+  const palavras = lower.split(/\s+/).filter(p => p.length > 2);
+  for (const c of candidatos) {
+    const nNome = normalizarTextoBusca(c.item.descricao || c.item.nome);
+    if (palavras.some(p => nNome.includes(p))) {
+      delete estado.edicaoPendente;
+      return aplicarEdicao(usuarioId, estado, c, campo, novoValor, texto);
+    }
+  }
+
+  const lista = candidatos.map((c, i) => `${i + 1}. *${c.item.descricao || c.item.nome}* (${c.tipo})`).join('\n');
+  return `Não entendi qual 😅 Responda com o número:\n${lista}`;
+}
+
+async function editarItemFluxo(usuarioId, texto, estado) {
+  const lower = normalizarTextoBusca(texto);
+
+  // Editar saldo geral
   if (/saldo|valor da conta|conta corrente/.test(lower)) {
     const valor = await extrairValorRobusto(texto);
     if (valor && valor > 0) {
@@ -4064,46 +4140,47 @@ async function editarItemFluxo(usuarioId, texto, estado) {
     return `Qual o novo valor do saldo? 💰\n_Ex: "editar saldo para R$ 2.000"_`;
   }
 
-  // Editar receita/despesa por nome
-  const todasListas = [
-    ...(estado.receitasFixas || []).map(i => ({ item: i })),
-    ...(estado.despesasFixas || []).map(i => ({ item: i })),
-  ];
-  for (const { item } of todasListas) {
-    const nomeParts = item.descricao.toLowerCase().split(' ').filter(p => p.length > 2);
-    if (nomeParts.some(p => lower.includes(p))) {
-      if (/valor|para\s+r?[$]?\s*[\d.,k]/i.test(lower)) {
-        const valor = await extrairValorRobusto(texto);
-        if (valor && valor > 0) {
-          item.valor = valor;
-          salvarPontoZero(usuarioId, estado);
-          return `✅ Valor de *${item.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
-        }
-      }
-      if (/dia|data|vencimento|entrada/.test(lower)) {
-        const dia = extrairDiaDoTexto(texto);
-        if (dia) {
-          item.dia = dia;
-          salvarPontoZero(usuarioId, estado);
-          return `✅ Data de *${item.descricao}* atualizada para dia *${dia}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
-        }
-      }
-    }
+  // Detectar campo que quer editar
+  const querDia = /\b(dia|data|vencimento|entrada)\b/.test(lower);
+  const campo = querDia ? 'dia' : 'valor';
+
+  // Extrair nome do item: remover verbos de edição, palavras-chave de campo e valores numéricos
+  let queryNome = lower
+    .replace(/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/g, '')
+    .replace(/\b(o|a|do|da|de|dos|das|para|pro|pra|ao)\b/g, ' ')
+    .replace(/\b(dia|data|vencimento|entrada|valor|reais)\b/g, ' ')
+    .replace(/r[$]?\s*[\d.,]+/gi, '')
+    .replace(/\b[\d.,]+\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!queryNome) {
+    return `Qual item quer editar? Me diz o nome.\n_Ex: "alterar o salário para R$ 3.000"_\n_Ex: "editar dia do aluguel para 10"_`;
   }
 
-  // Editar saldo de investimento
-  for (const inv of estado.investimentos || []) {
-    if (lower.includes(inv.nome.toLowerCase())) {
-      const valor = await extrairValorRobusto(texto);
-      if (valor && valor > 0) {
-        inv.saldo = valor;
-        salvarPontoZero(usuarioId, estado);
-        return `✅ Saldo de *${inv.nome}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
-      }
-    }
+  const candidatos = buscarItensPorNome(estado, queryNome);
+
+  if (candidatos.length === 0) {
+    return `Não encontrei nenhum item chamado "${queryNome}" 😅\n\nManda *"listar"* para ver o que está cadastrado.`;
   }
 
-  return `Não entendi o que quer editar 😅\n\nTente:\n- _"editar saldo para R$ 2.000"_\n- _"alterar valor do salário para R$ 3.000"_\n- _"editar dia do aluguel para 10"_\n\nOu manda *"listar"* para ver o que está cadastrado.`;
+  // Extrair novo valor/dia do texto original
+  let novoValor = null;
+  if (campo === 'dia') {
+    novoValor = extrairDiaDoTexto(texto);
+  } else {
+    novoValor = await extrairValorRobusto(texto);
+  }
+
+  if (candidatos.length === 1) {
+    return aplicarEdicao(usuarioId, estado, candidatos[0], campo, novoValor, texto);
+  }
+
+  // Ambiguidade: perguntar qual
+  estado.edicaoPendente = { campo, novoValor, candidatos };
+  salvarPontoZero(usuarioId, estado);
+  const lista = candidatos.map((c, i) => `${i + 1}. *${c.item.descricao || c.item.nome}* (${c.tipo})`).join('\n');
+  return `Encontrei mais de um item com esse nome 😅\n\nQual deles quer editar?\n${lista}`;
 }
 
 async function handlePontoZero(usuarioId, texto, estado) {
@@ -4112,6 +4189,11 @@ async function handlePontoZero(usuarioId, texto, estado) {
   if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
     limparPontoZero(usuarioId);
     return '❌ Cancelado. Sem problemas! Quando quiser recomeçar é só me falar *"finanças em dia"*.';
+  }
+
+  // Se há uma edição aguardando desambiguação, resolve primeiro
+  if (estado.edicaoPendente) {
+    return await handleEdicaoPendente(usuarioId, texto, estado);
   }
 
   // Se há um item parcial aguardando campos faltantes, continua a coleta
