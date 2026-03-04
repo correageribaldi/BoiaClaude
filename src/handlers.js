@@ -2122,13 +2122,25 @@ async function handleLiquidar(usuarioId, msg) {
     return `❌ Lançamento #${id} não encontrado ou já está pago.`;
   }
 
+  // Se for um aporte agendado em caixinha, atualizar o saldo da caixinha
+  let extraMsg = '';
+  const matchAporte = transacao.descricao?.match(/^Aporte\s*-\s*(.+)$/i);
+  if (matchAporte && transacao.categoria === 'Investimentos') {
+    const nomeCaixinha = matchAporte[1].trim();
+    const caixinhas = await db.buscarCaixinhasPorNome(usuarioId, nomeCaixinha);
+    if (caixinhas.length > 0) {
+      const atualizada = await db.adicionarSaldoCaixinha(caixinhas[0].id, transacao.valor);
+      extraMsg = `\n\n💰 *${nomeCaixinha}*: ${fmt.formatarMoeda(atualizada.saldo - transacao.valor)} → *${fmt.formatarMoeda(atualizada.saldo)}*`;
+    }
+  }
+
   const emoji = transacao.tipo === 'receita' ? '💰' : '💸';
   const acao = transacao.tipo === 'receita' ? 'Recebido' : 'Pago';
 
   return `✅${emoji} *${acao}!* Lançamento #${transacao.id} liquidado.\n\n` +
     `📝 ${transacao.descricao}\n` +
     `💵 ${fmt.formatarMoeda(transacao.valor)}\n` +
-    `📂 ${transacao.categoria}`;
+    `📂 ${transacao.categoria}${extraMsg}`;
 }
 
 async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOriginal, enviarAck) {
@@ -3259,12 +3271,30 @@ async function handleDepositoCaixinha(usuarioId, resultado) {
   }
 
   const caixinha = matches[0];
+
+  // Resolver data: se informada e futura → aporte agendado (pendente); senão → imediato
+  let dataAporte = null;
+  if (resultado.data) {
+    dataAporte = resolverData(resultado.data);
+    if (!dataAporte && resultado.data.includes('/')) dataAporte = parseData(resultado.data);
+  }
+  const hojeISO = dateParaISO(new Date());
+  const isAgendado = dataAporte && dataAporte > hojeISO;
+
+  if (isAgendado) {
+    // Criar despesa pendente — a caixinha só é atualizada quando o usuário pagar
+    await db.adicionarTransacao(usuarioId, 'despesa', valor, `Aporte - ${caixinha.nome}`, 'Investimentos', dataAporte, 'pendente');
+    return `📅 Aporte agendado!\n\n` +
+      `  Caixinha: *${caixinha.nome}*\n` +
+      `  Valor: *${fmt.formatarMoeda(valor)}*\n` +
+      `  Data: *${fmt.formatarData(dataAporte)}*\n\n` +
+      `Quando chegar o dia, use *"pagar #ID"* para confirmar — o valor será adicionado à caixinha automaticamente.`;
+  }
+
+  // Depósito imediato
   const saldoAnterior = caixinha.saldo;
   const atualizada = await db.adicionarSaldoCaixinha(caixinha.id, valor);
   const novoSaldo = atualizada.saldo;
-
-  // Registrar o aporte como despesa na conta corrente (dinheiro saiu da conta para o investimento)
-  const hojeISO = dateParaISO(new Date());
   await db.adicionarTransacao(usuarioId, 'despesa', valor, `Aporte - ${atualizada.nome}`, 'Investimentos', hojeISO, 'pago');
 
   let msg = `✅ *${fmt.formatarMoeda(valor)}* adicionado à *${atualizada.nome}*! 💰\n\n`;
