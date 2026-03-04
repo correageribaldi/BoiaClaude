@@ -1891,6 +1891,15 @@ async function buscarCartoesPorNome(usuarioId, nome) {
   return res.rows;
 }
 
+async function deletarCartao(usuarioId, cartaoId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `DELETE FROM cartoes WHERE id = $1 AND usuario_id = $2 RETURNING nome`,
+    [cartaoId, uid]
+  );
+  return res.rows[0]?.nome || null;
+}
+
 async function calcularUsoCartao(cartaoId, diaFechamento) {
   const hoje = new Date();
   const diaHoje = hoje.getDate();
@@ -1998,5 +2007,6 @@ module.exports = {
   criarCartao,
   listarCartoes,
   buscarCartoesPorNome,
+  deletarCartao,
   calcularUsoCartao,
 };

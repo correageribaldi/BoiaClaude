@@ -2180,6 +2180,10 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     return await handleRemoverLimite(usuarioId, resultado);
   }
 
+  if (resultado.acao === 'remover_cartao') {
+    return await handleRemoverCartao(usuarioId, resultado);
+  }
+
   // Mensagem fora do escopo - mostra o que o bot sabe fazer
   if (resultado.acao === 'nenhuma') {
     const usuario = await db.buscarUsuario(usuarioId);
@@ -3322,6 +3326,32 @@ async function handleListarLimites(usuarioId) {
   }
 
   return msg;
+}
+
+async function handleRemoverCartao(usuarioId, resultado) {
+  const { cartao_nome } = resultado;
+
+  if (!cartao_nome) {
+    return '❌ Qual cartão você quer remover?';
+  }
+
+  const cartoes = await db.buscarCartoesPorNome(usuarioId, cartao_nome);
+  if (cartoes.length === 0) {
+    return `❌ Não encontrei nenhum cartão com o nome *${cartao_nome}*.\n_Use "meus cartões" para ver os cadastrados._`;
+  }
+
+  if (cartoes.length > 1) {
+    const lista = cartoes.map((c, i) => `  ${i + 1}. *${c.nome}*`).join('\n');
+    return `Encontrei mais de um cartão com esse nome 😅 Qual você quer remover?\n\n${lista}\n\n_Manda o nome completo exato._`;
+  }
+
+  const cartao = cartoes[0];
+  const nomeRemovido = await db.deletarCartao(usuarioId, cartao.id);
+  if (!nomeRemovido) {
+    return `❌ Não foi possível remover o cartão.`;
+  }
+
+  return `✅ Cartão *${nomeRemovido}* removido com sucesso!`;
 }
 
 async function handleRemoverLimite(usuarioId, resultado) {

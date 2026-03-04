@@ -53,6 +53,9 @@ TIPOS DE AÇÃO:
 2b. CONSULTAR USO DO CARTÃO (quanto usei do cartão, limite, saldo disponível no cartão, uso do Nubank, etc):
 {"acao": "uso_cartao", "cartao_nome": "nome do cartão ou null se não especificou"}
 
+2c. REMOVER CARTÃO (remover cartão, excluir cartão, deletar cartão, apagar cartão, tirar cartão, não quero mais o cartão X):
+{"acao": "remover_cartao", "cartao_nome": "nome do cartão"}
+
 3. CONSULTA (quanto gastei, quanto recebi, me mostra, quais foram, etc):
 {"acao": "consulta", "tipo": "despesa|receita|null", "categoria": "nome da categoria ou null", "dataInicio": "YYYY-MM-DD ou null", "dataFim": "YYYY-MM-DD ou null", "descricao": "palavra-chave ou null", "pergunta": "resumo curto da pergunta"}
 
