@@ -4439,15 +4439,15 @@ async function handlePontoZero(usuarioId, texto, estado) {
           // Modo standalone: salvar cartões diretamente e encerrar
           for (const c of estado.cartoes || []) {
             // Persistir o cartão para vínculo de compras futuras
-            await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
+            const cartaoId = await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
 
             const recorrenciaId = await db.criarRecorrencia(
               usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
               'mensal', c.diaVencimento || 1, null, null, null
             );
             if (c.valorFatura && c.valorFatura > 0) {
-              const dataStr = calcularDataPendente(c.diaVencimento);
-              await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataStr, 'pendente', recorrenciaId);
+              const hojeISO = dateParaISO(new Date());
+              await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', hojeISO, 'pendente', recorrenciaId, cartaoId);
             }
           }
           limparPontoZero(usuarioId);
@@ -4571,16 +4571,17 @@ async function salvarDadosPontoZero(usuarioId, estado) {
   // Cartões → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
   for (const c of estado.cartoes || []) {
     // Persistir o cartão para vínculo de compras futuras
-    await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
+    const cartaoId = await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
 
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
       'mensal', c.diaVencimento || 1, null, null, null
     );
     if (c.valorFatura && c.valorFatura > 0) {
-      // No setup inicial sempre registra no mês corrente (mesmo que o dia já tenha passado)
-      const dataStr = calcularDataPendenteMesAtual(c.diaVencimento);
-      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataStr, 'pendente', recorrenciaId);
+      // Usar data de hoje para que calcularUsoCartao inclua a fatura inicial no ciclo atual.
+      // O cartao_id vincula ao cartão correto para rastrear uso/limite disponível.
+      const hojeISO = dateParaISO(new Date());
+      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', hojeISO, 'pendente', recorrenciaId, cartaoId);
     }
   }
 
