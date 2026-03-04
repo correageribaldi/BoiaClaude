@@ -1402,6 +1402,24 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleTrocaNome(usuarioId, msg);
   }
 
+  // Detecção de intenção de trocar nome — antes de qualquer fluxo ativo
+  {
+    const lowerNorm = normalizarTextoBusca(lower);
+    const matchTrocaNome = /\b(trocar?|mudar?|alterar?|corrigir?|atualizar?|ajustar?)\b.{0,15}\b(meu\s+)?nome\b/.test(lowerNorm)
+      || /\bquero me chamar\b|\bme chama de\b|\bme chamem de\b|\bmeu nome (e|e\s)/.test(lowerNorm);
+    if (matchTrocaNome) {
+      // Se já vem o novo nome na mensagem (ex: "mudar meu nome para João")
+      const matchPara = lower.match(/(?:para|pra|como|ser?ia)\s+(.+)$/i);
+      if (matchPara) {
+        const nomeCandidato = matchPara[1].trim().replace(/[.,!?]+$/, '');
+        const resposta = await handleTrocaNome(usuarioId, nomeCandidato);
+        return resposta;
+      }
+      setOnboardingState(usuarioId, 'trocando_nome');
+      return `Claro! Como você quer ser chamado(a)?\n\n_Ex: "João", "Ana", "chefe", "meu rei"_`;
+    }
+  }
+
   // Verificar se está no fluxo Finanças em Dia — posição #2 para bloquear todos os outros estados
   const pontoZero = await obterPontoZero(usuarioId);
   if (pontoZero) {
@@ -2712,12 +2730,6 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
 async function handleMensagemIA(usuarioId, texto, enviarAck) {
   // Detectar reset ANTES da IA interpretar (para funcionar em áudio também)
   const lower = texto.toLowerCase().trim().replace(/[.,!?]+$/g, '');
-
-  // Trocar nome
-  if (/trocar? (de )?nome|mudar? (de )?nome|alterar? (de )?nome|meu nome (é|e)|quero me chamar|me chama de|me chamem de/.test(lower)) {
-    setOnboardingState(usuarioId, 'trocando_nome');
-    return `Claro! Como você quer ser chamado(a)?\n\n_Ex: "João", "Ana", "chefe", "meu rei"_`;
-  }
 
   if (lower === 'resetar' || lower.includes('começar do zero') || lower.includes('comecar do zero') || lower === 'limpar tudo' || lower === 'zerar dados') {
     await db.limparDadosUsuario(usuarioId);
