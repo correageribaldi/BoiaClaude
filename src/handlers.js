@@ -623,6 +623,16 @@ async function handleOnboardingNome(usuarioId, texto) {
   );
 }
 
+async function handleTrocaNome(usuarioId, texto) {
+  const nome = await extrairNomeOnboarding(texto.trim());
+  if (!nome || nome.length < 1 || nome.length > 50) {
+    return `Hmm, isso não parece um nome 😅\n\nComo quer ser chamado(a)? Pode ser seu nome, apelido ou até _"Chefe Supremo"_ 👑\n\n_Ex: "João", "Ana", "meu rei"_`;
+  }
+  await db.atualizarNomeUsuario(usuarioId, nome);
+  setOnboardingState(usuarioId, null);
+  return `Feito! A partir de agora te chamo de *${nome}* 😊`;
+}
+
 async function handleOnboardingInicio(usuarioId, texto) {
   const lower = texto.toLowerCase().trim();
 
@@ -1387,6 +1397,9 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
   if (estadoOnboarding === 'aguardando_inicio') {
     return await handleOnboardingInicio(usuarioId, msg);
+  }
+  if (estadoOnboarding === 'trocando_nome') {
+    return await handleTrocaNome(usuarioId, msg);
   }
 
   // Verificar se está no fluxo Finanças em Dia — posição #2 para bloquear todos os outros estados
@@ -2693,6 +2706,13 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
 async function handleMensagemIA(usuarioId, texto, enviarAck) {
   // Detectar reset ANTES da IA interpretar (para funcionar em áudio também)
   const lower = texto.toLowerCase().trim().replace(/[.,!?]+$/g, '');
+
+  // Trocar nome
+  if (/trocar? (de )?nome|mudar? (de )?nome|alterar? (de )?nome|meu nome (é|e)|quero me chamar|me chama de|me chamem de/.test(lower)) {
+    setOnboardingState(usuarioId, 'trocando_nome');
+    return `Claro! Como você quer ser chamado(a)?\n\n_Ex: "João", "Ana", "chefe", "meu rei"_`;
+  }
+
   if (lower === 'resetar' || lower.includes('começar do zero') || lower.includes('comecar do zero') || lower === 'limpar tudo' || lower === 'zerar dados') {
     await db.limparDadosUsuario(usuarioId);
     limparPontoZero(usuarioId);
