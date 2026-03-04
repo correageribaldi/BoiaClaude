@@ -2268,20 +2268,33 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
         if (cartoes.length >= 1) cartaoId = cartoes[0].id;
       }
 
+      const parcelas = resultado.parcelas && resultado.parcelas > 1 ? Math.round(resultado.parcelas) : 1;
+
+      // Compra parcelada com cartão já identificado
+      if (parcelas > 1 && cartaoId) {
+        return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas);
+      }
+
       // Se não identificou cartão e a despesa já tem valor, perguntar se foi no cartão
       if (!cartaoId && valor && statusFinal === 'pago') {
         const cartoesUsuario = await db.listarCartoes(usuarioId);
         if (cartoesUsuario.length > 0) {
-          // Salvar transação como pendente-de-cartão e perguntar
-          const pendente = { tipo, valor, descricao, categoria: categoria || 'Outros', data: dataFinal, status: statusFinal, aguardandoCartao: true, cartoesDisponiveis: cartoesUsuario };
+          // Salvar transação como pendente-de-cartão e perguntar (preservando parcelas)
+          const pendente = { tipo, valor, descricao, categoria: categoria || 'Outros', data: dataFinal, status: statusFinal, aguardandoCartao: true, cartoesDisponiveis: cartoesUsuario, parcelas };
           salvarTransacaoPendente(usuarioId, pendente);
 
-          let pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* 👍\n\nFoi no cartão ou conta corrente?\n\n`;
-          if (cartoesUsuario.length === 1) {
-            pergunta += `  1. ${cartoesUsuario[0].nome}\n  2. Conta corrente`;
-          } else {
+          let pergunta;
+          if (parcelas > 1) {
+            pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* em *${parcelas}x* 👍\n\nEm qual cartão foi?\n\n`;
             pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
-            pergunta += `\n  ${cartoesUsuario.length + 1}. Conta corrente`;
+          } else {
+            pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* 👍\n\nFoi no cartão ou conta corrente?\n\n`;
+            if (cartoesUsuario.length === 1) {
+              pergunta += `  1. ${cartoesUsuario[0].nome}\n  2. Conta corrente`;
+            } else {
+              pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+              pergunta += `\n  ${cartoesUsuario.length + 1}. Conta corrente`;
+            }
           }
           return pergunta;
         }
@@ -2408,6 +2421,40 @@ function handleConsultaFuncionalidade(funcionalidade) {
 
   // Não encontrou na lista
   return `Hmm, ainda não tenho essa funcionalidade disponível 😅\n\nSe quiser, pode sugerir! O Cronos está sempre evoluindo. 🚀\n\nAlgumas coisas que já faço: áudio, foto de boleto, CSV, cartão de crédito, lembretes, caixinhas, análise financeira e muito mais.`;
+}
+
+async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas) {
+  const dataBase = dataFinal || dataHojeBRISO();
+  await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, dataBase, cartaoId, parcelas);
+
+  const valorParcela = Math.round((valor / parcelas) * 100) / 100;
+  let listaParcelas = '';
+  for (let i = 0; i < parcelas; i++) {
+    const d = new Date(dataBase + 'T12:00:00');
+    d.setMonth(d.getMonth() + i);
+    const mesAno = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+    const icone = i === 0 ? '✅' : '⏳';
+    const vAtual = i === parcelas - 1
+      ? Math.round((valor - valorParcela * (parcelas - 1)) * 100) / 100
+      : valorParcela;
+    listaParcelas += `  ${i + 1}/${parcelas} — ${fmt.formatarMoeda(vAtual)} (${mesAno}) ${icone}\n`;
+  }
+
+  let msg = `💳 *${descricao}* registrada em *${parcelas}x* no cartão!\n\n` +
+    `💵 Total: ${fmt.formatarMoeda(valor)}\n📋 *Parcelas:*\n${listaParcelas}`;
+
+  try {
+    const cartoes = await db.listarCartoes(usuarioId);
+    const cartao = cartoes.find(c => c.id === cartaoId);
+    if (cartao) {
+      const { total } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
+      const disponivel = cartao.limite_total ? cartao.limite_total - total : null;
+      msg += `\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(total)} usado no ciclo`;
+      if (disponivel !== null) msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
+    }
+  } catch { /* silencia */ }
+
+  return msg;
 }
 
 async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null) {
@@ -2602,6 +2649,9 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
     delete pendente.aguardandoCartao;
     delete pendente.cartoesDisponiveis;
     limparTransacaoPendente(usuarioId);
+    if (cartaoId && pendente.parcelas && pendente.parcelas > 1) {
+      return await salvarTransacaoParcelada(usuarioId, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, cartaoId, pendente.parcelas);
+    }
     return await salvarTransacao(usuarioId, pendente.tipo, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, pendente.status || 'pago', cartaoId);
   }
 

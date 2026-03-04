@@ -626,6 +626,26 @@ async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, 
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
 
+async function adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, dataBase, cartaoId, parcelas) {
+  const valorParcela = Math.round((valor / parcelas) * 100) / 100;
+  const valorUltima  = Math.round((valor - valorParcela * (parcelas - 1)) * 100) / 100;
+  const ids = [];
+  for (let i = 0; i < parcelas; i++) {
+    const d = new Date(dataBase + 'T12:00:00');
+    d.setMonth(d.getMonth() + i);
+    const dataStr = d.toISOString().slice(0, 10);
+    const valorAtual = i === parcelas - 1 ? valorUltima : valorParcela;
+    const status = i === 0 ? 'pago' : 'pendente';
+    const result = await adicionarTransacao(
+      usuarioId, 'despesa', valorAtual,
+      `${descricao} (${i + 1}/${parcelas})`,
+      categoria, dataStr, status, cartaoId
+    );
+    ids.push(result);
+  }
+  return ids;
+}
+
 async function listarTransacoes(usuarioId, tipo, limite) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -2009,4 +2029,5 @@ module.exports = {
   buscarCartoesPorNome,
   deletarCartao,
   calcularUsoCartao,
+  adicionarTransacoesParcelas,
 };
