@@ -794,17 +794,36 @@ async function resumoAnual(usuarioId, ano) {
   return { ano: a, meses: result.rows };
 }
 
-async function buscarTransacoesPorDescricao(usuarioId, query) {
+async function buscarTransacoesPorDescricao(usuarioId, query, tipo) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  const params = [uid, `%${query}%`];
+  let tipoClause = '';
+  if (tipo === 'despesa' || tipo === 'receita') {
+    tipoClause = ` AND tipo = $3`;
+    params.push(tipo);
+  }
   const result = await pool.query(
     `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
      FROM transacoes
-     WHERE usuario_id = $1 AND descricao ILIKE $2
+     WHERE usuario_id = $1 AND descricao ILIKE $2${tipoClause}
      ORDER BY data DESC, id DESC
      LIMIT 10`,
-    [uid, `%${query}%`]
+    params
   );
   return result.rows;
+}
+
+async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const camposPermitidos = ['valor', 'data', 'descricao', 'categoria'];
+  if (!camposPermitidos.includes(campo)) throw new Error(`Campo inválido: ${campo}`);
+  const result = await pool.query(
+    `UPDATE transacoes SET ${campo} = $1
+     WHERE numero_usuario = $2 AND usuario_id = $3
+     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status`,
+    [novoValor, numeroUsuario, uid]
+  );
+  return result.rows[0] || null;
 }
 
 async function excluirTransacao(usuarioId, numeroUsuario) {
@@ -1980,6 +1999,7 @@ module.exports = {
   resumoMensal,
   resumoAnual,
   buscarTransacoesPorDescricao,
+  atualizarTransacao,
   excluirTransacao,
   listarCategorias,
   consultarTransacoes,

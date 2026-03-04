@@ -188,6 +188,19 @@ function obterExcluirPendente(usuarioId) {
 }
 function limparExcluirPendente(usuarioId) { excluirPendentes.delete(usuarioId); }
 
+// Estado para editar transação (fluxo multi-turn, expira em 5 min)
+const editarTxPendentes = new Map();
+function salvarEditarTxPendente(usuarioId, dados) {
+  editarTxPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+}
+function obterEditarTxPendente(usuarioId) {
+  const dados = editarTxPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarTxPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarTxPendente(usuarioId) { editarTxPendentes.delete(usuarioId); }
+
 function salvarTransacaoPendente(usuarioId, dados) {
   transacaoPendente.set(usuarioId, {
     ...dados,
@@ -1526,6 +1539,13 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleEscolhaExcluir(usuarioId, msg, excluirPend);
   }
 
+  // Verificar se há edição de transação em andamento
+  const editarTxPend = obterEditarTxPendente(usuarioId);
+  if (editarTxPend) {
+    const resposta = await handleEditarTxPendente(usuarioId, msg, editarTxPend);
+    if (resposta !== null) return resposta;
+  }
+
   // Verificar se há seleção pendente para remover contato compartilhado
   const remocaoContato = obterRemocaoContatoPendente(usuarioId);
   if (remocaoContato) {
@@ -1900,26 +1920,56 @@ async function handleExcluir(usuarioId, msg) {
     return `Qual lançamento quer excluir? Me diz o nome ou parte da descrição.\n\n_Ex: "excluir financiamento carro"_`;
   }
 
-  const transacoes = await db.buscarTransacoesPorDescricao(usuarioId, query);
+  return handleExcluirTxPorNome(usuarioId, query, null);
+}
+
+// Busca e inicia fluxo de exclusão por nome (chamado pela IA e pelo handleExcluir)
+async function handleExcluirTxPorNome(usuarioId, descricaoBusca, tipo) {
+  const transacoes = await db.buscarTransacoesPorDescricao(usuarioId, descricaoBusca, tipo);
 
   if (transacoes.length === 0) {
-    return `❌ Nenhum lançamento encontrado com "${query}".\n\nTente _"lista"_ para ver todos os lançamentos.`;
+    const filtro = tipo ? ` do tipo "${tipo}"` : '';
+    return `❌ Nenhum lançamento${filtro} encontrado com "${descricaoBusca}".\n\nTente _"lista"_ para ver todos os lançamentos.`;
   }
 
   if (transacoes.length === 1) {
     const t = transacoes[0];
-    await db.excluirTransacao(usuarioId, t.id);
-    return `🗑️ *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} excluído com sucesso!`;
+    const emoji = t.tipo === 'receita' ? '💰' : '💸';
+    salvarExcluirPendente(usuarioId, { aguardandoConfirmacao: true, transacao: t });
+    return `Encontrei este lançamento:\n\n${emoji} *${t.descricao}* — ${fmt.formatarMoeda(t.valor)}\n📅 ${fmt.formatarData(t.data)} | ${t.categoria} | ${t.status === 'pendente' ? '⏳ pendente' : '✅ pago'}\n\nÉ esse que quer excluir? _(sim / não)_`;
   }
 
   // Múltiplos — pedir qual
   salvarExcluirPendente(usuarioId, { transacoes });
-  const lista = transacoes.map((t, i) => `  ${i + 1}. *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} (${t.data})`).join('\n');
-  return `Encontrei ${transacoes.length} lançamentos com "${query}":\n\n${lista}\n\nQual deles quer excluir? Responda com o número ou _"cancelar"_.`;
+  const lista = transacoes.map((t, i) => {
+    const emoji = t.tipo === 'receita' ? '💰' : '💸';
+    return `  ${i + 1}. ${emoji} *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} | ${fmt.formatarData(t.data)}`;
+  }).join('\n');
+  return `Encontrei ${transacoes.length} lançamentos com "${descricaoBusca}":\n\n${lista}\n\nQual deles quer excluir? Responda com o número ou _"cancelar"_.`;
 }
 
 async function handleEscolhaExcluir(usuarioId, msg, pendente) {
   const lower = msg.toLowerCase().trim();
+
+  // Modo: confirmação de item único
+  if (pendente.aguardandoConfirmacao) {
+    const cancelou = /^(n[aã]o|nope|cancelar?|não quero|errado|errei)$/i.test(lower);
+    if (cancelou) {
+      limparExcluirPendente(usuarioId);
+      return '❌ Cancelado, nenhum lançamento excluído.';
+    }
+    const confirmou = PALAVRAS_PAGAMENTO_CONFIRMADO.some(p => lower === p || lower.startsWith(p + ' ')) ||
+      /^(sim|s|é esse|esse mesmo|confirmar?|pode|ok|isso|correto|certo)$/i.test(lower);
+    if (!confirmou) {
+      return `Responda _"sim"_ para confirmar a exclusão ou _"não"_ para cancelar.`;
+    }
+    const t = pendente.transacao;
+    limparExcluirPendente(usuarioId);
+    await db.excluirTransacao(usuarioId, t.id);
+    return `🗑️ *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} excluído com sucesso!`;
+  }
+
+  // Modo: seleção de múltiplos
   if (lower === 'cancelar' || lower === 'não' || lower === 'nao') {
     limparExcluirPendente(usuarioId);
     return '❌ Cancelado.';
@@ -1932,6 +1982,167 @@ async function handleEscolhaExcluir(usuarioId, msg, pendente) {
   limparExcluirPendente(usuarioId);
   await db.excluirTransacao(usuarioId, t.id);
   return `🗑️ *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} excluído com sucesso!`;
+}
+
+// ── Editar Transação ──────────────────────────────────────────────────────────
+
+function resumoTransacaoEdit(t) {
+  const emoji = t.tipo === 'receita' ? '💰' : '💸';
+  return `${emoji} *${t.descricao}*\n` +
+    `  💵 Valor: ${fmt.formatarMoeda(t.valor)}\n` +
+    `  📅 Data: ${fmt.formatarData(t.data)}\n` +
+    `  📂 Categoria: ${t.categoria}\n` +
+    `  ${t.status === 'pendente' ? '⏳ Pendente' : '✅ Pago'}`;
+}
+
+async function handleEditarTxPorNome(usuarioId, resultado) {
+  const { descricao_busca, tipo, campo, novo_valor } = resultado;
+  if (!descricao_busca) {
+    return `Qual lançamento quer editar? Me diz o nome.\n\n_Ex: "editar aluguel"_`;
+  }
+
+  const transacoes = await db.buscarTransacoesPorDescricao(usuarioId, descricao_busca, tipo || null);
+
+  if (transacoes.length === 0) {
+    const filtro = tipo ? ` do tipo "${tipo}"` : '';
+    return `❌ Nenhum lançamento${filtro} encontrado com "${descricao_busca}".\n\nTente _"lista"_ para ver todos os lançamentos.`;
+  }
+
+  if (transacoes.length > 1) {
+    // Múltiplos — pedir qual
+    salvarEditarTxPendente(usuarioId, { fase: 'selecionar', transacoes, campo: campo || null, novo_valor: novo_valor || null });
+    const lista = transacoes.map((t, i) => {
+      const emoji = t.tipo === 'receita' ? '💰' : '💸';
+      return `  ${i + 1}. ${emoji} *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} | ${fmt.formatarData(t.data)}`;
+    }).join('\n');
+    return `Encontrei ${transacoes.length} lançamentos com "${descricao_busca}":\n\n${lista}\n\nQual deles quer editar? Responda com o número ou _"cancelar"_.`;
+  }
+
+  const t = transacoes[0];
+
+  // Campo e valor já especificados → aplicar direto
+  if (campo && novo_valor) {
+    return aplicarEdicaoTx(usuarioId, t, campo, novo_valor);
+  }
+
+  // Campo especificado mas sem valor → pedir valor
+  if (campo) {
+    salvarEditarTxPendente(usuarioId, { fase: 'aguardando_valor', transacao: t, campo });
+    const labelscampo = { valor: 'novo valor', data: 'nova data', descricao: 'nova descrição', categoria: 'nova categoria' };
+    return `${resumoTransacaoEdit(t)}\n\nQual o ${labelscampo[campo] || campo}?\n_Ex: ${campo === 'valor' ? '"R$ 1.700"' : campo === 'data' ? '"dia 15" ou "15/03/2026"' : campo === 'categoria' ? '"Moradia"' : '"Aluguel Centro"'}_`;
+  }
+
+  // Nenhum campo especificado → perguntar o que quer editar
+  salvarEditarTxPendente(usuarioId, { fase: 'escolher_campo', transacao: t });
+  return `${resumoTransacaoEdit(t)}\n\nO que quer editar?\n\n_Ex: "alterar o valor para R$ 1.700", "mudar a data para dia 15", "corrigir a descrição para Aluguel Centro", "categoria Moradia"_`;
+}
+
+async function aplicarEdicaoTx(usuarioId, t, campo, novoValorStr) {
+  let valorFinal = novoValorStr;
+
+  if (campo === 'valor') {
+    const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
+    if (!v || v <= 0) return `❌ Valor inválido: "${novoValorStr}". Ex: _"R$ 1.700"_`;
+    valorFinal = v;
+  } else if (campo === 'data') {
+    const d = resolverData(novoValorStr) || parseData(novoValorStr);
+    if (!d) return `❌ Data inválida: "${novoValorStr}". Ex: _"15/03/2026"_ ou _"dia 15"_`;
+    valorFinal = d;
+  } else if (campo === 'descricao' || campo === 'categoria') {
+    valorFinal = novoValorStr.trim();
+    if (!valorFinal) return `❌ Texto inválido.`;
+  }
+
+  const atualizada = await db.atualizarTransacao(usuarioId, t.id, campo, valorFinal);
+  if (!atualizada) return `❌ Não consegui atualizar o lançamento.`;
+
+  const labelsAntes = { valor: fmt.formatarMoeda(t.valor), data: fmt.formatarData(t.data), descricao: t.descricao, categoria: t.categoria };
+  const labelsDepois = { valor: fmt.formatarMoeda(atualizada.valor), data: fmt.formatarData(atualizada.data), descricao: atualizada.descricao, categoria: atualizada.categoria };
+  return `✅ *${atualizada.descricao}* atualizado!\n\n${labelsAntes[campo]} → *${labelsDepois[campo]}*`;
+}
+
+async function handleEditarTxPendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
+    limparEditarTxPendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+
+  // Fase: selecionar entre múltiplos
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(msg.trim());
+    if (!num || isNaN(num) || num < 1 || num > pendente.transacoes.length) {
+      return `Responda com um número de 1 a ${pendente.transacoes.length}, ou _"cancelar"_.`;
+    }
+    const t = pendente.transacoes[num - 1];
+    if (pendente.campo && pendente.novo_valor) {
+      limparEditarTxPendente(usuarioId);
+      return aplicarEdicaoTx(usuarioId, t, pendente.campo, pendente.novo_valor);
+    }
+    if (pendente.campo) {
+      salvarEditarTxPendente(usuarioId, { fase: 'aguardando_valor', transacao: t, campo: pendente.campo });
+      const labels = { valor: 'novo valor', data: 'nova data', descricao: 'nova descrição', categoria: 'nova categoria' };
+      return `${resumoTransacaoEdit(t)}\n\nQual o ${labels[pendente.campo] || pendente.campo}?`;
+    }
+    salvarEditarTxPendente(usuarioId, { fase: 'escolher_campo', transacao: t });
+    return `${resumoTransacaoEdit(t)}\n\nO que quer editar?\n\n_Ex: "valor para R$ 1.700", "data dia 15", "categoria Moradia", "descrição Aluguel Centro"_`;
+  }
+
+  // Fase: escolher o que editar
+  if (pendente.fase === 'escolher_campo') {
+    const t = pendente.transacao;
+    const campo = detectarCampoEdicao(lower);
+    if (!campo) {
+      return `Não entendi 😅 O que quer mudar?\n\n_"valor para R$ X", "data dia X", "categoria X", "descrição X"_`;
+    }
+    const novoValor = extrairNovoValorEdicao(msg, campo);
+    if (novoValor) {
+      limparEditarTxPendente(usuarioId);
+      return aplicarEdicaoTx(usuarioId, t, campo, novoValor);
+    }
+    salvarEditarTxPendente(usuarioId, { fase: 'aguardando_valor', transacao: t, campo });
+    const labels = { valor: 'novo valor (ex: R$ 1.700)', data: 'nova data (ex: dia 15)', descricao: 'nova descrição', categoria: 'nova categoria' };
+    return `Qual o ${labels[campo] || campo}?`;
+  }
+
+  // Fase: receber o valor do campo
+  if (pendente.fase === 'aguardando_valor') {
+    const t = pendente.transacao;
+    const campo = pendente.campo;
+    limparEditarTxPendente(usuarioId);
+    return aplicarEdicaoTx(usuarioId, t, campo, msg.trim());
+  }
+
+  limparEditarTxPendente(usuarioId);
+  return null;
+}
+
+function detectarCampoEdicao(lower) {
+  if (/\b(valor|preco|preço|quanto|r\$|reais)\b/.test(lower)) return 'valor';
+  if (/\b(data|dia|vencimento|prazo|quando)\b/.test(lower)) return 'data';
+  if (/\b(descri[cç][aã]o|nome|titulo|título|chama[dr]|chamado)\b/.test(lower)) return 'descricao';
+  if (/\b(categoria|tipo|classifica[cç][aã]o)\b/.test(lower)) return 'categoria';
+  // Tenta inferir pelo padrão "para R$ X" → valor, "para dia X" → data
+  if (/para\s+r?\$?\s*[\d.,]+/i.test(lower)) return 'valor';
+  if (/para\s+dia\s+\d+/i.test(lower)) return 'data';
+  return null;
+}
+
+function extrairNovoValorEdicao(texto, campo) {
+  if (campo === 'valor') {
+    const m = texto.match(/(?:para|pra|de|:)?\s*r?\$?\s*([\d.,]+k?)/i);
+    return m ? m[1] : null;
+  }
+  if (campo === 'data') {
+    const m = texto.match(/(?:para|pra|dia|:)?\s*(\d{1,2}(?:[/\-]\d{1,2}(?:[/\-]\d{2,4})?)?)/i);
+    return m ? m[1] : null;
+  }
+  if (campo === 'descricao' || campo === 'categoria') {
+    const m = texto.match(/(?:para|pra|:)\s+(.+)$/i);
+    return m ? m[1].trim() : null;
+  }
+  return null;
 }
 
 async function handleAdicionarContato(usuarioId, msg) {
@@ -2337,6 +2548,16 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   if (resultado.acao === 'remover_cartao') {
     return await handleRemoverCartao(usuarioId, resultado);
+  }
+
+  // Excluir transação por nome (via IA)
+  if (resultado.acao === 'excluir_transacao') {
+    return await handleExcluirTxPorNome(usuarioId, resultado.descricao_busca, resultado.tipo || null);
+  }
+
+  // Editar transação por nome (via IA)
+  if (resultado.acao === 'editar_transacao') {
+    return await handleEditarTxPorNome(usuarioId, resultado);
   }
 
   // Mensagem fora do escopo - mostra o que o bot sabe fazer

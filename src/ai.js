@@ -59,6 +59,17 @@ TIPOS DE AÇÃO:
 2c. REMOVER CARTÃO (remover cartão, excluir cartão, deletar cartão, apagar cartão, tirar cartão, não quero mais o cartão X):
 {"acao": "remover_cartao", "cartao_nome": "nome do cartão"}
 
+2d. EXCLUIR TRANSAÇÃO (excluir/remover/deletar/apagar/tirar despesa ou receita por nome — ex: "excluir aluguel", "remover despesa mercado", "apagar receita salário", "quero tirar o lançamento de luz"):
+{"acao": "excluir_transacao", "descricao_busca": "nome ou parte da descrição para buscar", "tipo": "despesa|receita|null"}
+Regra: use SOMENTE quando o usuário quer APAGAR um lançamento já registrado. Se mencionar despesa/receita/lançamento, preencha "tipo". Caso contrário tipo = null.
+NÃO use para cancelar lembretes nem cartões.
+
+2e. EDITAR TRANSAÇÃO (editar/alterar/corrigir/mudar/atualizar despesa ou receita por nome — ex: "editar aluguel", "alterar valor do mercado para 300", "corrigir data do salário", "mudar a descrição da luz"):
+{"acao": "editar_transacao", "descricao_busca": "nome ou parte da descrição para buscar", "tipo": "despesa|receita|null", "campo": "valor|data|descricao|categoria|null", "novo_valor": "novo valor como string ou null se não especificado"}
+Regra: use quando o usuário quer MODIFICAR um lançamento já registrado.
+- "campo": o que quer mudar — "valor", "data", "descricao", "categoria" — ou null se não especificou
+- "novo_valor": o novo conteúdo como string (ex: "1700", "2026-03-15", "Aluguel Centro", "Moradia") — ou null se não disse
+
 3. CONSULTA (quanto gastei, quanto recebi, me mostra, quais foram, etc):
 {"acao": "consulta", "tipo": "despesa|receita|null", "categoria": "nome da categoria ou null", "dataInicio": "YYYY-MM-DD ou null", "dataFim": "YYYY-MM-DD ou null", "descricao": "palavra-chave ou null", "pergunta": "resumo curto da pergunta"}
 
