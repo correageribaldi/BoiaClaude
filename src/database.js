@@ -1921,6 +1921,22 @@ async function deletarCartao(usuarioId, cartaoId) {
   return res.rows[0]?.nome || null;
 }
 
+// Soma todas as transações pendentes (parcelas futuras incluídas) para mostrar crédito comprometido
+async function calcularCreditoComprometido(cartaoId) {
+  const res = await pool.query(
+    `SELECT COALESCE(SUM(valor), 0)::float as total
+     FROM transacoes WHERE cartao_id = $1 AND status != 'pago'`,
+    [cartaoId]
+  );
+  // Inclui também as do ciclo atual (status='pago' = incluída na fatura, mas fatura ainda não paga)
+  const res2 = await pool.query(
+    `SELECT COALESCE(SUM(valor), 0)::float as total
+     FROM transacoes WHERE cartao_id = $1 AND status = 'pago' AND data >= NOW() - INTERVAL '45 days'`,
+    [cartaoId]
+  );
+  return res.rows[0].total + res2.rows[0].total;
+}
+
 async function calcularUsoCartao(cartaoId, diaFechamento) {
   const hoje = new Date();
   const diaHoje = hoje.getDate();
@@ -2030,5 +2046,6 @@ module.exports = {
   buscarCartoesPorNome,
   deletarCartao,
   calcularUsoCartao,
+  calcularCreditoComprometido,
   adicionarTransacoesParcelas,
 };

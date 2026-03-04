@@ -2460,10 +2460,13 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
     const cartoes = await db.listarCartoes(usuarioId);
     const cartao = cartoes.find(c => c.id === cartaoId);
     if (cartao) {
-      const { total } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
-      const disponivel = cartao.limite_total ? cartao.limite_total - total : null;
-      msg += `\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(total)} usado no ciclo`;
-      if (disponivel !== null) msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
+      const { total: faturaAtual } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
+      const comprometido = await db.calcularCreditoComprometido(cartaoId);
+      msg += `\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(faturaAtual)} na fatura atual`;
+      if (cartao.limite_total) {
+        const disponivel = cartao.limite_total - comprometido;
+        msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
+      }
     }
   } catch { /* silencia */ }
 
@@ -2499,10 +2502,13 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
       const cartoes = await db.listarCartoes(usuarioId);
       const cartao = cartoes.find(c => c.id === cartaoId);
       if (cartao) {
-        const { total } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
-        const disponivel = cartao.limite_total ? cartao.limite_total - total : null;
-        msg += `\n\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(total)} usado no ciclo`;
-        if (disponivel !== null) msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
+        const { total: faturaAtual } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
+        const comprometido = await db.calcularCreditoComprometido(cartaoId);
+        msg += `\n\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(faturaAtual)} na fatura atual`;
+        if (cartao.limite_total) {
+          const disponivel = cartao.limite_total - comprometido;
+          msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
+        }
       }
     } catch { /* silencia erro secundário */ }
   } else if (statusFinal === 'pendente') {
@@ -3085,17 +3091,21 @@ async function handleUsoCartao(usuarioId, nomeCartao) {
 
   let msg = `💳 *Cartões de crédito:*\n\n`;
   for (const c of cartoes) {
-    const { total, qtd, inicioStr } = await db.calcularUsoCartao(c.id, c.dia_fechamento);
+    const { total: faturaAtual, qtd, inicioStr } = await db.calcularUsoCartao(c.id, c.dia_fechamento);
+    const comprometido = await db.calcularCreditoComprometido(c.id);
     const limite = c.limite_total;
-    const disponivel = limite ? limite - total : null;
-    const pct = limite ? Math.round((total / limite) * 100) : null;
+    const disponivel = limite ? limite - comprometido : null;
+    const pct = limite ? Math.round((comprometido / limite) * 100) : null;
     const cor = pct !== null ? (pct >= 80 ? '🔴' : pct >= 50 ? '🟡' : '🟢') : '🔵';
 
     msg += `*${c.nome}*`;
     if (c.dia_vencimento) msg += ` — vence dia ${c.dia_vencimento}`;
     msg += `\n`;
-    msg += `  💸 Gasto no ciclo: *${fmt.formatarMoeda(total)}* (${qtd} compras)\n`;
-    if (limite) msg += `  💳 Limite: ${fmt.formatarMoeda(limite)} ${cor} ${pct}% usado\n`;
+    msg += `  💸 Fatura atual: *${fmt.formatarMoeda(faturaAtual)}* (${qtd} compras no ciclo)\n`;
+    if (comprometido > faturaAtual) {
+      msg += `  ⏳ Total comprometido: *${fmt.formatarMoeda(comprometido)}* (inclui parcelas futuras)\n`;
+    }
+    if (limite) msg += `  💳 Limite: ${fmt.formatarMoeda(limite)} ${cor} ${pct}% comprometido\n`;
     if (disponivel !== null) msg += `  ✅ Disponível: *${fmt.formatarMoeda(disponivel)}*\n`;
     msg += `  📅 Ciclo desde: ${inicioStr}\n\n`;
   }
