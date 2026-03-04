@@ -623,12 +623,26 @@ async function handleOnboardingNome(usuarioId, texto) {
   );
 }
 
-async function handleTrocaNome(usuarioId, texto) {
+async function handleTrocaNome(usuarioId, texto, retornarA = null) {
   const nome = await extrairNomeOnboarding(texto.trim());
   if (!nome || nome.length < 1 || nome.length > 50) {
     return `Hmm, isso não parece um nome 😅\n\nComo quer ser chamado(a)? Pode ser seu nome, apelido ou até _"Chefe Supremo"_ 👑\n\n_Ex: "João", "Ana", "meu rei"_`;
   }
   await db.atualizarNomeUsuario(usuarioId, nome);
+
+  if (retornarA === 'aguardando_inicio') {
+    setOnboardingState(usuarioId, 'aguardando_inicio');
+    return (
+      `Feito! A partir de agora te chamo de *${nome}* 😊\n\n` +
+      `Como você prefere começar?\n\n` +
+      `🎯 *Organizar tudo agora*\n` +
+      `Eu te faço algumas perguntas rápidas e já deixo teu financeiro completo (saldo, receitas, despesas e contas do mês).\n\n` +
+      `📝 *Ir cadastrando aos poucos*\n` +
+      `Você vai me dizendo o que gastou ou recebeu no dia a dia, e eu organizo automaticamente.\n\n` +
+      `👉 Recomendo organizar tudo agora pra você já ter uma visão clara do teu dinheiro. 💪`
+    );
+  }
+
   setOnboardingState(usuarioId, null);
   return `Feito! A partir de agora te chamo de *${nome}* 😊`;
 }
@@ -1398,6 +1412,9 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   if (estadoOnboarding === 'trocando_nome') {
     return await handleTrocaNome(usuarioId, msg);
   }
+  if (estadoOnboarding === 'trocando_nome_from_inicio') {
+    return await handleTrocaNome(usuarioId, msg, 'aguardando_inicio');
+  }
 
   // Detecção de intenção de trocar nome — antes de qualquer fluxo ativo (inclusive aguardando_inicio)
   {
@@ -1405,12 +1422,15 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     const matchTrocaNome = /\b(trocar?|mudar?|alterar?|corrigir?|atualizar?|ajustar?)\b.{0,15}\b(meu\s+)?nome\b/.test(lowerNorm)
       || /\bquero me chamar\b|\bme chama de\b|\bme chamem de\b|\bmeu nome (e|e\s)/.test(lowerNorm);
     if (matchTrocaNome) {
+      // Determina para onde voltar após a troca
+      const retornarA = estadoOnboarding === 'aguardando_inicio' ? 'aguardando_inicio' : null;
       const matchPara = lower.match(/(?:para|pra|como|ser?ia)\s+(.+)$/i);
       if (matchPara) {
         const nomeCandidato = matchPara[1].trim().replace(/[.,!?]+$/, '');
-        return await handleTrocaNome(usuarioId, nomeCandidato);
+        return await handleTrocaNome(usuarioId, nomeCandidato, retornarA);
       }
-      setOnboardingState(usuarioId, 'trocando_nome');
+      // Sem nome na mensagem: pede e guarda o estado de origem
+      setOnboardingState(usuarioId, retornarA === 'aguardando_inicio' ? 'trocando_nome_from_inicio' : 'trocando_nome');
       return `Claro! Como você quer ser chamado(a)?\n\n_Ex: "João", "Ana", "chefe", "meu rei"_`;
     }
   }
