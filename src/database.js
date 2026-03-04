@@ -794,6 +794,19 @@ async function resumoAnual(usuarioId, ano) {
   return { ano: a, meses: result.rows };
 }
 
+async function buscarTransacoesPorDescricao(usuarioId, query) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+     FROM transacoes
+     WHERE usuario_id = $1 AND descricao ILIKE $2
+     ORDER BY data DESC, id DESC
+     LIMIT 10`,
+    [uid, `%${query}%`]
+  );
+  return result.rows;
+}
+
 async function excluirTransacao(usuarioId, numeroUsuario) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -1965,6 +1978,7 @@ module.exports = {
   listarTransacoes,
   resumoMensal,
   resumoAnual,
+  buscarTransacoesPorDescricao,
   excluirTransacao,
   listarCategorias,
   consultarTransacoes,

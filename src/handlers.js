@@ -175,6 +175,19 @@ const confirmacoesPendentes = new Map();
 // Estado para transações com dados incompletos (expira em 5 min)
 const transacaoPendente = new Map();
 
+// Estado para excluir por nome aguardando seleção (expira em 5 min)
+const excluirPendentes = new Map();
+function salvarExcluirPendente(usuarioId, dados) {
+  excluirPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+}
+function obterExcluirPendente(usuarioId) {
+  const dados = excluirPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { excluirPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparExcluirPendente(usuarioId) { excluirPendentes.delete(usuarioId); }
+
 function salvarTransacaoPendente(usuarioId, dados) {
   transacaoPendente.set(usuarioId, {
     ...dados,
@@ -1485,6 +1498,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleConfirmacaoImagem(usuarioId, lower, confirmacao);
   }
 
+  // Verificar se há seleção pendente para excluir por nome
+  const excluirPend = obterExcluirPendente(usuarioId);
+  if (excluirPend) {
+    return await handleEscolhaExcluir(usuarioId, msg, excluirPend);
+  }
+
   // Verificar se há seleção pendente para remover contato compartilhado
   const remocaoContato = obterRemocaoContatoPendente(usuarioId);
   if (remocaoContato) {
@@ -1832,16 +1851,56 @@ async function handleExcluir(usuarioId, msg) {
   const idStr = partes[1]?.replace('#', '');
   const id = parseInt(idStr);
 
-  if (!id || isNaN(id)) {
-    return `❌ Informe o ID do lançamento para excluir.\n\nExemplo: excluir 5`;
+  // Excluir por ID (comportamento original)
+  if (id && !isNaN(id)) {
+    const result = await db.excluirTransacao(usuarioId, id);
+    if (result.changes === 0) {
+      return `❌ Lançamento #${id} não encontrado.`;
+    }
+    return `🗑️ Lançamento #${id} excluído com sucesso!`;
   }
 
-  const result = await db.excluirTransacao(usuarioId, id);
-  if (result.changes === 0) {
-    return `❌ Lançamento #${id} não encontrado.`;
+  // Excluir por nome/descrição
+  const query = msg.replace(/^excluir\s*/i, '')
+    .replace(/\b(receita|despesa|investimento|cartao|cartão|lancamento|lançamento)\b/gi, '')
+    .trim();
+
+  if (!query) {
+    return `Qual lançamento quer excluir? Me diz o nome ou parte da descrição.\n\n_Ex: "excluir financiamento carro"_`;
   }
 
-  return `🗑️ Lançamento #${id} excluído com sucesso!`;
+  const transacoes = await db.buscarTransacoesPorDescricao(usuarioId, query);
+
+  if (transacoes.length === 0) {
+    return `❌ Nenhum lançamento encontrado com "${query}".\n\nTente _"lista"_ para ver todos os lançamentos.`;
+  }
+
+  if (transacoes.length === 1) {
+    const t = transacoes[0];
+    await db.excluirTransacao(usuarioId, t.id);
+    return `🗑️ *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} excluído com sucesso!`;
+  }
+
+  // Múltiplos — pedir qual
+  salvarExcluirPendente(usuarioId, { transacoes });
+  const lista = transacoes.map((t, i) => `  ${i + 1}. *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} (${t.data})`).join('\n');
+  return `Encontrei ${transacoes.length} lançamentos com "${query}":\n\n${lista}\n\nQual deles quer excluir? Responda com o número ou _"cancelar"_.`;
+}
+
+async function handleEscolhaExcluir(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+  if (lower === 'cancelar' || lower === 'não' || lower === 'nao') {
+    limparExcluirPendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+  const num = parseInt(msg.trim());
+  if (!num || isNaN(num) || num < 1 || num > pendente.transacoes.length) {
+    return `Responda com um número de 1 a ${pendente.transacoes.length}, ou _"cancelar"_ para desistir.`;
+  }
+  const t = pendente.transacoes[num - 1];
+  limparExcluirPendente(usuarioId);
+  await db.excluirTransacao(usuarioId, t.id);
+  return `🗑️ *${t.descricao}* — ${fmt.formatarMoeda(t.valor)} excluído com sucesso!`;
 }
 
 async function handleAdicionarContato(usuarioId, msg) {
@@ -4145,7 +4204,10 @@ function mostrarResumoFluxo(estado) {
 }
 
 function removerItemFluxo(usuarioId, estado, query) {
-  const lq = query.toLowerCase();
+  // Normalizar: remover acentos e palavras-tipo como "despesa", "receita", "cartão" etc.
+  const lq = normalizarTextoBusca(query)
+    .replace(/\b(receita|despesa|investimento|cartao|caixinha|lancamento|fixo|fixa)\b/g, '')
+    .replace(/\s+/g, ' ').trim();
 
   if (/saldo|conta/.test(lq)) {
     estado.saldoInicial = 0;
@@ -4161,7 +4223,7 @@ function removerItemFluxo(usuarioId, estado, query) {
   ];
   for (const { lista, campo } of listas) {
     if (!lista?.length) continue;
-    const idx = lista.findIndex(i => (i[campo] || '').toLowerCase().includes(lq));
+    const idx = lista.findIndex(i => normalizarTextoBusca(i[campo] || '').includes(lq));
     if (idx !== -1) {
       const nome = lista[idx][campo];
       lista.splice(idx, 1);
