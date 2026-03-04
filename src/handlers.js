@@ -2257,9 +2257,31 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
     // Verificar se a compra foi feita em um cartão de crédito cadastrado
     let cartaoId = null;
-    if (resultado.cartao_nome && tipo === 'despesa') {
-      const cartoes = await db.buscarCartoesPorNome(usuarioId, resultado.cartao_nome);
-      if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+    if (tipo === 'despesa') {
+      if (resultado.cartao_nome) {
+        // IA identificou um cartão pelo nome
+        const cartoes = await db.buscarCartoesPorNome(usuarioId, resultado.cartao_nome);
+        if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+      }
+
+      // Se não identificou cartão e a despesa já tem valor, perguntar se foi no cartão
+      if (!cartaoId && valor && statusFinal === 'pago') {
+        const cartoesUsuario = await db.listarCartoes(usuarioId);
+        if (cartoesUsuario.length > 0) {
+          // Salvar transação como pendente-de-cartão e perguntar
+          const pendente = { tipo, valor, descricao, categoria: categoria || 'Outros', data: dataFinal, status: statusFinal, aguardandoCartao: true, cartoesDisponiveis: cartoesUsuario };
+          salvarTransacaoPendente(usuarioId, pendente);
+
+          let pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* 👍\n\nFoi no cartão ou conta corrente?\n\n`;
+          if (cartoesUsuario.length === 1) {
+            pergunta += `  1. ${cartoesUsuario[0].nome}\n  2. Conta corrente`;
+          } else {
+            pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+            pergunta += `\n  ${cartoesUsuario.length + 1}. Conta corrente`;
+          }
+          return pergunta;
+        }
+      }
     }
 
     return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
@@ -2414,6 +2436,39 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
   if (lower === 'cancelar' || lower === 'deixa' || lower === 'esquece' || lower === '0') {
     limparTransacaoPendente(usuarioId);
     return '❌ Cancelado! Não salvei nada.';
+  }
+
+  // Aguardando escolha de cartão
+  if (pendente.aguardandoCartao) {
+    const cartoes = pendente.cartoesDisponiveis || [];
+    let cartaoId = null;
+
+    // "conta corrente", "débito", "não", "direto" → sem cartão
+    const ehContaCorrente = /\b(conta corrente|d[eé]bito|n[aã]o|direto|sem cart[aã]o|pix|espécie|dinheiro)\b/.test(lower);
+
+    if (!ehContaCorrente) {
+      // Tentar número (1, 2, 3...)
+      const numMatch = lower.match(/^(\d+)$/);
+      if (numMatch) {
+        const idx = parseInt(numMatch[1]) - 1;
+        if (idx >= 0 && idx < cartoes.length) cartaoId = cartoes[idx].id;
+      }
+      // Tentar nome parcial
+      if (!cartaoId) {
+        const match = cartoes.find(c => c.nome.toLowerCase().includes(lower) || lower.includes(c.nome.toLowerCase()));
+        if (match) cartaoId = match.id;
+      }
+      // Não reconheceu — pedir de novo
+      if (!cartaoId && !ehContaCorrente) {
+        const opcoes = cartoes.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+        return `Não entendi 😅 Responde com o número ou nome:\n\n${opcoes}\n  ${cartoes.length + 1}. Conta corrente\n\n_Ou "cancelar" pra desistir._`;
+      }
+    }
+
+    delete pendente.aguardandoCartao;
+    delete pendente.cartoesDisponiveis;
+    limparTransacaoPendente(usuarioId);
+    return await salvarTransacao(usuarioId, pendente.tipo, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, pendente.status || 'pago', cartaoId);
   }
 
   // Preencher campo que está faltando
