@@ -3738,19 +3738,14 @@ async function iniciarPontoZero(usuarioId) {
 }
 
 function coletarItens(item, lista, etapa) {
+  // Múltiplos itens
   if (item.tipo === 'itens' && item.itens && item.itens.length > 0) {
     let msg = '';
     const incompletos = [];
     for (const it of item.itens) {
       const campo = proximoCampoFaltante(it, etapa);
       if (campo) {
-        incompletos.push({
-          descricao: it.descricao,
-          valor: it.valor || null,
-          dia: it.dia || null,
-          categoria: it.categoria || null,
-          esperandoCampo: campo,
-        });
+        incompletos.push({ descricao: it.descricao, valor: it.valor || null, dia: it.dia || null, categoria: it.categoria || null, esperandoCampo: campo });
       } else {
         lista.push({ valor: it.valor, descricao: it.descricao, dia: it.dia, categoria: it.categoria });
         msg += `✅ *${it.descricao}* - ${fmt.formatarMoeda(it.valor)}${it.dia ? ` (dia ${it.dia})` : ''}\n`;
@@ -3758,11 +3753,21 @@ function coletarItens(item, lista, etapa) {
     }
     return { ok: true, msg, quantidade: item.itens.length - incompletos.length, incompletos };
   }
-  if (item.tipo === 'item' && item.valor) {
+
+  // Item único — verifica completude antes de adicionar
+  if (item.tipo === 'item' && (item.valor || item.descricao)) {
+    const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, etapa);
+    if (campoPendente) {
+      return {
+        ok: true, msg: '', quantidade: 0,
+        incompletos: [{ descricao: item.descricao, valor: item.valor || null, dia: item.dia || null, categoria: item.categoria || null, esperandoCampo: campoPendente }],
+      };
+    }
     lista.push({ valor: item.valor, descricao: item.descricao, dia: item.dia, categoria: item.categoria });
     const msg = `✅ *${item.descricao}* - ${fmt.formatarMoeda(item.valor)}${item.dia ? ` (dia ${item.dia})` : ''}`;
     return { ok: true, msg, quantidade: 1, incompletos: [] };
   }
+
   return { ok: false };
 }
 
@@ -4439,20 +4444,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
           if (restante.length > 0) estado.itensPendentes = restante;
           else delete estado.itensPendentes;
           salvarPontoZero(usuarioId, estado);
-          const confirmacaoValidos = res.msg ? `Anotei:\n\n${res.msg}\n` : '';
-          return `${confirmacaoValidos}Mas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+          if (res.msg) {
+            return `Anotei:\n\n${res.msg}\nMas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+          }
+          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
         }
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} receitas fixas anotadas` : `Anotado`;
         return `${mais}:\n\n${res.msg}\nTem mais alguma receita fixa ou pode passar pra frente?`;
-      }
-      if (item.tipo === 'item' && item.descricao) {
-        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
-        if (campoPendente) {
-          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
-          salvarPontoZero(usuarioId, estado);
-          return perguntarCampoFaltante(campoPendente, item.descricao);
-        }
       }
       return await redireccionarPontoZero(usuarioId, texto, 'receitas_fixas');
     }
@@ -4471,20 +4470,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
           if (restante.length > 0) estado.itensPendentes = restante;
           else delete estado.itensPendentes;
           salvarPontoZero(usuarioId, estado);
-          const confirmacaoValidos = res.msg ? `Anotei:\n\n${res.msg}\n` : '';
-          return `${confirmacaoValidos}Mas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+          if (res.msg) {
+            return `Anotei:\n\n${res.msg}\nMas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+          }
+          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
         }
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} despesas anotadas` : `Anotado`;
         return `${mais}:\n\n${res.msg}\nTem mais alguma despesa ou pode passar pra frente?`;
-      }
-      if (item.tipo === 'item' && item.descricao) {
-        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
-        if (campoPendente) {
-          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
-          salvarPontoZero(usuarioId, estado);
-          return perguntarCampoFaltante(campoPendente, item.descricao);
-        }
       }
       return await redireccionarPontoZero(usuarioId, texto, 'despesas_fixas');
     }
