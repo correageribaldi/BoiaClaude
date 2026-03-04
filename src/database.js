@@ -1305,9 +1305,10 @@ async function listarCategorias() {
 // Limpar todos os dados de um usuário (para testes)
 async function limparDadosUsuario(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  // transacoes tem FK para recorrencias: deletar primeiro
+  // transacoes tem FK para recorrencias e cartoes: deletar primeiro
   await pool.query('DELETE FROM transacoes WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM recorrencias WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM cartoes WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_enviados WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [uid]);
