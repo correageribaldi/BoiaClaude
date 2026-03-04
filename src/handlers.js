@@ -3666,10 +3666,7 @@ async function handleAgenda(usuarioId, periodo) {
 // ==================== FINANÇAS EM DIA ====================
 
 function gerarOrcamentoProporcional(estado) {
-  const totalReceitas = [
-    ...(estado.receitasFixas || []),
-    ...(estado.receitasVariaveis || []),
-  ].reduce((s, r) => s + r.valor, 0);
+  const totalReceitas = (estado.receitasFixas || []).reduce((s, r) => s + r.valor, 0);
   const totalFixas = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
   const limiteFixas = totalReceitas * 0.50;
   const alertaFixas = totalFixas > limiteFixas;
@@ -3687,7 +3684,6 @@ async function iniciarPontoZero(usuarioId) {
     etapa: 'saldo',
     saldoInicial: 0,
     receitasFixas: [],
-    receitasVariaveis: [],
     despesasFixas: [],
     investimentos: [],
     cartoes: [],
@@ -3814,9 +3810,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   // Item completo — adiciona à lista correta
   delete estado.itemParcial;
   const lista =
-    estado.etapa === 'receitas_fixas'     ? estado.receitasFixas    :
-    estado.etapa === 'receitas_variaveis' ? estado.receitasVariaveis :
-                                           estado.despesasFixas;
+    estado.etapa === 'receitas_fixas' ? estado.receitasFixas : estado.despesasFixas;
   lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
   const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
 
@@ -3833,10 +3827,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   delete estado.itensPendentes;
   salvarPontoZero(usuarioId, estado);
 
-  const nomeEtapa =
-    estado.etapa === 'receitas_fixas'     ? 'receita fixa'     :
-    estado.etapa === 'receitas_variaveis' ? 'receita variável' :
-                                           'despesa';
+  const nomeEtapa = estado.etapa === 'receitas_fixas' ? 'receita fixa' : 'despesa';
   return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
 }
 
@@ -3945,23 +3936,12 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
 
     case 'tipo': {
       inv.tipo = isPular ? null : texto.trim();
-      inv.campo = 'rendimento';
-      salvarPontoZero(usuarioId, estado);
-      return `Qual o *rendimento mensal estimado* (% ao mês)? 📈\n_Ex: "1%" ou "0.8" — ou "pular" se não sabe._`;
-    }
-
-    case 'rendimento': {
-      let rendimento = null;
-      if (!isPular) {
-        const val = await extrairValorRobusto(texto);
-        if (val !== null) rendimento = val;
-      }
       estado.investimentos.push({
         nome: inv.nome,
         saldo: inv.saldo,
         meta: inv.meta,
         tipo: inv.tipo,
-        rendimento,
+        rendimento: null,
       });
       delete estado.investimentoEmCadastro;
       salvarPontoZero(usuarioId, estado);
@@ -3969,7 +3949,6 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
       let detalhes = `  Saldo: ${fmt.formatarMoeda(inv.saldo)}`;
       if (inv.meta) detalhes += ` | Meta: ${fmt.formatarMoeda(inv.meta)}`;
       if (inv.tipo) detalhes += `\n  Tipo: ${inv.tipo}`;
-      if (rendimento !== null) detalhes += ` | Rendimento: ${rendimento}%/mês`;
 
       return `✅ *${inv.nome}* cadastrada!\n${detalhes}\n\nTem mais alguma reserva ou investimento?\n_Manda o nome ou "não" pra avançar._`;
     }
@@ -3985,7 +3964,6 @@ function perguntaAtualEtapa(etapa) {
   const perguntas = {
     saldo: 'Me diz o valor aproximado que tu tem disponível hoje.\n_Ex: "R$ 1.850" ou "uns 2 mil"_',
     receitas_fixas: 'Me diz suas receitas fixas (salário, benefício...).\n_Ex: "Salário dia 5 R$ 3.000"_\n_Ou manda "não" se não tem._',
-    receitas_variaveis: 'Tem receitas variáveis? (freelas, bicos, comissões)\n_Ex: "Freela R$ 500 dia 20"_\n_Ou manda "não"._',
     despesas_fixas: 'Me diz suas despesas fixas (aluguel, internet, luz...).\n_Ex: "Aluguel dia 5 R$ 1.500"_\n_Ou manda "não"._',
     investimentos: 'Me diz o nome da sua primeira caixinha de investimento.\n_Ex: "Poupança", "CDB Nubank"_\n_Ou manda "não"._',
     cartoes: 'Tem cartão de crédito? Me diz o nome.\n_Ex: "Nubank", "Inter"_\n_Ou manda "não"._',
@@ -3996,7 +3974,7 @@ function perguntaAtualEtapa(etapa) {
 
 async function redireccionarPontoZero(usuarioId, texto, etapa) {
   const etapaLabel = {
-    saldo: 'saldo atual', receitas_fixas: 'receitas fixas', receitas_variaveis: 'receitas variáveis',
+    saldo: 'saldo atual', receitas_fixas: 'receitas fixas',
     despesas_fixas: 'despesas fixas', investimentos: 'investimentos/caixinhas',
     cartoes: 'cartões de crédito', despesas_dia_a_dia: 'gastos do mês',
   };
@@ -4011,6 +3989,121 @@ async function redireccionarPontoZero(usuarioId, texto, etapa) {
   return piada
     ? `${piada}\n\nMas voltando ao que importa 😄\n\n${pergunta}`
     : `Não entendi 😅\n\n${pergunta}`;
+}
+
+function mostrarResumoFluxo(estado) {
+  let msg = '📋 *O que você cadastrou até agora:*\n\n';
+  msg += `💰 *Saldo:* ${fmt.formatarMoeda(estado.saldoInicial || 0)}\n`;
+
+  if (estado.receitasFixas?.length) {
+    msg += `\n📈 *Receitas fixas:*\n`;
+    estado.receitasFixas.forEach((r, i) => {
+      msg += `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
+    });
+  }
+  if (estado.despesasFixas?.length) {
+    msg += `\n📉 *Despesas fixas:*\n`;
+    estado.despesasFixas.forEach((d, i) => {
+      msg += `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
+    });
+  }
+  if (estado.investimentos?.length) {
+    msg += `\n🏦 *Investimentos/caixinhas:*\n`;
+    estado.investimentos.forEach((inv, i) => {
+      msg += `  ${i + 1}. *${inv.nome}* — ${fmt.formatarMoeda(inv.saldo)}\n`;
+    });
+  }
+  if (estado.cartoes?.length) {
+    msg += `\n💳 *Cartões:*\n`;
+    estado.cartoes.forEach((c, i) => {
+      msg += `  ${i + 1}. *${c.nome}* — vence dia ${c.diaVencimento}${c.valorFatura > 0 ? ` | ~${fmt.formatarMoeda(c.valorFatura)}/mês` : ''}\n`;
+    });
+  }
+  return msg.trim();
+}
+
+function removerItemFluxo(usuarioId, estado, query) {
+  const lq = query.toLowerCase();
+
+  if (/saldo|conta/.test(lq)) {
+    estado.saldoInicial = 0;
+    salvarPontoZero(usuarioId, estado);
+    return `✅ Saldo zerado. Qual o novo valor? 💰\n_Ex: "R$ 1.850"_`;
+  }
+
+  const listas = [
+    { lista: estado.receitasFixas,  campo: 'descricao', label: 'receita' },
+    { lista: estado.despesasFixas,  campo: 'descricao', label: 'despesa' },
+    { lista: estado.investimentos,  campo: 'nome',      label: 'investimento' },
+    { lista: estado.cartoes,        campo: 'nome',      label: 'cartão' },
+  ];
+  for (const { lista, campo } of listas) {
+    if (!lista?.length) continue;
+    const idx = lista.findIndex(i => (i[campo] || '').toLowerCase().includes(lq));
+    if (idx !== -1) {
+      const nome = lista[idx][campo];
+      lista.splice(idx, 1);
+      salvarPontoZero(usuarioId, estado);
+      return `🗑️ *${nome}* removido!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+    }
+  }
+  return `Não encontrei "${query}" para remover 😅\n\nManda *"listar"* para ver o que está cadastrado.`;
+}
+
+async function editarItemFluxo(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase();
+
+  // Editar saldo
+  if (/saldo|valor da conta|conta corrente/.test(lower)) {
+    const valor = await extrairValorRobusto(texto);
+    if (valor && valor > 0) {
+      estado.saldoInicial = valor;
+      salvarPontoZero(usuarioId, estado);
+      return `✅ Saldo atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+    }
+    return `Qual o novo valor do saldo? 💰\n_Ex: "editar saldo para R$ 2.000"_`;
+  }
+
+  // Editar receita/despesa por nome
+  const todasListas = [
+    ...(estado.receitasFixas || []).map(i => ({ item: i })),
+    ...(estado.despesasFixas || []).map(i => ({ item: i })),
+  ];
+  for (const { item } of todasListas) {
+    const nomeParts = item.descricao.toLowerCase().split(' ').filter(p => p.length > 2);
+    if (nomeParts.some(p => lower.includes(p))) {
+      if (/valor|para\s+r?[$]?\s*[\d.,k]/i.test(lower)) {
+        const valor = await extrairValorRobusto(texto);
+        if (valor && valor > 0) {
+          item.valor = valor;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Valor de *${item.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+        }
+      }
+      if (/dia|data|vencimento|entrada/.test(lower)) {
+        const dia = extrairDiaDoTexto(texto);
+        if (dia) {
+          item.dia = dia;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Data de *${item.descricao}* atualizada para dia *${dia}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+        }
+      }
+    }
+  }
+
+  // Editar saldo de investimento
+  for (const inv of estado.investimentos || []) {
+    if (lower.includes(inv.nome.toLowerCase())) {
+      const valor = await extrairValorRobusto(texto);
+      if (valor && valor > 0) {
+        inv.saldo = valor;
+        salvarPontoZero(usuarioId, estado);
+        return `✅ Saldo de *${inv.nome}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+      }
+    }
+  }
+
+  return `Não entendi o que quer editar 😅\n\nTente:\n- _"editar saldo para R$ 2.000"_\n- _"alterar valor do salário para R$ 3.000"_\n- _"editar dia do aluguel para 10"_\n\nOu manda *"listar"* para ver o que está cadastrado.`;
 }
 
 async function handlePontoZero(usuarioId, texto, estado) {
@@ -4036,6 +4129,27 @@ async function handlePontoZero(usuarioId, texto, estado) {
     return await handleCartaoCadastro(usuarioId, texto, estado);
   }
 
+  // Listar o que foi cadastrado até agora
+  if (/\b(listar?|o que|mostrar?|ver|resumo|cadastrei|coloquei|tenho at[eé])\b/.test(lower)) {
+    return `${mostrarResumoFluxo(estado)}\n\n${perguntaAtualEtapa(estado.etapa)}`;
+  }
+
+  // Remover item
+  const matchRemover = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+  if (matchRemover) {
+    return removerItemFluxo(usuarioId, estado, matchRemover[2].trim());
+  }
+
+  // Editar item
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
+    return await editarItemFluxo(usuarioId, texto, estado);
+  }
+
+  // Consultar saldo especificamente
+  if (/\b(qual|quanto).*(saldo|conta|valor da conta)\b/.test(lower)) {
+    return `💰 *Saldo cadastrado:* ${fmt.formatarMoeda(estado.saldoInicial || 0)}\n\nQuer alterar? _"editar saldo para R$ 2.000"_\n\n${perguntaAtualEtapa(estado.etapa)}`;
+  }
+
   const item = await interpretarItemFinanceiro(texto);
 
   // Detecta qualquer variante de "quero avançar para o próximo passo"
@@ -4055,9 +4169,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'receitas_fixas': {
       if (item.tipo === 'nao' || (querAvancar && estado.receitasFixas.length > 0)) {
-        estado.etapa = 'receitas_variaveis';
+        estado.etapa = 'despesas_fixas';
         salvarPontoZero(usuarioId, estado);
-        return `Beleza! E *receitas variáveis*? (freelas, bicos, vendas, comissões — o que entra mas não é todo mês igual)\n\n_Ex: "Freela dia 20 R$ 500 e venda R$ 200"_\n_Se não tem, manda "não"._`;
+        return `Beleza! Agora as *despesas fixas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
       }
       const res = coletarItens(item, estado.receitasFixas, estado.etapa);
       if (res.ok) {
@@ -4083,38 +4197,6 @@ async function handlePontoZero(usuarioId, texto, estado) {
         }
       }
       return await redireccionarPontoZero(usuarioId, texto, 'receitas_fixas');
-    }
-
-    case 'receitas_variaveis': {
-      if (item.tipo === 'nao' || querAvancar) {
-        estado.etapa = 'despesas_fixas';
-        salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora as *despesas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
-      }
-      const res = coletarItens(item, estado.receitasVariaveis, estado.etapa);
-      if (res.ok) {
-        if (res.incompletos && res.incompletos.length > 0) {
-          const [primeiro, ...restante] = res.incompletos;
-          estado.itemParcial = { ...primeiro };
-          if (restante.length > 0) estado.itensPendentes = restante;
-          else delete estado.itensPendentes;
-          salvarPontoZero(usuarioId, estado);
-          const confirmacaoValidos = res.msg ? `Anotei:\n\n${res.msg}\n` : '';
-          return `${confirmacaoValidos}Mas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
-        }
-        salvarPontoZero(usuarioId, estado);
-        const mais = res.quantidade > 1 ? `${res.quantidade} receitas variáveis anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\nTem mais alguma receita variável ou pode passar pra frente?`;
-      }
-      if (item.tipo === 'item' && item.descricao) {
-        const campoPendente = proximoCampoFaltante({ descricao: item.descricao, valor: item.valor, dia: item.dia }, estado.etapa);
-        if (campoPendente) {
-          estado.itemParcial = { descricao: item.descricao, valor: item.valor, dia: item.dia, categoria: item.categoria, esperandoCampo: campoPendente };
-          salvarPontoZero(usuarioId, estado);
-          return perguntarCampoFaltante(campoPendente, item.descricao);
-        }
-      }
-      return await redireccionarPontoZero(usuarioId, texto, 'receitas_variaveis');
     }
 
     case 'despesas_fixas': {
@@ -4321,12 +4403,6 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
   }
 
-  // Receitas variáveis → transação pendente no mês atual
-  for (const r of estado.receitasVariaveis || []) {
-    const dataStr = calcularDataPendenteMesAtual(r.dia);
-    await db.adicionarTransacao(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente');
-  }
-
   // Despesas fixas → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
   for (const d of estado.despesasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
@@ -4378,13 +4454,11 @@ async function finalizarPontoZero(usuarioId, estado) {
   const ehFuturo = (item) => !item.dia || item.dia >= diaHoje;
 
   // Separar futuros (entram na projeção) dos passados (já no saldo)
-  const rfFixasFut  = (estado.receitasFixas    || []).filter(ehFuturo);
-  const rfVarFut    = (estado.receitasVariaveis || []).filter(ehFuturo);
-  const dfFixasFut  = (estado.despesasFixas     || []).filter(ehFuturo);
+  const rfFixasFut  = (estado.receitasFixas || []).filter(ehFuturo);
+  const dfFixasFut  = (estado.despesasFixas || []).filter(ehFuturo);
 
-  const rfFixasPass = (estado.receitasFixas    || []).filter(r => !ehFuturo(r));
-  const rfVarPass   = (estado.receitasVariaveis || []).filter(r => !ehFuturo(r));
-  const dfFixasPass = (estado.despesasFixas     || []).filter(d => !ehFuturo(d));
+  const rfFixasPass = (estado.receitasFixas || []).filter(r => !ehFuturo(r));
+  const dfFixasPass = (estado.despesasFixas || []).filter(d => !ehFuturo(d));
 
   // Cartões: fatura futura = diaVencimento ainda não passou; passada = já passou
   const cartoesFut  = (estado.cartoes || []).filter(c => c.valorFatura > 0 && (!c.diaVencimento || c.diaVencimento >= diaHoje));
@@ -4394,10 +4468,9 @@ async function finalizarPontoZero(usuarioId, estado) {
   const somaCartoes = arr => arr.reduce((s, c) => s + c.valorFatura, 0);
 
   const totalRecFixasFut   = soma(rfFixasFut);
-  const totalRecVarFut     = soma(rfVarFut);
   const totalDespFixasFut  = soma(dfFixasFut);
   const totalCartoesFut    = somaCartoes(cartoesFut);
-  const totalRecFut  = totalRecFixasFut + totalRecVarFut;
+  const totalRecFut  = totalRecFixasFut;
   const totalDespFut = totalDespFixasFut + totalCartoesFut;
   const previsao = estado.saldoInicial + totalRecFut - totalDespFut;
 
@@ -4430,15 +4503,6 @@ async function finalizarPontoZero(usuarioId, estado) {
     msg += '\n';
   }
 
-  // Receitas variáveis
-  if (rfVarFut.length > 0) {
-    msg += `📈 *Receitas Variáveis a receber (+${fmt.formatarMoeda(totalRecVarFut)}):*\n`;
-    for (const r of rfVarFut) {
-      msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
-    }
-    msg += '\n';
-  }
-
   // Despesas fixas
   if (dfFixasFut.length > 0) {
     msg += `📉 *Despesas a pagar (-${fmt.formatarMoeda(totalDespFixasFut)}):*\n`;
@@ -4458,10 +4522,10 @@ async function finalizarPontoZero(usuarioId, estado) {
   }
 
   // Itens já contabilizados no saldo (dia já passou)
-  const passados = [...rfFixasPass, ...rfVarPass, ...dfFixasPass, ...cartoesPass];
+  const passados = [...rfFixasPass, ...dfFixasPass, ...cartoesPass];
   if (passados.length > 0) {
     msg += `✅ *Já contabilizado no saldo (dias anteriores):*\n`;
-    for (const r of [...rfFixasPass, ...rfVarPass]) {
+    for (const r of rfFixasPass) {
       msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia}) ✔️\n`;
     }
     for (const d of dfFixasPass) {
@@ -4474,7 +4538,7 @@ async function finalizarPontoZero(usuarioId, estado) {
   }
 
   // Orçamento proporcional (regra 50/20/10/15/5)
-  const totalReceitas = [...(estado.receitasFixas || []), ...(estado.receitasVariaveis || [])].reduce((s, r) => s + r.valor, 0);
+  const totalReceitas = (estado.receitasFixas || []).reduce((s, r) => s + r.valor, 0);
   const totalFixasReal = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
   const limiteFixas = Math.round(totalReceitas * 0.50);
   const alertaFixas = totalFixasReal > limiteFixas;
