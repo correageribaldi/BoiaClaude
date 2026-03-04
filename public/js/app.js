@@ -381,8 +381,35 @@ async function pagarTransacao(id) {
 
 async function excluirTransacao(id) {
   if (!confirm('Deseja excluir esta transação?')) return;
+  const jwt = getJwt() || '';
   try {
-    await api(`/api/transactions/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/transactions/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + jwt },
+    });
+    if (res.status === 409) {
+      const data = await res.json();
+      if (data.recorrente) {
+        const somenteEste = confirm(
+          `"${data.descricao}" é uma transação recorrente.\n\nOK = Excluir apenas este lançamento\nCancelar = Excluir TODOS os lançamentos desta recorrência`
+        );
+        if (somenteEste) {
+          await api(`/api/transactions/${id}?modo=apenas_este`, { method: 'DELETE' });
+        } else {
+          await api(`/api/recurrences/${data.recorrencia_id}`, { method: 'DELETE' });
+        }
+        toast('Transação excluída.', 'success');
+        carregarTransacoes();
+        if (tabAtual === 'dashboard') carregarDashboard();
+        return;
+      }
+    }
+    if (res.status === 401) { clearJwt(); mostrarLogin(); return; }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(data.erro || 'Erro ao excluir', 'error');
+      return;
+    }
     toast('Transação excluída.', 'success');
     carregarTransacoes();
     if (tabAtual === 'dashboard') carregarDashboard();

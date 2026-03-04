@@ -169,12 +169,36 @@ app.get('/api/transactions', autenticar, async (req, res) => {
         const projetadas = ocorrencias
           .filter(o => !idsComTransacao.has(o.recorrencia_id))
           .filter(o => !tipo || o.tipo === tipo)
-          .filter(o => !descricao || o.descricao.toLowerCase().includes(descricao.toLowerCase()))
-          .map(o => ({ ...o, id: null, status: 'pendente', projetado: true }));
+          .filter(o => !descricao || o.descricao.toLowerCase().includes(descricao.toLowerCase()));
 
-        resultado = [...transacoes, ...projetadas].sort((a, b) =>
-          (a.data || '').localeCompare(b.data || '')
-        );
+        // Auto-materializar projeções do mês atual como transações reais
+        const hojeISO = new Date().toISOString().substring(0, 10);
+        const anoMesAtual = hojeISO.substring(0, 7);
+        const periodoEhMesAtual = dataInicio && dataInicio.substring(0, 7) === anoMesAtual;
+
+        if (periodoEhMesAtual && projetadas.length > 0) {
+          for (const proj of projetadas) {
+            try {
+              await db.adicionarTransacaoComRecorrencia(
+                req.usuarioId, proj.tipo, proj.valor, proj.descricao, proj.categoria,
+                proj.data, 'pendente', proj.recorrencia_id
+              );
+            } catch (err) {
+              console.error('[WEB] Erro ao materializar projeção:', err.message);
+            }
+          }
+          // Re-buscar para incluir as novas transações com IDs reais
+          const transacoesAtualizadas = await db.consultarTransacoes(req.usuarioId, {
+            tipo: tipo || null, status: status || null,
+            dataInicio: dataInicio || null, dataFim: dataFim || null,
+            descricao: descricao || null, limite: parseInt(limite) || 200,
+          });
+          resultado = transacoesAtualizadas.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+        } else {
+          resultado = [...transacoes, ...projetadas.map(o => ({ ...o, id: null, status: 'pendente', projetado: true }))].sort((a, b) =>
+            (a.data || '').localeCompare(b.data || '')
+          );
+        }
       }
     }
 
@@ -202,11 +226,36 @@ app.delete('/api/transactions/:id', autenticar, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (!id) return res.status(400).json({ erro: 'ID inválido' });
+
+    // Se não veio ?modo=apenas_este, verificar se é recorrente e perguntar ao frontend
+    if (req.query.modo !== 'apenas_este') {
+      const tx = await db.buscarTransacaoPorId(req.usuarioId, id);
+      if (tx && tx.recorrencia_id) {
+        return res.status(409).json({
+          recorrente: true,
+          recorrencia_id: tx.recorrencia_id,
+          descricao: tx.descricao,
+        });
+      }
+    }
+
     const resultado = await db.excluirTransacao(req.usuarioId, id);
     if (!resultado.changes) return res.status(404).json({ erro: 'Transação não encontrada' });
     res.json({ ok: true });
   } catch (err) {
     console.error('[WEB] DELETE /api/transactions/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/recurrences/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    await db.desativarRecorrencia(req.usuarioId, id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/recurrences/:id:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });

@@ -826,6 +826,29 @@ async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   return result.rows[0] || null;
 }
 
+async function buscarTransacaoPorId(usuarioId, id) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria,
+            TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id
+     FROM transacoes WHERE numero_usuario = $1 AND usuario_id = $2`,
+    [id, uid]
+  );
+  return result.rows[0] || null;
+}
+
+async function desativarRecorrencia(usuarioId, recorrenciaId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query(
+    `UPDATE recorrencias SET ativo = FALSE WHERE id = $1 AND usuario_id = $2`,
+    [recorrenciaId, uid]
+  );
+  await pool.query(
+    `DELETE FROM transacoes WHERE recorrencia_id = $1 AND usuario_id = $2 AND status = 'pendente'`,
+    [recorrenciaId, uid]
+  );
+}
+
 async function excluirTransacao(usuarioId, numeroUsuario) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -1999,8 +2022,10 @@ module.exports = {
   resumoMensal,
   resumoAnual,
   buscarTransacoesPorDescricao,
+  buscarTransacaoPorId,
   atualizarTransacao,
   excluirTransacao,
+  desativarRecorrencia,
   listarCategorias,
   consultarTransacoes,
   consultarTotalTransacoes,
