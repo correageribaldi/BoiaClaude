@@ -4268,6 +4268,15 @@ async function editarItemFluxo(usuarioId, texto, estado) {
 
 async function handlePontoZero(usuarioId, texto, estado) {
   const lower = texto.toLowerCase().trim();
+  const lowerNorm = normalizarTextoBusca(texto);
+
+  // Começar do zero — reseta tudo mesmo dentro do fluxo
+  if (lowerNorm === 'resetar' || lowerNorm.includes('comecar do zero') || lower === 'limpar tudo' || lower === 'zerar dados') {
+    await db.limparDadosUsuario(usuarioId);
+    limparPontoZero(usuarioId);
+    setOnboardingState(usuarioId, 'aguardando_nome');
+    return mensagemPerguntaNome();
+  }
 
   if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
     limparPontoZero(usuarioId);
