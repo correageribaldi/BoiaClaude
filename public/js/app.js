@@ -106,6 +106,40 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// ── Modal de confirmação de recorrência ───────────────────────────────────────
+// Retorna Promise<'apenas_este' | 'todos' | null>
+function mostrarModalRecorrencia(descricao) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modal-recorrencia');
+    document.getElementById('modal-recorrencia-msg').textContent =
+      `"${descricao}" é uma transação recorrente. O que deseja fazer?`;
+
+    function fechar(res) {
+      overlay.classList.add('hidden');
+      btnApenas.removeEventListener('click', onApenas);
+      btnTodos.removeEventListener('click', onTodos);
+      btnDesistir.removeEventListener('click', onDesistir);
+      overlay.removeEventListener('click', onOverlay);
+      resolve(res);
+    }
+    function onApenas()   { fechar('apenas_este'); }
+    function onTodos()    { fechar('todos'); }
+    function onDesistir() { fechar(null); }
+    function onOverlay(e) { if (e.target === overlay) fechar(null); }
+
+    const btnApenas  = document.getElementById('modal-rec-apenas-este');
+    const btnTodos   = document.getElementById('modal-rec-todos');
+    const btnDesistir = document.getElementById('modal-rec-desistir');
+
+    btnApenas.addEventListener('click', onApenas);
+    btnTodos.addEventListener('click', onTodos);
+    btnDesistir.addEventListener('click', onDesistir);
+    overlay.addEventListener('click', onOverlay);
+
+    overlay.classList.remove('hidden');
+  });
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let toastTimer;
 function toast(msg, tipo = '') {
@@ -393,10 +427,9 @@ async function excluirTransacao(id) {
     if (res.status === 409) {
       const data = await res.json();
       if (data.recorrente) {
-        const somenteEste = confirm(
-          `"${data.descricao}" é uma transação recorrente.\n\nOK = Excluir apenas este lançamento\nCancelar = Excluir TODOS os lançamentos desta recorrência`
-        );
-        if (somenteEste) {
+        const opcao = await mostrarModalRecorrencia(data.descricao);
+        if (!opcao) return;
+        if (opcao === 'apenas_este') {
           await api(`/api/transactions/${id}?modo=apenas_este`, { method: 'DELETE' });
         } else {
           await api(`/api/recurrences/${data.recorrencia_id}`, { method: 'DELETE' });
@@ -420,11 +453,10 @@ async function excluirTransacao(id) {
 }
 
 async function excluirProjetado(recorrenciaId, descricao, data) {
-  const somenteEste = confirm(
-    `"${descricao}" é recorrente.\n\nOK = Excluir apenas este lançamento\nCancelar = Excluir TODOS os lançamentos desta recorrência`
-  );
+  const opcao = await mostrarModalRecorrencia(descricao);
+  if (!opcao) return;
   try {
-    if (somenteEste) {
+    if (opcao === 'apenas_este') {
       await api('/api/transactions/skip-occurrence', {
         method: 'POST',
         body: JSON.stringify({ recorrencia_id: recorrenciaId, data }),
