@@ -3831,25 +3831,96 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
 }
 
+function resumoCartaoEmCadastro(cc) {
+  const linhas = [];
+  if (cc.limiteTotal != null) linhas.push(`  Limite total: ${fmt.formatarMoeda(cc.limiteTotal)}`);
+  if (cc.valorFatura != null) linhas.push(`  Fatura atual: ${fmt.formatarMoeda(cc.valorFatura)}`);
+  if (cc.diaFechamento != null) linhas.push(`  Fecha: dia ${cc.diaFechamento}`);
+  if (cc.diaVencimento != null) linhas.push(`  Vence: dia ${cc.diaVencimento}`);
+  return linhas.length ? `_Cadastrado até agora para *${cc.nome}*:_\n${linhas.join('\n')}\n\n` : '';
+}
+
 async function handleCartaoCadastro(usuarioId, texto, estado) {
   const cc = estado.cartaoEmCadastro;
-  const lower = texto.toLowerCase().trim();
+  const lower = normalizarTextoBusca(texto);
 
   // Cancelar o cartão em andamento sem cancelar o fluxo inteiro
-  if (lower === 'pular' || lower === 'nao' || lower === 'não' || lower === 'n') {
+  if (/^(pular|nao|nao tenho|não|n)$/.test(lower)) {
     delete estado.cartaoEmCadastro;
     salvarPontoZero(usuarioId, estado);
     return `Ok, pulei esse cartão.\n\nTem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
   }
 
+  // Edição inline: detecta se quer ajustar um campo já respondido (ou antecipado)
+  const editandoLimite  = /\b(limite|limite total|credito|cr[eé]dito)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
+  const editandoFatura  = /\b(fatura|fatura atual|valor da fatura|valor em aberto)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
+  const editandoFecha   = /\b(fechamento|fecha|dia de fechamento)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
+  const editandoVence   = /\b(vencimento|vence|vence dia|pagamento)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
+
+  if (editandoLimite) {
+    const valor = await extrairValorRobusto(texto);
+    if (valor && valor > 0) {
+      cc.limiteTotal = valor;
+      salvarPontoZero(usuarioId, estado);
+      return `✅ Limite total atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
+    }
+    return `Qual o novo limite total? _Ex: "R$ 8.000"_`;
+  }
+
+  if (editandoFatura) {
+    const valor = await extrairValorRobusto(texto);
+    if (valor != null && valor >= 0) {
+      cc.valorFatura = valor;
+      salvarPontoZero(usuarioId, estado);
+      return `✅ Fatura atual atualizada para *${fmt.formatarMoeda(valor)}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
+    }
+    return `Qual o valor da fatura atual? _Ex: "R$ 1.200" ou "0" se não tem_`;
+  }
+
+  if (editandoFecha) {
+    const dia = extrairDiaDoTexto(texto);
+    if (dia) {
+      cc.diaFechamento = dia;
+      salvarPontoZero(usuarioId, estado);
+      return `✅ Dia de fechamento atualizado para dia *${dia}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
+    }
+    return `Qual o dia de fechamento? _Ex: "dia 15"_`;
+  }
+
+  if (editandoVence) {
+    const dia = extrairDiaDoTexto(texto);
+    if (dia) {
+      cc.diaVencimento = dia;
+      salvarPontoZero(usuarioId, estado);
+      return `✅ Dia de vencimento atualizado para dia *${dia}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
+    }
+    return `Qual o dia de vencimento? _Ex: "dia 22"_`;
+  }
+
+  // Fluxo normal — cada campo em sequência
   switch (cc.campo) {
 
     case 'limiteTotal': {
       const valor = await extrairValorRobusto(texto);
       if (!valor || valor <= 0) {
-        return `Não entendi o valor 😅 Qual o limite total do *${cc.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
+        return `Não entendi o valor 😅 Qual o *limite total* do *${cc.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
       }
       cc.limiteTotal = valor;
+      cc.campo = 'valorFatura';
+      salvarPontoZero(usuarioId, estado);
+      return `Qual o *valor da fatura em aberto* até hoje no *${cc.nome}*? 💰\n_Ex: "R$ 1.200" — ou "0" se não tem nada lançado._`;
+    }
+
+    case 'valorFatura': {
+      let valorFatura = 0;
+      if (!/^(0|zero|nao sei|não sei|nada|nenhum)$/.test(lower)) {
+        const valor = await extrairValorRobusto(texto);
+        if (valor === null) {
+          return `Não entendi o valor 😅 Qual o valor da fatura atual do *${cc.nome}*?\n_Ex: "R$ 1.200" — ou "0" se não tem._`;
+        }
+        valorFatura = valor;
+      }
+      cc.valorFatura = valorFatura;
       cc.campo = 'diaFechamento';
       salvarPontoZero(usuarioId, estado);
       return `Qual o *dia de fechamento* da fatura do *${cc.nome}*? 📅\n_Ex: "dia 15" ou só "15"_`;
@@ -3858,7 +3929,7 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
     case 'diaFechamento': {
       const dia = extrairDiaDoTexto(texto);
       if (!dia) {
-        return `Não entendi 😅 Em que dia fecha a fatura do *${cc.nome}*? (número de 1 a 31)\n_Ex: "dia 15" ou só "15"_`;
+        return `Não entendi 😅 Em que dia fecha a fatura do *${cc.nome}*? (1 a 31)\n_Ex: "dia 15" ou só "15"_`;
       }
       cc.diaFechamento = dia;
       cc.campo = 'diaVencimento';
@@ -3869,36 +3940,27 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
     case 'diaVencimento': {
       const dia = extrairDiaDoTexto(texto);
       if (!dia) {
-        return `Não entendi 😅 Em que dia vence a fatura do *${cc.nome}*? (número de 1 a 31)\n_Ex: "dia 22" ou só "22"_`;
+        return `Não entendi 😅 Em que dia vence a fatura do *${cc.nome}*? (1 a 31)\n_Ex: "dia 22" ou só "22"_`;
       }
       cc.diaVencimento = dia;
-      cc.campo = 'valorFatura';
-      salvarPontoZero(usuarioId, estado);
-      return `Qual o *valor médio da fatura* do *${cc.nome}*? 💰\n(Ou o valor atual se souber — manda "0" se não sabe)\n_Ex: "R$ 1.200" ou "1200"_`;
-    }
-
-    case 'valorFatura': {
-      let valorFatura = 0;
-      if (lower !== '0' && lower !== 'zero' && lower !== 'nao sei' && lower !== 'não sei') {
-        const valor = await extrairValorRobusto(texto);
-        if (valor === null) {
-          return `Não entendi o valor 😅 Qual o valor médio da fatura do *${cc.nome}*?\n_Ex: "R$ 1.200" — ou manda "0" se não sabe._`;
-        }
-        valorFatura = valor;
-      }
-      cc.valorFatura = valorFatura;
-      estado.cartoes.push({ nome: cc.nome, limiteTotal: cc.limiteTotal, diaFechamento: cc.diaFechamento, diaVencimento: cc.diaVencimento, valorFatura });
+      estado.cartoes.push({
+        nome: cc.nome,
+        limiteTotal: cc.limiteTotal,
+        diaFechamento: cc.diaFechamento,
+        diaVencimento: cc.diaVencimento,
+        valorFatura: cc.valorFatura,
+      });
       delete estado.cartaoEmCadastro;
       salvarPontoZero(usuarioId, estado);
 
-      const faturaStr = valorFatura > 0 ? fmt.formatarMoeda(valorFatura) : 'valor não informado';
+      const faturaStr = cc.valorFatura > 0 ? fmt.formatarMoeda(cc.valorFatura) : 'R$ 0';
       const listaAtual = estado.cartoes.length > 1
         ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}\n_Para remover um, manda "remover [nome]"._`
         : '';
       return `✅ *${cc.nome}* cadastrado!\n` +
         `  Limite: ${fmt.formatarMoeda(cc.limiteTotal)}\n` +
-        `  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}\n` +
-        `  Fatura: ~${faturaStr}/mês${listaAtual}\n\n` +
+        `  Fatura atual: ${faturaStr}\n` +
+        `  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}${listaAtual}\n\n` +
         `Tem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
     }
 
@@ -3906,6 +3968,17 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
       delete estado.cartaoEmCadastro;
       salvarPontoZero(usuarioId, estado);
       return `Algo deu errado no cadastro do cartão 😅 Tente novamente.`;
+  }
+}
+
+// Retorna a próxima pergunta pendente para o cartão em cadastro
+function perguntaCartaoCampo(cc) {
+  switch (cc.campo) {
+    case 'limiteTotal':  return `Qual o *limite total* do *${cc.nome}*?\n_Ex: "R$ 5.000"_`;
+    case 'valorFatura':  return `Qual o *valor da fatura em aberto* até hoje?\n_Ex: "R$ 1.200" ou "0"_`;
+    case 'diaFechamento': return `Qual o *dia de fechamento* da fatura?\n_Ex: "dia 15"_`;
+    case 'diaVencimento': return `Qual o *dia de vencimento* da fatura?\n_Ex: "dia 22"_`;
+    default: return '';
   }
 }
 
