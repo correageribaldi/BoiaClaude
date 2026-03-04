@@ -1051,11 +1051,14 @@ async function extrairValorMonetario(texto) {
   }
 }
 
-// Extrai o nome/apelido de uma frase de apresentação
+// Extrai o nome/apelido de uma frase de apresentação. Retorna null se não for um nome.
 async function extrairNomeOnboarding(texto) {
   const t = texto.trim();
 
-  // Se curto (até 3 palavras), usar como está
+  // Frases claramente fora de contexto → rejeitar antes de qualquer processamento
+  if (/^(n[aã]o sei|o que [eéê]|como assim|n[aã]o entendi|n[aã]o|que [eéê] isso|ajuda|socorro|espera|calma|desculpe|oi|ol[aá]|e a[ií]|tudo bem|bom dia|boa tarde|boa noite)\b/i.test(t)) return null;
+
+  // Se curto (até 3 palavras), usar como está (inclui apelidos como "meu rei")
   if (t.split(/\s+/).length <= 3) return t;
 
   // Regex para padrões comuns de apresentação
@@ -1071,14 +1074,14 @@ async function extrairNomeOnboarding(texto) {
   }
 
   // IA como fallback para frases mais complexas
-  if (!process.env.OPENAI_API_KEY) return t;
+  if (!process.env.OPENAI_API_KEY) return null;
   try {
     const response = await getOpenAI().chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: 'Extraia APENAS o nome ou apelido pelo qual a pessoa quer ser chamada. Retorne somente o nome/apelido, sem pontuação, sem texto extra. Exemplos: "Ane eu sou a Ane" → "Ane" | "pode me chamar de Beto" → "Beto" | "meu nome é Ana Paula" → "Ana Paula" | "meu rei" → "meu rei".',
+          content: 'Extraia APENAS o nome ou apelido pelo qual a pessoa quer ser chamada. Retorne somente o nome/apelido, sem pontuação, sem texto extra. Se a mensagem NÃO contém um nome ou apelido (é uma pergunta, reclamação, frase aleatória, não faz sentido como nome), retorne exatamente: null\nExemplos: "Ane eu sou a Ane" → "Ane" | "pode me chamar de Beto" → "Beto" | "meu nome é Ana Paula" → "Ana Paula" | "meu rei" → "meu rei" | "chefe supremo" → "chefe supremo" | "o que é isso?" → null | "não sei" → null | "quero financeiro" → null',
         },
         { role: 'user', content: t },
       ],
@@ -1086,9 +1089,11 @@ async function extrairNomeOnboarding(texto) {
       max_tokens: 30,
     });
     const nome = response.choices[0]?.message?.content?.trim();
-    return nome && nome.length > 0 && nome.length <= 50 ? nome : t;
+    if (!nome || nome === 'null' || nome.toLowerCase().includes('desculpe') || nome.toLowerCase().includes('não posso')) return null;
+    if (nome.split(/\s+/).length > 5) return null; // Muito longo para ser um nome
+    return nome.length > 0 && nome.length <= 50 ? nome : null;
   } catch {
-    return t;
+    return null;
   }
 }
 

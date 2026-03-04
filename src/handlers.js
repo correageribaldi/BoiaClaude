@@ -605,7 +605,7 @@ async function handleOnboardingNome(usuarioId, texto) {
 
   const nome = await extrairNomeOnboarding(texto.trim());
   if (!nome || nome.length < 1 || nome.length > 50) {
-    return `Me diz como quer ser chamado(a)! Pode ser seu nome, apelido… até _"Imperador do Cosmos"_ eu aceito 👑`;
+    return `Hmm, isso não parece um nome 😅\n\nComo você quer ser chamado(a)? Pode ser seu nome, apelido ou até _"Imperador do Cosmos"_ 👑\n\n_Ex: "João", "Ana", "meu rei", "chefe"_`;
   }
 
   await db.atualizarNomeUsuario(usuarioId, nome);
