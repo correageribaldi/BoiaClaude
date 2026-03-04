@@ -2442,24 +2442,42 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
   if (pendente.aguardandoCartao) {
     const cartoes = pendente.cartoesDisponiveis || [];
     let cartaoId = null;
+    let ehContaCorrenteSelecionada = false;
 
-    // "conta corrente", "débito", "não", "direto" → sem cartão
-    const ehContaCorrente = /\b(conta corrente|d[eé]bito|n[aã]o|direto|sem cart[aã]o|pix|espécie|dinheiro)\b/.test(lower);
-
-    if (!ehContaCorrente) {
+    // "conta corrente", "corrente", "cc", "débito", "não", "direto", "pix", etc. → sem cartão
+    if (/\b(conta corrente|corrente|cc|d[eé]bito|n[aã]o|direto|sem cart[aã]o|pix|esp[eé]cie|dinheiro)\b/.test(lower)) {
+      ehContaCorrenteSelecionada = true;
+    } else {
       // Tentar número (1, 2, 3...)
       const numMatch = lower.match(/^(\d+)$/);
       if (numMatch) {
         const idx = parseInt(numMatch[1]) - 1;
-        if (idx >= 0 && idx < cartoes.length) cartaoId = cartoes[idx].id;
+        if (idx >= 0 && idx < cartoes.length) {
+          cartaoId = cartoes[idx].id;
+        } else if (idx === cartoes.length) {
+          // Número correspondente à opção "Conta corrente" na lista
+          ehContaCorrenteSelecionada = true;
+        }
       }
-      // Tentar nome parcial
-      if (!cartaoId) {
+
+      // "foi no cartão", "cartão", "crédito" sem nome específico
+      if (!cartaoId && !ehContaCorrenteSelecionada && /\b(cart[aã]o|cr[eé]dito)\b/.test(lower)) {
+        if (cartoes.length === 1) {
+          cartaoId = cartoes[0].id;
+        } else {
+          const opcoes = cartoes.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+          return `Qual cartão? 😊\n\n${opcoes}\n\n_Ou "conta corrente" / "cancelar"._`;
+        }
+      }
+
+      // Tentar nome parcial do cartão
+      if (!cartaoId && !ehContaCorrenteSelecionada) {
         const match = cartoes.find(c => c.nome.toLowerCase().includes(lower) || lower.includes(c.nome.toLowerCase()));
         if (match) cartaoId = match.id;
       }
+
       // Não reconheceu — pedir de novo
-      if (!cartaoId && !ehContaCorrente) {
+      if (!cartaoId && !ehContaCorrenteSelecionada) {
         const opcoes = cartoes.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
         return `Não entendi 😅 Responde com o número ou nome:\n\n${opcoes}\n  ${cartoes.length + 1}. Conta corrente\n\n_Ou "cancelar" pra desistir._`;
       }

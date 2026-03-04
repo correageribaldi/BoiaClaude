@@ -41,10 +41,14 @@ TIPOS DE AÇÃO:
 1. SAUDAÇÃO (oi, olá, bom dia, boa tarde, boa noite, tudo bem, e aí, etc):
 {"acao": "saudacao", "resposta": "mensagem CURTA e amigável como se fosse um amigo no WhatsApp. Exemplo: 'Opa, e aí! No que posso te ajudar?' ou 'Fala! Tudo certo? Precisa de algo?'"}
 
-2. REGISTRAR TRANSAÇÃO (gastei, paguei, comprei, recebi, ganhei, etc):
+2. REGISTRAR TRANSAÇÃO (gastei, paguei, comprei, recebi, ganhei, adicionar despesa, nova despesa, registrar despesa, lançar despesa, cadastrar despesa, adicionar receita, nova receita, registrar receita, anota, lança, registra, etc):
 {"acao": "transacao", "tipo": "despesa|receita", "valor": 0.00, "descricao": "...", "categoria": "...", "data": null, "status": "pago|pendente", "cartao_nome": null}
 - Se o usuário mencionar cartão de crédito (ex: "no Nubank", "no cartão Inter", "no crédito Bradesco"), inclua "cartao_nome" com o nome exato do cartão (ex: "Nubank"). Caso contrário, cartao_nome = null.
 - Compras "no crédito" sem nome específico → cartao_nome = "crédito".
+- Exemplos: "adicionar despesa de 200 reais de mercado" → transacao, tipo: despesa, valor: 200, descricao: Mercado
+- Exemplos: "nova despesa 150 almoço" → transacao, tipo: despesa, valor: 150, descricao: Almoço
+- Exemplos: "adicionar receita de 3000 salário" → transacao, tipo: receita, valor: 3000, descricao: Salário
+- Exemplos: "registrar despesa 80 gasolina" → transacao, tipo: despesa, valor: 80, descricao: Gasolina
 
 2b. CONSULTAR USO DO CARTÃO (quanto usei do cartão, limite, saldo disponível no cartão, uso do Nubank, etc):
 {"acao": "uso_cartao", "cartao_nome": "nome do cartão ou null se não especificou"}
