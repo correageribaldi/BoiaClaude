@@ -1419,8 +1419,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   // Detecção de intenção de trocar nome — antes de qualquer fluxo ativo (inclusive aguardando_inicio)
   {
     const lowerNorm = normalizarTextoBusca(lower);
-    const matchTrocaNome = /\b(trocar?|mudar?|alterar?|corrigir?|atualizar?|ajustar?)\b.{0,15}\b(meu\s+)?nome\b/.test(lowerNorm)
-      || /\bquero me chamar\b|\bme chama de\b|\bme chamem de\b|\bmeu nome (e|e\s)/.test(lowerNorm);
+    // "nome da/do/de X" = renomear entidade (caixinha, cartão...), não trocar o nome do usuário
+    const renomearEntidade = /\bnome\s+d[aeo]\b/.test(lowerNorm);
+    const matchTrocaNome = !renomearEntidade && (
+      /\b(trocar?|mudar?|alterar?|corrigir?|atualizar?|ajustar?)\b.{0,15}\b(meu\s+)?nome\b/.test(lowerNorm)
+      || /\bquero me chamar\b|\bme chama de\b|\bme chamem de\b|\bmeu nome (e|e\s)/.test(lowerNorm)
+    );
     if (matchTrocaNome) {
       // Determina para onde voltar após a troca
       const retornarA = estadoOnboarding === 'aguardando_inicio' ? 'aguardando_inicio' : null;
