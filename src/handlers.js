@@ -1333,10 +1333,23 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
   limparConfirmacaoLembrete(usuarioId);
 
   const pagas = [];
+  const caixinhasAtualizadas = [];
   for (const id of transacaoIds) {
     try {
       const result = await db.liquidarTransacaoPorId(id);
-      if (result) pagas.push(result);
+      if (result) {
+        pagas.push(result);
+        // Se for aporte agendado em caixinha, atualizar o saldo automaticamente
+        const matchAporte = result.descricao?.match(/^Aporte\s*-\s*(.+)$/i);
+        if (matchAporte && result.categoria === 'Investimentos') {
+          const nomeCaixinha = matchAporte[1].trim();
+          const caixinhas = await db.buscarCaixinhasPorNome(usuarioId, nomeCaixinha);
+          if (caixinhas.length > 0) {
+            const atualizada = await db.adicionarSaldoCaixinha(caixinhas[0].id, result.valor);
+            caixinhasAtualizadas.push({ nome: nomeCaixinha, novoSaldo: atualizada.saldo, valor: result.valor });
+          }
+        }
+      }
     } catch (err) {
       console.error(`[CONFIRMACAO_LEMBRETE] Erro ao liquidar transacao ${id}:`, err.message);
     }
@@ -1346,14 +1359,23 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
     return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
   }
 
+  let resposta;
   if (pagas.length === 1) {
     const t = pagas[0];
-    const acao = t.tipo === 'despesa' ? 'pagamento' : 'recebimento';
-    return `✅ *${t.descricao}* marcada como ${acao === 'pagamento' ? 'paga' : 'recebida'}! Ótimo, tudo anotado aqui! 🎉`;
+    const acao = t.tipo === 'despesa' ? 'paga' : 'recebida';
+    resposta = `✅ *${t.descricao}* marcada como ${acao}! Ótimo, tudo anotado aqui! 🎉`;
+  } else {
+    const lista = pagas.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
+    resposta = `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo, tudo anotado! 🎉`;
   }
 
-  const lista = pagas.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
-  return `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo, tudo anotado! 🎉`;
+  if (caixinhasAtualizadas.length > 0) {
+    resposta += '\n\n' + caixinhasAtualizadas
+      .map(c => `💰 *${c.nome}*: +${fmt.formatarMoeda(c.valor)} → *${fmt.formatarMoeda(c.novoSaldo)}*`)
+      .join('\n');
+  }
+
+  return resposta;
 }
 
 // Mensagens de ack enquanto o bot vai buscar informações
@@ -3288,7 +3310,7 @@ async function handleDepositoCaixinha(usuarioId, resultado) {
       `  Caixinha: *${caixinha.nome}*\n` +
       `  Valor: *${fmt.formatarMoeda(valor)}*\n` +
       `  Data: *${fmt.formatarData(dataAporte)}*\n\n` +
-      `Quando chegar o dia, use *"pagar #ID"* para confirmar — o valor será adicionado à caixinha automaticamente.`;
+      `No dia ${fmt.formatarData(dataAporte)} vou te lembrar de confirmar. É só responder _"paguei"_ e o valor é adicionado à caixinha automaticamente! 💰`;
   }
 
   // Depósito imediato
