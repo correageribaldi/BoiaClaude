@@ -256,12 +256,32 @@ client.on('message', async (msg) => {
   if (!texto || texto.trim().length === 0) return;
 
   try {
-    // Interceptar escolha de plano ANTES do check de acesso (usuários bloqueados também podem escolher)
+    // Interceptar escolha de plano e cupom ANTES do check de acesso (usuários bloqueados também podem usar)
     const textoLower = texto.trim().toLowerCase();
     if (['mensal', 'plano mensal', 'assinar mensal', 'anual', 'plano anual', 'assinar anual'].includes(textoLower)) {
       const plano = textoLower.includes('anual') ? 'anual' : 'mensal';
       const resposta = await pagamento.gerarLinkPlano(usuarioId, plano);
       await msg.reply(resposta);
+      return;
+    }
+
+    if (textoLower.startsWith('cupom ')) {
+      const codigo = texto.trim().slice(6).trim().toUpperCase();
+      if (!codigo) {
+        await msg.reply('❌ Informe o código do cupom.\n_Ex: cupom CRONOS30_');
+        return;
+      }
+      const resultado = await pagamento.aplicarCupom(usuarioId, codigo);
+      if (!resultado.ok) {
+        await msg.reply(`❌ ${resultado.erro}\n\n_Escolha seu plano: responda *mensal* ou *anual*._`);
+        return;
+      }
+      if (resultado.tipo === 'dias_gratis') {
+        const dataFormatada = resultado.pagoAte.split('-').reverse().join('/');
+        await msg.reply(`🎉 Cupom aplicado com sucesso!\n\nVocê ganhou *${resultado.dias} dia(s)* de acesso gratuito ao Cronos! ✅\n\n📅 Seu acesso vai até *${dataFormatada}*. Aproveite! 🚀`);
+      } else if (resultado.tipo === 'desconto_percent') {
+        await msg.reply(`🎉 Cupom de *${resultado.desconto}% de desconto* aplicado!\n\n👉 ${resultado.link}\n\n_Após o pagamento, seu acesso é liberado automaticamente! ✅_`);
+      }
       return;
     }
 

@@ -189,7 +189,8 @@ async function verificarAcesso(usuarioId) {
           `Escolha seu plano para continuar usando o Cronos:\n\n` +
           `💳 *Mensal — R$ 19,90/mês*\n` +
           `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
-          `_Responda *mensal* ou *anual* para receber seu link de pagamento._`;
+          `_Responda *mensal* ou *anual* para receber seu link de pagamento._\n\n` +
+          `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`;
         await db.incrementarAvisosAssinatura(usuarioId);
       }
 
@@ -213,7 +214,8 @@ async function verificarAcesso(usuarioId) {
           `Escolha seu plano para não perder o acesso:\n\n` +
           `💳 *Mensal — R$ 19,90/mês*\n` +
           `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
-          `_Responda *mensal* ou *anual* para receber seu link._`,
+          `_Responda *mensal* ou *anual* para receber seu link._\n\n` +
+          `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`,
       };
     }
 
@@ -234,7 +236,8 @@ async function verificarAcesso(usuarioId) {
           `Renove escolhendo seu plano:\n\n` +
           `💳 *Mensal — R$ 19,90/mês*\n` +
           `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
-          `_Responda *mensal* ou *anual* para receber seu link de pagamento._`;
+          `_Responda *mensal* ou *anual* para receber seu link de pagamento._\n\n` +
+          `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`;
         await db.incrementarAvisosAssinatura(usuarioId);
       }
 
@@ -258,7 +261,8 @@ async function verificarAcesso(usuarioId) {
           `Renove escolhendo seu plano:\n\n` +
           `💳 *Mensal — R$ 19,90/mês*\n` +
           `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
-          `_Responda *mensal* ou *anual* para receber seu link._`,
+          `_Responda *mensal* ou *anual* para receber seu link._\n\n` +
+          `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`,
       };
     }
 
@@ -281,7 +285,7 @@ async function verificarAcesso(usuarioId) {
         status: 'graca',
         aviso: `⚠️ *${diasGraca} dia(s) de carência restante(s).*\n\n` +
           `💳 *Mensal — R$ 19,90/mês* | 💎 *Anual — R$ 176,90/ano*\n\n` +
-          `_Responda *mensal* ou *anual* para receber seu link._`,
+          `_Responda *mensal*, *anual* ou *cupom SEUCÓDIGO*._`,
       };
     }
 
@@ -302,7 +306,8 @@ async function gerarMensagemBloqueio(usuarioId, nome) {
     `Escolha um plano para continuar:\n\n` +
     `💳 *Mensal — R$ 19,90/mês*\n` +
     `💎 *Anual — R$ 176,90/ano* _(apenas R$ 14,74/mês — economize 26%!)_\n\n` +
-    `_Responda *mensal* ou *anual* para receber seu link de pagamento._`;
+    `_Responda *mensal* ou *anual* para receber seu link de pagamento._\n\n` +
+    `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`;
 }
 
 function msgTrialBemVindo(nome) {
@@ -560,8 +565,8 @@ async function aplicarCupom(usuarioId, codigo) {
       return { ok: false, erro: 'Sistema de pagamento não configurado.' };
     }
 
-    const precoDesconto = Math.round(PRECO_CENTS * (1 - cupom.valor / 100));
-    const nsu = `cronos_${usuarioId.replace(/\D/g, '')}_${Date.now()}`;
+    const precoDesconto = Math.round(PRECO_CENTS_MENSAL * (1 - cupom.valor / 100));
+    const nsu = `cronos_mensal_${usuarioId.replace(/\D/g, '')}_${Date.now()}`;
 
     try {
       const res = await httpsPost('https://api.infinitepay.io/invoices/public/checkout/links', {
