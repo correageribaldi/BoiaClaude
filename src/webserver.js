@@ -1,7 +1,22 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const db = require('./database');
 const pagamento = require('./pagamento');
+
+const EULA_PDF_PATH = path.join(__dirname, '../docs/cronos-eula.pdf');
+
+async function enviarEulaPDF(whatsappClient, usuarioId) {
+  if (!whatsappClient) return;
+  if (!fs.existsSync(EULA_PDF_PATH)) return;
+  try {
+    const { MessageMedia } = require('whatsapp-web.js');
+    const media = MessageMedia.fromFilePath(EULA_PDF_PATH);
+    await whatsappClient.sendMessage(usuarioId, media, { sendMediaAsDocument: true });
+  } catch (err) {
+    console.error('[EULA] Erro ao enviar PDF de termos:', err.message);
+  }
+}
 
 const app = express();
 app.use(express.json());
@@ -248,6 +263,7 @@ app.get('/pagamento/sucesso', async (req, res) => {
           let msg = `✅ *Pagamento confirmado!*\n\nSua assinatura do *Cronos* está ativa até *${dataFormatada}*. Obrigado! 🚀`;
           if (receipt_url) msg += `\n\n🧾 Comprovante: ${receipt_url}`;
           await whatsappClient.sendMessage(usuarioId, msg);
+          await enviarEulaPDF(whatsappClient, usuarioId);
         } catch (err) {
           console.error('[REDIRECT PAGAMENTO] Erro ao notificar WhatsApp:', err.message);
         }
@@ -332,6 +348,7 @@ app.post('/webhook/pagamento', async (req, res) => {
             usuarioId,
             '✅ *Pagamento confirmado!*\n\nSeu acesso ao *Cronos* foi renovado por mais 30 dias. Pode usar à vontade! 🚀'
           );
+          await enviarEulaPDF(whatsappClient, usuarioId);
         } catch (err) {
           console.error('[WEBHOOK PAGAMENTO] Erro ao notificar usuário:', err.message);
         }
@@ -424,6 +441,7 @@ app.post('/api/admin/ativar', autenticarAdmin, async (req, res) => {
       await whatsappClient.sendMessage(usuarioId,
         `✅ *Assinatura ativada!*\n\nSua assinatura do *Cronos* está ativa até *${dataFormatada}*. 🚀`
       ).catch(e => console.error('[ADMIN] Erro ao notificar WhatsApp:', e.message));
+      await enviarEulaPDF(whatsappClient, usuarioId);
     }
     res.json({ ok: true, pagoAte: pagoAteStr });
   } catch (err) {

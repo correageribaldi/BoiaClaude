@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome } = require('./handlers');
@@ -281,6 +283,18 @@ client.on('message', async (msg) => {
         await msg.reply(`🎉 Cupom aplicado com sucesso!\n\nVocê ganhou *${resultado.dias} dia(s)* de acesso gratuito ao Cronos! ✅\n\n📅 Seu acesso vai até *${dataFormatada}*. Aproveite! 🚀`);
       } else if (resultado.tipo === 'desconto_percent') {
         await msg.reply(`🎉 Cupom de *${resultado.desconto}% de desconto* aplicado!\n\n👉 ${resultado.link}\n\n_Após o pagamento, seu acesso é liberado automaticamente! ✅_`);
+      }
+      return;
+    }
+
+    // Enviar PDF de Termos de Uso sob demanda (disponível mesmo para usuários bloqueados)
+    if (['termos', 'termos de uso', 'política', 'politica', 'privacidade', 'eula', 'contrato'].includes(textoLower)) {
+      const eulaPath = path.join(__dirname, '../docs/cronos-eula.pdf');
+      if (fs.existsSync(eulaPath)) {
+        const media = MessageMedia.fromFilePath(eulaPath);
+        await client.sendMessage(usuarioId, media, { sendMediaAsDocument: true });
+      } else {
+        await msg.reply('📄 Nossos Termos de Uso estão disponíveis pelo e-mail: *contato@cronosappai.com.br*');
       }
       return;
     }

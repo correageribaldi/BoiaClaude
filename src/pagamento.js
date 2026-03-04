@@ -1,6 +1,22 @@
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const cron = require('node-cron');
 const db = require('./database');
+
+const EULA_PDF_PATH = path.join(__dirname, '../docs/cronos-eula.pdf');
+
+async function enviarEulaPDF(whatsappClient, usuarioId) {
+  if (!whatsappClient) return;
+  if (!fs.existsSync(EULA_PDF_PATH)) return;
+  try {
+    const { MessageMedia } = require('whatsapp-web.js');
+    const media = MessageMedia.fromFilePath(EULA_PDF_PATH);
+    await whatsappClient.sendMessage(usuarioId, media, { sendMediaAsDocument: true });
+  } catch (err) {
+    console.error('[EULA] Erro ao enviar PDF de termos:', err.message);
+  }
+}
 
 const PRECO_CENTS_MENSAL = 1990;  // R$ 19,90/mês
 const PRECO_CENTS_ANUAL  = 17690; // R$ 176,90/ano (≈26% de desconto)
@@ -318,7 +334,8 @@ function msgTrialBemVindo(nome) {
     `Após o período de teste, escolha seu plano:\n` +
     `💳 *Mensal — R$ 19,90/mês*\n` +
     `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
-    `_Qualquer dúvida é só me chamar. Bora cuidar das finanças! 🚀_`;
+    `_Qualquer dúvida é só me chamar. Bora cuidar das finanças! 🚀_\n\n` +
+    `_📄 Ao usar o Cronos, você concorda com nossos Termos de Uso. Responda *termos* para receber o documento._`;
 }
 
 // ─── Consulta de plano ───────────────────────────────────────────────────────
@@ -625,6 +642,7 @@ function iniciarPollingPagamentos(whatsappClient) {
               assinatura.usuario_id,
               `✅ *Pagamento confirmado!* Sua assinatura do Cronos está ativa até *${dataFormatada}*. Obrigado! 🎉`
             );
+            await enviarEulaPDF(whatsappClient, assinatura.usuario_id);
           }
         }
       }
