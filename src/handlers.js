@@ -1704,6 +1704,15 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleLiquidar(usuarioId, msg);
   }
 
+  // Cancelar/excluir lançamento por nome natural (antes da IA para evitar interpretação errada)
+  // Ex: "cancelar despesa cadastrada com o nome de emprestimo" → excluir por nome
+  {
+    const matchCancelarTx = lower.match(/\b(cancelar?|excluir?|apagar?|remover?|deletar?)\s+(?:a\s+|o\s+)?(?:despesa|receita|lan[çc]amento|compra|registro|pagamento)\s+(?:cadastrad[ao]\s+)?(?:com\s+o\s+nome\s+(?:de|do|da)\s+|chamad[ao](?:\s+de)?\s+|de\s+)?(.+)/i);
+    if (matchCancelarTx) {
+      return await handleExcluir(usuarioId, `excluir ${matchCancelarTx[2].trim()}`);
+    }
+  }
+
   // IA interpreta tudo: saudações, transações, consultas, etc. (incluindo reset)
   return await handleMensagemIA(usuarioId, msg, enviarAck);
 }
@@ -2375,9 +2384,21 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     let cartaoId = null;
     if (tipo === 'despesa') {
       if (resultado.cartao_nome) {
-        // IA identificou um cartão pelo nome
-        const cartoes = await db.buscarCartoesPorNome(usuarioId, resultado.cartao_nome);
-        if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+        // Validar: só usar cartão se o texto original indica compra no cartão.
+        // Evita que o nome do cartão que aparece dentro da descrição da despesa
+        // seja confundido com uma referência ao cartão de compra.
+        // Padrões válidos: "no nubank", "via nubank", "nubank 300" (cartão no início),
+        //                  "no cartão nubank", "comprei no nubank"
+        const nomePrimeiro = resultado.cartao_nome.toLowerCase().split(/\s+/)[0];
+        const cartaoNoInicio = lower.startsWith(nomePrimeiro + ' ');
+        const reContextoCartao = new RegExp(
+          `\\b(?:no\\s+(?:cart[aã]o\\s+)?${nomePrimeiro}|via\\s+${nomePrimeiro}|pelo\\s+${nomePrimeiro}|${nomePrimeiro}\\s+(?:cart[aã]o)|comprei\\s+(?:n[oa]\\s+)?${nomePrimeiro})\\b`,
+          'i'
+        );
+        if (cartaoNoInicio || reContextoCartao.test(lower)) {
+          const cartoes = await db.buscarCartoesPorNome(usuarioId, resultado.cartao_nome);
+          if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+        }
       }
 
       const parcelas = resultado.parcelas && resultado.parcelas > 1 ? Math.round(resultado.parcelas) : 1;
