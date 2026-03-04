@@ -1419,12 +1419,11 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   // Detecção de intenção de trocar nome — antes de qualquer fluxo ativo (inclusive aguardando_inicio)
   {
     const lowerNorm = normalizarTextoBusca(lower);
-    // "nome da/do/de X" = renomear entidade (caixinha, cartão...), não trocar o nome do usuário
-    const renomearEntidade = /\bnome\s+d[aeo]\b/.test(lowerNorm);
-    const matchTrocaNome = !renomearEntidade && (
-      /\b(trocar?|mudar?|alterar?|corrigir?|atualizar?|ajustar?)\b.{0,15}\b(meu\s+)?nome\b/.test(lowerNorm)
-      || /\bquero me chamar\b|\bme chama de\b|\bme chamem de\b|\bmeu nome (e|e\s)/.test(lowerNorm)
-    );
+    // Só dispara se o usuário mencionar explicitamente "meu nome" ou frases pessoais
+    const matchTrocaNome =
+      /\bmeu\s+nome\b/.test(lowerNorm) ||
+      /\bnome\s+do\s+meu\s+(usuario|perfil|conta)\b/.test(lowerNorm) ||
+      /\bquero me chamar\b|\bme chama de\b|\bme chamem de\b/.test(lowerNorm);
     if (matchTrocaNome) {
       // Determina para onde voltar após a troca
       const retornarA = estadoOnboarding === 'aguardando_inicio' ? 'aguardando_inicio' : null;
@@ -4199,6 +4198,14 @@ async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, tex
   const { item, tipo } = candidato;
   const nomeItem = item.descricao || item.nome;
 
+  if (campo === 'nome') {
+    if (!novoValor) return `Qual o novo nome? _Ex: "alterar nome da caixinha para Reserva de Emergência"_`;
+    if (tipo === 'investimento' || tipo === 'cartão') item.nome = novoValor;
+    else item.descricao = novoValor;
+    salvarPontoZero(usuarioId, estado);
+    return `✅ *${nomeItem}* renomeado para *${novoValor}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
+  }
+
   if (campo === 'dia') {
     const dia = novoValor || extrairDiaDoTexto(textoOriginal);
     if (!dia) return `Qual dia? _Ex: "dia 10"_`;
@@ -4246,6 +4253,45 @@ async function handleEdicaoPendente(usuarioId, texto, estado) {
 
 async function editarItemFluxo(usuarioId, texto, estado) {
   const lower = normalizarTextoBusca(texto);
+
+  // Renomear item: "alterar nome da caixinha [X] para [Y]"
+  if (/\b(trocar?|mudar?|alterar?|renomear?|corrigir?)\b.{0,8}\bnome\s+d[aeo]\b/.test(lower)) {
+    const matchPara = texto.match(/\b(?:para|pra)\s+(.+)$/i);
+    const novoNome = matchPara ? matchPara[1].trim().replace(/[.,!?]+$/, '') : null;
+
+    if (!novoNome) {
+      return `Qual o novo nome?\n_Ex: "alterar nome da caixinha Nubank para Reserva de Emergência"_`;
+    }
+
+    // Extrai a query do nome atual: tudo entre o tipo de entidade e "para"
+    const semSufixo = normalizarTextoBusca(texto.replace(/\b(?:para|pra)\s+.+$/i, '')).trim();
+    let queryNome = semSufixo
+      .replace(/\b(trocar?|mudar?|alterar?|renomear?|corrigir?)\b/g, '')
+      .replace(/\bnome\s+d[aeo]\b/g, '')
+      .replace(/\b(caixinha|investimento|cartao|receita|despesa|conta)\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const todosCandidatos = [
+      ...(estado.investimentos  || []).map(i => ({ item: i, tipo: 'investimento' })),
+      ...(estado.cartoes        || []).map(i => ({ item: i, tipo: 'cartão' })),
+      ...(estado.receitasFixas  || []).map(i => ({ item: i, tipo: 'receita' })),
+      ...(estado.despesasFixas  || []).map(i => ({ item: i, tipo: 'despesa' })),
+    ];
+    const candidatos = queryNome ? buscarItensPorNome(estado, queryNome) : todosCandidatos;
+
+    if (candidatos.length === 0) {
+      return `Não encontrei nenhum item${queryNome ? ` com o nome "${queryNome}"` : ''} para renomear 😅\n\nManda *"listar"* para ver o que está cadastrado.`;
+    }
+    if (candidatos.length === 1) {
+      return aplicarEdicao(usuarioId, estado, candidatos[0], 'nome', novoNome, texto);
+    }
+
+    estado.edicaoPendente = { campo: 'nome', novoValor: novoNome, candidatos };
+    salvarPontoZero(usuarioId, estado);
+    const lista = candidatos.map((c, i) => `${i + 1}. *${c.item.descricao || c.item.nome}* (${c.tipo})`).join('\n');
+    return `Qual deles quer renomear para *${novoNome}*?\n${lista}`;
+  }
 
   // Editar saldo geral
   if (/saldo|valor da conta|conta corrente/.test(lower)) {
@@ -4349,8 +4395,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
     return removerItemFluxo(usuarioId, estado, matchRemover[2].trim());
   }
 
-  // Editar item
-  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
+  // Editar/renomear item
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)) {
     return await editarItemFluxo(usuarioId, texto, estado);
   }
 
