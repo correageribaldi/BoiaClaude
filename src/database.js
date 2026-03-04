@@ -961,12 +961,13 @@ async function calcularSaldos(usuarioId) {
   const result = await pool.query(
     `SELECT
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pago' THEN valor ELSE 0 END), 0)::float as receitas_pagas,
-       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' AND cartao_id IS NULL THEN valor ELSE 0 END), 0)::float as despesas_pagas,
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' AND (cartao_id IS NULL OR descricao ILIKE 'Fatura %') THEN valor ELSE 0 END), 0)::float as despesas_pagas,
        COALESCE(SUM(CASE WHEN tipo = 'receita' AND status = 'pendente'
          AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
          AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
          THEN valor ELSE 0 END), 0)::float as receitas_pendentes,
-       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente' AND cartao_id IS NULL
+       COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pendente'
+         AND (cartao_id IS NULL OR descricao ILIKE 'Fatura %')
          AND EXTRACT(YEAR  FROM data) = EXTRACT(YEAR  FROM CURRENT_DATE)
          AND EXTRACT(MONTH FROM data) = EXTRACT(MONTH FROM CURRENT_DATE)
          THEN valor ELSE 0 END), 0)::float as despesas_pendentes
