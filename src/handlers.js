@@ -4254,8 +4254,9 @@ async function handleEdicaoPendente(usuarioId, texto, estado) {
 async function editarItemFluxo(usuarioId, texto, estado) {
   const lower = normalizarTextoBusca(texto);
 
-  // Renomear item: "alterar nome da caixinha [X] para [Y]"
-  if (/\b(trocar?|mudar?|alterar?|renomear?|corrigir?)\b.{0,8}\bnome\s+d[aeo]\b/.test(lower)) {
+  // Renomear item: "alterar nome [da] caixinha [X] para Y" ou "renomear X para Y"
+  // Dispara se há "nome" na frase + verbo de edição, sem exigir artigo "da/do/de"
+  if (/\b(trocar?|mudar?|alterar?|renomear?|corrigir?)\b.{0,12}\bnome\b/.test(lower)) {
     const matchPara = texto.match(/\b(?:para|pra)\s+(.+)$/i);
     const novoNome = matchPara ? matchPara[1].trim().replace(/[.,!?]+$/, '') : null;
 
@@ -4263,12 +4264,14 @@ async function editarItemFluxo(usuarioId, texto, estado) {
       return `Qual o novo nome?\n_Ex: "alterar nome da caixinha Nubank para Reserva de Emergência"_`;
     }
 
-    // Extrai a query do nome atual: tudo entre o tipo de entidade e "para"
+    // Extrai a query do nome atual: remove verbo, "nome", artigos, tipo e o novo nome
     const semSufixo = normalizarTextoBusca(texto.replace(/\b(?:para|pra)\s+.+$/i, '')).trim();
     let queryNome = semSufixo
       .replace(/\b(trocar?|mudar?|alterar?|renomear?|corrigir?)\b/g, '')
-      .replace(/\bnome\s+d[aeo]\b/g, '')
+      .replace(/\bnome\s*d[aeo]?\b/g, '')
+      .replace(/\bnome\b/g, '')
       .replace(/\b(caixinha|investimento|cartao|receita|despesa|conta)\b/g, '')
+      .replace(/\b\d+\b/g, '')
       .replace(/\s+/g, ' ')
       .trim();
 
