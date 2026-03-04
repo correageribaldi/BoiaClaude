@@ -3801,10 +3801,13 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
       salvarPontoZero(usuarioId, estado);
 
       const faturaStr = valorFatura > 0 ? fmt.formatarMoeda(valorFatura) : 'valor não informado';
+      const listaAtual = estado.cartoes.length > 1
+        ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}\n_Para remover um, manda "remover [nome]"._`
+        : '';
       return `✅ *${cc.nome}* cadastrado!\n` +
         `  Limite: ${fmt.formatarMoeda(cc.limiteTotal)}\n` +
         `  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}\n` +
-        `  Fatura: ~${faturaStr}/mês\n\n` +
+        `  Fatura: ~${faturaStr}/mês${listaAtual}\n\n` +
         `Tem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
     }
 
@@ -4074,6 +4077,26 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'cartoes': {
+      // Remover cartão já adicionado nesse fluxo
+      const matchRemover = lower.match(/^remover\s+(.+)$/);
+      if (matchRemover) {
+        const nomeBuscado = matchRemover[1].trim().toLowerCase();
+        const idx = (estado.cartoes || []).findIndex(c => c.nome.toLowerCase().includes(nomeBuscado));
+        if (idx !== -1) {
+          const nomeRemovido = estado.cartoes[idx].nome;
+          estado.cartoes.splice(idx, 1);
+          salvarPontoZero(usuarioId, estado);
+          const lista = estado.cartoes.length > 0
+            ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}`
+            : '';
+          return `🗑️ *${nomeRemovido}* removido!${lista}\n\nTem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
+        }
+        const listaAtual = (estado.cartoes || []).length > 0
+          ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}`
+          : '';
+        return `Não encontrei esse cartão para remover 😅${listaAtual}\n\nTem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
+      }
+
       if (item.tipo === 'nao' || querAvancar) {
         if (estado.standalone === 'cartao') {
           // Modo standalone: salvar cartões diretamente e encerrar
