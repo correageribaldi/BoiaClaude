@@ -1201,7 +1201,9 @@ async function criarLembreteRecorrente(usuarioId, mensagem, horario, frequencia,
     `INSERT INTO lembretes_recorrentes
        (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim, oculto, ultimo_envio)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-       CASE WHEN $3::time <= LOCALTIME THEN CURRENT_DATE ELSE NULL END)
+       CASE WHEN $3::time <= (NOW() AT TIME ZONE 'America/Sao_Paulo')::time
+            THEN (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+            ELSE NULL END)
      RETURNING id`,
     [uid, mensagem, horario, frequencia, diaSemana, diaMes, dataFim, oculto]
   );
@@ -1215,13 +1217,13 @@ async function buscarRecorrentesParaDisparar() {
             TO_CHAR(horario, 'HH24:MI') as horario
      FROM lembretes_recorrentes
      WHERE ativo = TRUE
-       AND (data_fim IS NULL OR data_fim >= CURRENT_DATE)
-       AND (ultimo_envio IS NULL OR ultimo_envio < CURRENT_DATE)
-       AND horario <= LOCALTIME
+       AND (data_fim IS NULL OR data_fim >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date)
+       AND (ultimo_envio IS NULL OR ultimo_envio < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date)
+       AND horario <= (NOW() AT TIME ZONE 'America/Sao_Paulo')::time
        AND (
          (frequencia = 'diario')
-         OR (frequencia = 'semanal' AND dia_semana = EXTRACT(DOW FROM CURRENT_DATE)::int)
-         OR (frequencia = 'mensal' AND dia_mes = EXTRACT(DAY FROM CURRENT_DATE)::int)
+         OR (frequencia = 'semanal' AND dia_semana = EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo'))::int)
+         OR (frequencia = 'mensal' AND dia_mes = EXTRACT(DAY FROM (NOW() AT TIME ZONE 'America/Sao_Paulo'))::int)
        )`
   );
   return result.rows;
@@ -1230,7 +1232,7 @@ async function buscarRecorrentesParaDisparar() {
 // Marcar recorrente como enviado hoje
 async function marcarRecorrenteEnviado(lembreteId) {
   await pool.query(
-    `UPDATE lembretes_recorrentes SET ultimo_envio = CURRENT_DATE WHERE id = $1`,
+    `UPDATE lembretes_recorrentes SET ultimo_envio = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date WHERE id = $1`,
     [lembreteId]
   );
 }
@@ -1238,7 +1240,7 @@ async function marcarRecorrenteEnviado(lembreteId) {
 // Desativar recorrentes expirados
 async function desativarRecorrentesExpirados() {
   await pool.query(
-    `UPDATE lembretes_recorrentes SET ativo = FALSE WHERE data_fim < CURRENT_DATE AND ativo = TRUE`
+    `UPDATE lembretes_recorrentes SET ativo = FALSE WHERE data_fim < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AND ativo = TRUE`
   );
 }
 
@@ -2238,33 +2240,52 @@ async function buscarLembreteRecorrentePorId(id) {
 function calcularProximaOcorrenciaRecorrente(regra, aposData) {
   const ref = new Date(aposData);
   const [h, m] = regra.horario.split(':').map(Number);
-  const dataFimObj = regra.data_fim ? new Date(regra.data_fim + 'T23:59:59') : null;
+  const dataFimObj = regra.data_fim ? new Date(regra.data_fim + 'T23:59:59.000-03:00') : null;
+
+  // Helper: YYYY-MM-DD da data em São Paulo (en-CA dá formato ISO)
+  const spFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
+  function spDateStr(d) { return spFmt.format(d); }
+
+  // Constrói um Date representando h:m no dia SP de dateRef, com offset -03:00
+  function construirSP(spStr) {
+    return new Date(`${spStr}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00.000-03:00`);
+  }
+
+  // Dia da semana e dia do mês usando a data SP (evita erros de timezone perto de meia-noite)
+  function diaSemanaEmSP(d) {
+    const [y, mo, dy] = spDateStr(d).split('-').map(Number);
+    return new Date(y, mo - 1, dy).getDay(); // Date local sem TZ para só pegar o dia da semana
+  }
+  function diaMesEmSP(d) {
+    return parseInt(spDateStr(d).split('-')[2]);
+  }
 
   function diaValido(d) {
     if (regra.frequencia === 'diario') return true;
-    if (regra.frequencia === 'semanal') return d.getDay() === regra.dia_semana;
-    if (regra.frequencia === 'mensal') return d.getDate() === regra.dia_mes;
+    if (regra.frequencia === 'semanal') return diaSemanaEmSP(d) === regra.dia_semana;
+    if (regra.frequencia === 'mensal') return diaMesEmSP(d) === regra.dia_mes;
     return false;
   }
 
-  // 1. Verificar se HOJE ainda tem uma ocorrência futura (horário > agora)
-  const hoje = new Date(ref);
-  hoje.setHours(h, m, 0, 0);
-  if (hoje > ref && diaValido(hoje)) {
-    if (!dataFimObj || hoje <= dataFimObj) return hoje;
+  // 1. Verificar se HOJE (em SP) ainda tem uma ocorrência futura (horário > agora)
+  const todaySP = spDateStr(ref);
+  const hojeCandidate = construirSP(todaySP);
+  if (hojeCandidate > ref && diaValido(hojeCandidate)) {
+    if (!dataFimObj || hojeCandidate <= dataFimObj) return hojeCandidate;
   }
 
-  // 2. Buscar o próximo dia válido a partir de amanhã
-  const d = new Date(ref);
-  d.setDate(d.getDate() + 1);
-  d.setHours(h, m, 0, 0);
+  // 2. Iterar dias a partir de amanhã (em SP) para achar o próximo dia válido
+  const [refAno, refMes, refDia] = todaySP.split('-').map(Number);
+  const cursor = new Date(refAno, refMes - 1, refDia + 1); // date local sem TZ só para iteração
 
   for (let i = 0; i < 400; i++) {
-    if (diaValido(d)) {
-      if (dataFimObj && d > dataFimObj) return null;
-      return new Date(d);
+    const cursorStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2,'0')}-${String(cursor.getDate()).padStart(2,'0')}`;
+    const candidato = construirSP(cursorStr);
+    if (diaValido(candidato)) {
+      if (dataFimObj && candidato > dataFimObj) return null;
+      return candidato;
     }
-    d.setDate(d.getDate() + 1);
+    cursor.setDate(cursor.getDate() + 1);
   }
   return null;
 }

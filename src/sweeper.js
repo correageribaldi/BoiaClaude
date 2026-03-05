@@ -36,7 +36,7 @@ async function sweeperRecorrentes(reminderQueue) {
     const regras = await db.listarRecorrentesAtivos();
     const agora = new Date();
 
-    const hojeStr = agora.toISOString().substring(0, 10);
+    const hojeStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora);
 
     for (const r of regras) {
       // Se já foi enviado hoje, calcular a partir do fim do dia para pular para amanhã
@@ -46,7 +46,8 @@ async function sweeperRecorrentes(reminderQueue) {
       const proxima = db.calcularProximaOcorrenciaRecorrente(r, refDate);
       if (!proxima) continue;
 
-      const jobId = `rec-${r.id}-${proxima.toISOString().substring(0, 10)}`;
+      const spDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(proxima);
+      const jobId = `rec-${r.id}-${spDate}`;
       const delay = Math.max(0, proxima.getTime() - Date.now());
 
       // jobId idempotente: BullMQ ignora silenciosamente se o job já existe

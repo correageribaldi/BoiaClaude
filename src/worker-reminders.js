@@ -28,7 +28,7 @@ function criarWorkerReminders(client, connection) {
       if (!regra || !regra.ativo) return;
 
       // Guard de idempotência: se já enviou hoje, pula
-      const hoje = new Date(runAt).toISOString().substring(0, 10);
+      const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(runAt));
       if (regra.ultimo_envio === hoje) return;
 
       try {
@@ -74,7 +74,8 @@ async function agendarProximaRecorrente(lembreteRecorrenteId, regra, aposData) {
       return;
     }
     const delay = Math.max(0, proxima.getTime() - Date.now());
-    const jobId = `rec-${lembreteRecorrenteId}-${proxima.toISOString().substring(0, 10)}`;
+    const spDateJobId = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(proxima);
+    const jobId = `rec-${lembreteRecorrenteId}-${spDateJobId}`;
     await reminderQueue.add('reminder',
       { tipo: 'recurrente', lembreteRecorrenteId, runAt: proxima.toISOString() },
       { jobId, delay, removeOnComplete: true, attempts: 3,

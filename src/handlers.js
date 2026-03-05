@@ -3443,7 +3443,8 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
     const proxima = db.calcularProximaOcorrenciaRecorrente(regraParaCalculo, new Date());
     if (proxima) {
       const delay = Math.max(0, proxima.getTime() - Date.now());
-      const jobId = `rec-${id}-${proxima.toISOString().substring(0, 10)}`;
+      const spDateJobId = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(proxima);
+      const jobId = `rec-${id}-${spDateJobId}`;
       await reminderQueue.add('reminder',
         { tipo: 'recurrente', lembreteRecorrenteId: id, runAt: proxima.toISOString() },
         { jobId, delay, removeOnComplete: true, attempts: 3,
