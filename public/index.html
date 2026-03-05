@@ -174,28 +174,61 @@
       <div class="pagination" id="tx-pagination"></div>
     </section>
 
-    <!-- ── Categorias ──────────────────────────────────────────────────── -->
+    <!-- ── Configurações ──────────────────────────────────────────────── -->
     <section id="tab-categories" class="tab-content hidden">
-      <div class="section-header"><h2>Minhas Categorias</h2></div>
+      <div class="section-header"><h2>Configurações</h2></div>
 
-      <div class="create-bar">
-        <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova categoria..." maxlength="50" />
-        <button class="btn btn-primary" id="cat-criar">+ Criar</button>
+      <!-- Accordion menu -->
+      <div class="accordion">
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>📂 Categorias</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div class="create-bar">
+              <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova categoria..." maxlength="50" />
+              <button class="btn btn-primary" id="cat-criar">+ Criar</button>
+            </div>
+            <div class="cat-grid" id="cat-grid"></div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>📊 Orçamento / Subcategorias</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div id="orcamento-salario" class="orcamento-salario-bar hidden"></div>
+            <div id="orcamento-container"></div>
+            <div id="orcamento-saldo" class="orcamento-saldo hidden"></div>
+            <button class="btn btn-primary hidden" id="orcamento-salvar" onclick="salvarOrcamento()">Salvar Orçamento</button>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>💳 Cartões de Crédito</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div id="cartoes-list"></div>
+            <div id="cartoes-empty" class="empty-state hidden">Nenhum cartão cadastrado. Use o WhatsApp para adicionar.</div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>💰 Investimentos</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div id="investimentos-list"></div>
+            <div id="investimentos-empty" class="empty-state">Em breve — gerencie suas caixinhas e investimentos aqui.</div>
+          </div>
+        </div>
       </div>
-
-      <div class="cat-grid" id="cat-grid"></div>
-
-      <!-- Orçamento mensal -->
-      <div class="section-header" style="margin-top:2rem"><h2>Orçamento Mensal</h2></div>
-      <div id="orcamento-salario" class="orcamento-salario-bar hidden"></div>
-      <div id="orcamento-container"></div>
-      <div id="orcamento-saldo" class="orcamento-saldo hidden"></div>
-      <button class="btn btn-primary hidden" id="orcamento-salvar" onclick="salvarOrcamento()">Salvar Orçamento</button>
-
-      <!-- Cartões de crédito -->
-      <div class="section-header" style="margin-top:2rem"><h2>Cartões de Crédito</h2></div>
-      <div id="cartoes-list"></div>
-      <div id="cartoes-empty" class="empty-state hidden">Nenhum cartão cadastrado. Use o WhatsApp para adicionar.</div>
     </section>
 
     <!-- ── Agenda ──────────────────────────────────────────────────────── -->

@@ -890,6 +890,37 @@ body {
 }
 .adm-ind-textarea:focus { border-color: var(--blue); }
 
+/* ── Accordion ───────────────────────────────────────────────────────────── */
+.accordion { display: flex; flex-direction: column; gap: 8px; }
+.accordion-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card);
+}
+.accordion-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+}
+.accordion-header:hover { background: rgba(255,255,255,.04); }
+.accordion-header-active { background: rgba(255,255,255,.06); }
+.accordion-icon {
+  font-size: 18px;
+  transition: transform .2s;
+  color: var(--text-muted);
+}
+.accordion-body { padding: 0 18px 18px; }
+
 /* ── Orçamento Mensal ────────────────────────────────────────────────────── */
 .orcamento-salario-bar {
   background: var(--card);

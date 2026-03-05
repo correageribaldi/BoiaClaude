@@ -1439,3 +1439,12 @@ document.addEventListener('DOMContentLoaded', () => {
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+function toggleAccordion(btn) {
+  const body = btn.nextElementSibling;
+  const icon = btn.querySelector('.accordion-icon');
+  const isOpen = !body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  icon.textContent = isOpen ? '›' : '‹';
+  btn.classList.toggle('accordion-header-active', !isOpen);
+}
