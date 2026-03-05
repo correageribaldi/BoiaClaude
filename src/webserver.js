@@ -225,6 +225,21 @@ app.put('/api/transactions/:id/pagar', autenticar, async (req, res) => {
   }
 });
 
+app.put('/api/transactions/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { campo, novo_valor } = req.body;
+    if (!campo || novo_valor === undefined) return res.status(400).json({ erro: 'campo e novo_valor são obrigatórios' });
+    const resultado = await db.atualizarTransacao(req.usuarioId, id, campo, novo_valor);
+    if (!resultado) return res.status(404).json({ erro: 'Transação não encontrada' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] PUT /api/transactions/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 app.delete('/api/transactions/:id', autenticar, async (req, res) => {
   try {
     const id = parseInt(req.params.id);

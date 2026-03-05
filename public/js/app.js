@@ -385,6 +385,7 @@ function renderTabelaTransacoes(transacoes) {
       }</td>
       <td style="white-space:nowrap">
         ${!t.projetado && t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
+        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data})})'>✏️</button>` : ''}
         ${t.projetado
           ? `<button class="action-btn" title="Excluir" onclick="excluirProjetado(${t.recorrencia_id}, '${esc(t.descricao)}', '${t.data}')">🗑️</button>`
           : `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>`
@@ -452,6 +453,56 @@ async function pagarTransacao(id) {
   try {
     await api(`/api/transactions/${id}/pagar`, { method: 'PUT' });
     toast('✅ Marcada como paga!', 'success');
+    carregarTransacoes();
+    if (tabAtual === 'dashboard') carregarDashboard();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+let _categoriasCache = null;
+async function carregarCategoriasSelect() {
+  if (!_categoriasCache) {
+    try { _categoriasCache = await api('/api/categories'); } catch { _categoriasCache = []; }
+  }
+  const sel = document.getElementById('editar-tx-categoria');
+  sel.innerHTML = _categoriasCache.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+}
+
+async function abrirModalEditar(tx) {
+  await carregarCategoriasSelect();
+  document.getElementById('editar-tx-id').value = tx.id;
+  document.getElementById('editar-tx-descricao').value = tx.descricao;
+  document.getElementById('editar-tx-valor').value = tx.valor;
+  document.getElementById('editar-tx-data').value = tx.data;
+  const sel = document.getElementById('editar-tx-categoria');
+  sel.value = tx.categoria;
+  if (!sel.value && tx.categoria) {
+    sel.innerHTML += `<option value="${esc(tx.categoria)}">${esc(tx.categoria)}</option>`;
+    sel.value = tx.categoria;
+  }
+  document.getElementById('modal-editar-tx').classList.remove('hidden');
+}
+
+function fecharModalEditar() {
+  document.getElementById('modal-editar-tx').classList.add('hidden');
+}
+
+async function salvarEdicaoTx() {
+  const id = parseInt(document.getElementById('editar-tx-id').value);
+  const campos = {
+    descricao: document.getElementById('editar-tx-descricao').value.trim(),
+    categoria: document.getElementById('editar-tx-categoria').value,
+    valor: parseFloat(document.getElementById('editar-tx-valor').value),
+    data: document.getElementById('editar-tx-data').value,
+  };
+  if (!campos.descricao) { toast('Descrição não pode ser vazia', 'error'); return; }
+  if (!campos.valor || campos.valor <= 0) { toast('Valor inválido', 'error'); return; }
+  if (!campos.data) { toast('Data inválida', 'error'); return; }
+  try {
+    for (const [campo, novo_valor] of Object.entries(campos)) {
+      await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify({ campo, novo_valor }) });
+    }
+    toast('✅ Transação atualizada!', 'success');
+    fecharModalEditar();
     carregarTransacoes();
     if (tabAtual === 'dashboard') carregarDashboard();
   } catch (err) { toast(err.message, 'error'); }

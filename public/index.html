@@ -413,6 +413,37 @@
 
 </div>
 
+<!-- ── Modal de edição de transação ──────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-editar-tx">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Editar transação</h3>
+      <button class="modal-close" onclick="fecharModalEditar()">✕</button>
+    </div>
+    <input type="hidden" id="editar-tx-id">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Descrição</label>
+      <input type="text" id="editar-tx-descricao" class="input" placeholder="Descrição">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Categoria</label>
+      <select id="editar-tx-categoria" class="input"></select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
+      <input type="number" id="editar-tx-valor" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:24px">
+      <label style="color:var(--text-muted);font-size:13px">Data</label>
+      <input type="date" id="editar-tx-data" class="input">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalEditar()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEdicaoTx()">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Modal de confirmação de recorrência ──────────────────────────────── -->
 <div class="modal-overlay hidden" id="modal-recorrencia">
   <div class="modal-box modal-box-center">
