@@ -34,6 +34,8 @@ Você ajuda pessoas a controlar finanças, organizar a rotina e responder dúvid
 Retorne APENAS um JSON válido (sem markdown, sem texto extra).
 
 Categorias disponíveis: {{CATEGORIAS}}
+Formato: CategoriaPrincipal(subcategoria1, subcategoria2), OutraPrincipal(sub1)
+Use SEMPRE uma subcategoria existente para "categoria". Se nenhuma subcategoria existente se encaixa, crie uma nova descritiva (ex: "iFood", "Uber", "Netflix") — o sistema a vinculará à categoria principal correta.
 Data de hoje: {{DATA_HOJE}}
 
 TIPOS DE AÇÃO:
@@ -226,7 +228,7 @@ REGRAS PARA TRANSAÇÃO:
   - "de internet" → "Internet"
   - "do aluguel" → "Aluguel"
   - "por um serviço de encanamento" → "Encanamento"
-- "categoria": uma das categorias listadas. Se não tiver certeza, use "Outros"
+- "categoria": use uma subcategoria existente. Se nenhuma se encaixa, crie uma nova descritiva (ex: "iFood", "Uber", "Farmácia"). NUNCA use o nome de uma categoria principal como categoria da transação.
 
 COMO DETERMINAR O TIPO (despesa ou receita):
 - tipo = "despesa" (dinheiro SAINDO — usuário está PAGANDO por algo):
@@ -466,13 +468,15 @@ REGRAS PARA BLOQUEIO (acao: "nenhuma"):
 - NÃO se apresente como Cronos nem explique o que faz — o sistema já vai mostrar a lista de capacidades
 - Apenas retorne {"acao": "nenhuma"} e pronto`;
 
-async function interpretarMensagem(texto) {
+async function interpretarMensagem(texto, usuarioId = null) {
   if (!process.env.OPENAI_API_KEY) {
     return null;
   }
 
   try {
-    const categorias = (await db.listarCategorias()).join(', ');
+    const categorias = usuarioId
+      ? await db.listarCategoriasParaIA(usuarioId)
+      : (await db.listarCategorias()).join(', ');
     const dataHoje = getDataHojeBR();
 
     const prompt = SYSTEM_PROMPT
@@ -538,7 +542,7 @@ Se a imagem for um documento financeiro válido, retorne:
 REGRAS:
 - "valor": extraia o valor total do documento (número positivo, ex: 150.90)
 - "descricao": resuma o que é (ex: "Conta de luz março", "Compra Supermercado X", "Boleto internet")
-- "categoria": escolha a mais adequada entre as disponíveis. Se não tiver certeza, use "Outros"
+- "categoria": use uma subcategoria existente ou crie uma nova descritiva. NUNCA use o nome de uma categoria principal.
 - "data": extraia a data de vencimento/emissão no formato YYYY-MM-DD. Se não encontrar, use null
 - Para boletos, prefira a data de vencimento
 - Para notas/cupons, use a data de emissão
@@ -558,13 +562,15 @@ Exemplos de tom (adapte ao que realmente está na imagem):
 - Selfie/pessoa: "📸 Boa foto! Mas não encontrei nenhum valor a pagar aqui... a não ser que você queira cobrar pela beleza 😂 Me manda um boleto, nota fiscal ou cupom que eu registro!"
 - Paisagem/lugar: "🌄 Que lugar incrível! Mas lugar bonito não aparece no extrato bancário... Se tiver a nota do hotel, passagem ou passeio, posso registrar como viagem nas suas despesas! ✈️"`;
 
-async function analisarImagem(base64Data, mimetype) {
+async function analisarImagem(base64Data, mimetype, usuarioId = null) {
   if (!process.env.OPENAI_API_KEY) {
     return null;
   }
 
   try {
-    const categorias = (await db.listarCategorias()).join(', ');
+    const categorias = usuarioId
+      ? await db.listarCategoriasParaIA(usuarioId)
+      : (await db.listarCategorias()).join(', ');
     const dataHoje = getDataHojeBR();
 
     const prompt = IMAGE_PROMPT
@@ -658,11 +664,13 @@ Rodízio de pizzas R$ 45. Ambiente familiar, aceita reservas.
   }
 }
 
-async function interpretarItemFinanceiro(texto) {
+async function interpretarItemFinanceiro(texto, usuarioId = null) {
   if (!process.env.OPENAI_API_KEY) return { tipo: 'erro' };
 
   try {
-    const categorias = (await db.listarCategorias()).join(', ');
+    const categorias = usuarioId
+      ? await db.listarCategoriasParaIA(usuarioId)
+      : (await db.listarCategorias()).join(', ');
     const hoje = new Date();
     const diaHoje = hoje.getDate();
     const mesHoje = hoje.getMonth() + 1;
@@ -689,7 +697,7 @@ Regras dos itens:
 - "valor": número positivo (ex: 3000.00)
 - "descricao": nome curto do item (ex: "Salário", "Internet", "Aluguel")
 - "dia": dia do mês 1-31. Resolva expressões relativas usando a data de hoje (dia ${diaHoje}). Ex: "amanhã" → ${diaAmanha}, "semana que vem" → ${Math.min(diaHoje + 7, diasNoMes)}. null apenas se nenhum dia for mencionado.
-- "categoria": uma das categorias disponíveis: ${categorias}. Se não tiver certeza, use "Outros"
+- "categoria": use uma subcategoria existente das categorias: ${categorias}. Se nenhuma se encaixa, crie uma descritiva. NUNCA use o nome de uma categoria principal.
 
 Se for CONFIRMAÇÃO positiva (sim, bora, vamos, ok, pode ser, quero):
 {"tipo": "sim"}
@@ -733,18 +741,20 @@ Outros exemplos:
   }
 }
 
-async function categorizarExtrato(descricoes) {
+async function categorizarExtrato(descricoes, usuarioId = null) {
   if (!process.env.OPENAI_API_KEY) return {};
 
   const CHUNK_SIZE = 25;
   const resultadoFinal = {};
 
   try {
-    const categorias = (await db.listarCategorias()).join(', ');
+    const categorias = usuarioId
+      ? await db.listarCategoriasParaIA(usuarioId)
+      : (await db.listarCategorias()).join(', ');
 
     const systemPrompt = `Você recebe descrições de transações de um extrato bancário brasileiro.
 Para CADA descrição, retorne:
-- "categoria": uma das categorias disponíveis: ${categorias}. Se não tiver certeza, use "Outros"
+- "categoria": use uma subcategoria existente das categorias: ${categorias}. Se nenhuma se encaixa, crie uma descritiva. NUNCA use o nome de uma categoria principal.
 - "descricao": nome CURTO e limpo (máximo 30 caracteres), removendo prefixos como "Compra no débito -", "Transferência enviada/recebida pelo Pix -", CPFs, agências, contas bancárias
 
 Retorne APENAS um JSON válido:

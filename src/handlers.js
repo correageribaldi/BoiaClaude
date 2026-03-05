@@ -396,6 +396,40 @@ async function resolverBudgetCategoria(categoria) {
   return aiClassified;
 }
 
+// Auto-criar subcategoria vinculada se a IA usou uma categoria nova
+async function garantirSubcategoriaVinculada(usuarioId, categoria) {
+  if (!categoria) return;
+  const budgetCat = await resolverBudgetCategoria(categoria);
+  if (budgetCat && budgetCat !== categoria) {
+    await db.garantirSubcategoria(usuarioId, categoria, budgetCat);
+  }
+}
+
+// Verificar limites e retornar bloco de texto (subcategoria + principal)
+async function verificarLimitesTransacao(usuarioId, categoria) {
+  if (!categoria) return '';
+  let msg = '';
+
+  // 1. Limite da subcategoria individual
+  const limiteSubInfo = await db.verificarLimiteSub(usuarioId, categoria);
+  if (limiteSubInfo) msg += formatarBlocoLimite(limiteSubInfo, categoria, categoria);
+
+  // 2. Limite da categoria principal (bucket)
+  const budgetCat = await resolverBudgetCategoria(categoria);
+  if (budgetCat) {
+    // Buscar todas as subcategorias da principal
+    const limites = await db.listarLimites(usuarioId);
+    const subcats = limites
+      .filter(l => l.parent === budgetCat)
+      .map(l => l.categoria);
+    if (!subcats.includes(categoria)) subcats.push(categoria);
+    const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
+    if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
+  }
+
+  return msg;
+}
+
 function formatarBlocoLimite(limiteInfo, categoriaTx, budgetCat) {
   const { limite, limiteEfetivo, gastos, restante, percentual, proporcional, diasMes, diasUsuario } = limiteInfo;
   let emoji = '';
@@ -1592,8 +1626,30 @@ async function handleMessage(usuarioId, texto, enviarAck) {
 
   // Comando: categorias
   if (lower === 'categorias') {
-    const cats = await db.listarCategorias();
-    return `📂 *Categorias disponíveis:*\n\n${cats.map(c => `• ${c}`).join('\n')}`;
+    const catsPrincipais = await db.listarCategoriasPrincipais(usuarioId);
+    if (catsPrincipais.length === 0) {
+      return '📂 Nenhuma categoria principal definida. Use o *Finanças em Dia* para configurar.';
+    }
+    const limites = await db.listarLimites(usuarioId);
+    const subMap = {};
+    for (const l of limites) {
+      if (l.parent) {
+        if (!subMap[l.parent]) subMap[l.parent] = [];
+        subMap[l.parent].push(l.categoria);
+      }
+    }
+    let msg = '📂 *Categorias e Subcategorias:*\n\n';
+    for (const cp of catsPrincipais) {
+      msg += `📁 *${cp.nome}* (${cp.percentual}%)\n`;
+      const subs = subMap[cp.nome] || [];
+      if (subs.length > 0) {
+        for (const s of subs) msg += `   • ${s}\n`;
+      } else {
+        msg += `   _Nenhuma subcategoria_\n`;
+      }
+      msg += '\n';
+    }
+    return msg;
   }
 
   // Comando: adicionar contato (conta em conjunto)
@@ -1781,11 +1837,13 @@ async function handleTransacao(usuarioId, msg) {
     fimDescricao--;
   }
 
-  const categorias = await db.listarCategorias();
+  // Tentar identificar subcategoria no final da linha
+  const limites = await db.listarLimites(usuarioId);
+  const subcats = limites.filter(l => l.parent).map(l => l.categoria);
   let categoria = null;
 
   const possivelCat = partes[fimDescricao - 1];
-  const catEncontrada = categorias.find(c => c.toLowerCase() === possivelCat.toLowerCase());
+  const catEncontrada = subcats.find(c => c.toLowerCase() === possivelCat.toLowerCase());
   if (catEncontrada && fimDescricao > 3) {
     categoria = catEncontrada;
     fimDescricao--;
@@ -1795,6 +1853,9 @@ async function handleTransacao(usuarioId, msg) {
   if (!descricao) {
     return `❌ Informe uma descrição para o lançamento.`;
   }
+
+  // Auto-criar subcategoria se necessária
+  if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
 
   const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data);
   const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
@@ -2304,6 +2365,10 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
   limparConfirmacao(usuarioId);
 
   const { tipo, valor, descricao, categoria, data } = dados;
+
+  // Auto-criar subcategoria vinculada se for nova
+  if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
+
   const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status);
   const dataExibir = data ? fmt.formatarData(data) : 'Hoje';
 
@@ -2330,17 +2395,7 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
 
   // Verificar limites de gastos (apenas para despesas)
   if (tipo === 'despesa' && categoria) {
-    // 1. Limite da subcategoria individual (se existir)
-    const limiteSubInfo = await db.verificarLimiteSub(usuarioId, categoria);
-    if (limiteSubInfo) msg += formatarBlocoLimite(limiteSubInfo, categoria, categoria);
-
-    // 2. Limite da categoria principal (bucket)
-    const budgetCat = await resolverBudgetCategoria(categoria);
-    if (budgetCat) {
-      const subcats = [...(MAPA_BUDGET[budgetCat] || []), categoria].filter((v, i, a) => a.indexOf(v) === i);
-      const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
-      if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
-    }
+    msg += await verificarLimitesTransacao(usuarioId, categoria);
   }
 
   return msg;
@@ -2854,6 +2909,9 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
 }
 
 async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null) {
+  // Auto-criar subcategoria vinculada se for nova
+  if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
+
   const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
   const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
 
@@ -2877,7 +2935,6 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
     `🆔 ID: #${result.lastInsertRowid}`;
 
   if (cartaoId) {
-    // Mostrar uso atualizado do cartão
     try {
       const cartoes = await db.listarCartoes(usuarioId);
       const cartao = cartoes.find(c => c.id === cartaoId);
@@ -2896,14 +2953,9 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
   }
 
-  // Verificar limite de gastos (apenas para despesas diretas — sem cartão)
-  if (tipo === 'despesa' && categoria && !cartaoId) {
-    const budgetCat = await resolverBudgetCategoria(categoria);
-    if (budgetCat) {
-      const subcats = [...(MAPA_BUDGET[budgetCat] || []), categoria].filter((v, i, a) => a.indexOf(v) === i);
-      const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
-      if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
-    }
+  // Verificar limites de gastos (despesas)
+  if (tipo === 'despesa' && categoria) {
+    msg += await verificarLimitesTransacao(usuarioId, categoria);
   }
 
   return msg;
@@ -3102,7 +3154,7 @@ async function handleMensagemIA(usuarioId, texto, enviarAck) {
     return mensagemPerguntaNome();
   }
 
-  const resultado = await interpretarMensagem(texto);
+  const resultado = await interpretarMensagem(texto, usuarioId);
 
   if (!resultado) {
     const saudacoes = ['oi', 'olá', 'ola', 'hi', 'hello', 'bom dia', 'boa tarde', 'boa noite', 'e aí', 'eai'];
@@ -3115,7 +3167,7 @@ async function handleMensagemIA(usuarioId, texto, enviarAck) {
 }
 
 async function handleImageMessage(usuarioId, base64Data, mimetype) {
-  const resultado = await analisarImagem(base64Data, mimetype);
+  const resultado = await analisarImagem(base64Data, mimetype, usuarioId);
 
   if (!resultado) {
     return '❌ Não consegui analisar a imagem. Envie uma foto clara de um boleto, nota fiscal ou cupom.';
@@ -4875,7 +4927,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     return `💰 *Saldo cadastrado:* ${fmt.formatarMoeda(estado.saldoInicial || 0)}\n\nQuer alterar? _"editar saldo para R$ 2.000"_\n\n${perguntaAtualEtapa(estado.etapa)}`;
   }
 
-  const item = await interpretarItemFinanceiro(texto);
+  const item = await interpretarItemFinanceiro(texto, usuarioId);
 
   // Detecta qualquer variante de "quero avançar para o próximo passo"
   const querAvancar = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai))\b/.test(lower);
@@ -5593,7 +5645,7 @@ async function executarAnalise503020(usuarioId, estado) {
   const descUnicas = [...new Set(transacoes.map(t => t.descricaoOriginal))];
   console.log(`[ANÁLISE 50/30/20] ${transacoes.length} transações, ${descUnicas.length} descrições únicas. Categorizando...`);
 
-  const categoriaMap = await categorizarExtrato(descUnicas);
+  const categoriaMap = await categorizarExtrato(descUnicas, usuarioId);
 
   for (const t of transacoes) {
     const info = categoriaMap[t.descricaoOriginal];
@@ -5869,7 +5921,7 @@ async function handleCSVImport(usuarioId, csvContent) {
   console.log(`[CSV] ${transacoes.length} transações encontradas, ${descUnicas.length} descrições únicas. Categorizando...`);
 
   // Categorizar via AI
-  const categoriaMap = await categorizarExtrato(descUnicas);
+  const categoriaMap = await categorizarExtrato(descUnicas, usuarioId);
 
   // Aplicar categorias e descrições limpas
   for (const t of transacoes) {

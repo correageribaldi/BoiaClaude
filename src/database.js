@@ -1403,6 +1403,40 @@ async function listarCategorias() {
   return result.rows.map(r => r.nome);
 }
 
+// Retorna categorias formatadas para o prompt da IA: "Principal(sub1, sub2), Principal2(sub3)"
+async function listarCategoriasParaIA(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const catsPrincipais = await listarCategoriasPrincipais(uid);
+  if (catsPrincipais.length === 0) {
+    // Fallback: retorna categorias antigas se não tem categorias principais
+    return (await listarCategorias()).join(', ');
+  }
+
+  const subs = await pool.query(
+    `SELECT categoria, parent FROM limites_categoria
+     WHERE usuario_id = $1 AND ativo = TRUE AND parent IS NOT NULL
+     ORDER BY parent, categoria`,
+    [uid]
+  );
+
+  const subMap = {};
+  for (const s of subs.rows) {
+    if (!subMap[s.parent]) subMap[s.parent] = [];
+    subMap[s.parent].push(s.categoria);
+  }
+
+  const partes = [];
+  for (const cp of catsPrincipais) {
+    const filhas = subMap[cp.nome] || [];
+    if (filhas.length > 0) {
+      partes.push(`${cp.nome}(${filhas.join(', ')})`);
+    } else {
+      partes.push(cp.nome);
+    }
+  }
+  return partes.join(', ');
+}
+
 // Limpar todos os dados de um usuário (para testes)
 async function limparDadosUsuario(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
@@ -1547,6 +1581,26 @@ async function excluirSubcategoria(usuarioId, nome) {
     [uid, nome.trim()]
   );
   return result.rows[0] || null;
+}
+
+// Garantir que uma subcategoria existe vinculada a uma principal (auto-criar se não existe)
+async function garantirSubcategoria(usuarioId, subcategoria, parent) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  // Verifica se já existe
+  const existing = await pool.query(
+    `SELECT id FROM limites_categoria
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE`,
+    [uid, subcategoria.trim()]
+  );
+  if (existing.rows.length > 0) return;
+  // Cria com valor_limite 0
+  await pool.query(
+    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
+     VALUES ($1, $2, 0, $3)
+     ON CONFLICT (usuario_id, categoria)
+     DO UPDATE SET ativo = TRUE, parent = $3`,
+    [uid, subcategoria.trim(), parent.trim()]
+  );
 }
 
 // Remover limite de uma categoria
@@ -2565,6 +2619,7 @@ module.exports = {
   excluirTransacao,
   desativarRecorrencia,
   listarCategorias,
+  listarCategoriasParaIA,
   consultarTransacoes,
   consultarTotalTransacoes,
   liquidarTransacao,
@@ -2594,6 +2649,8 @@ module.exports = {
   removerLimite,
   criarSubcategoria,
   excluirSubcategoria,
+  garantirSubcategoria,
+  listarCategoriasParaIA,
   verificarLimite,
   limparDadosUsuario,
   buscarLembretesGeraisPorPeriodo,

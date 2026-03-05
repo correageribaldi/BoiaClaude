@@ -564,22 +564,6 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  let cats;
-  try { cats = await api('/api/categories'); }
-  catch { toast('Erro ao carregar categorias', 'error'); return; }
-
-  const grid = document.getElementById('cat-grid');
-  grid.innerHTML = '';
-  for (const nome of cats) {
-    const card = document.createElement('div');
-    card.className = 'cat-card';
-    card.innerHTML = `
-      <span class="cat-nome">${esc(nome)}</span>
-      <button class="cat-del" title="Excluir" onclick="excluirCategoria('${esc(nome)}')">🗑️</button>
-    `;
-    grid.appendChild(card);
-  }
-
   await carregarCartoes();
   await carregarOrcamento();
 }
@@ -941,15 +925,6 @@ async function excluirSubcategoria(nome, parent) {
     await api('/api/subcategorias/' + encodeURIComponent(nome), { method: 'DELETE' });
     toast('Subcategoria excluída.', 'success');
     await carregarOrcamento();
-  } catch (err) { toast(err.message, 'error'); }
-}
-
-async function excluirCategoria(nome) {
-  if (!confirm(`Excluir a categoria "${nome}"?`)) return;
-  try {
-    await api('/api/categories/' + encodeURIComponent(nome), { method: 'DELETE' });
-    toast('Categoria excluída.', 'success');
-    carregarCategorias();
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -1460,22 +1435,6 @@ function inicializar() {
   document.getElementById('tx-search').addEventListener('input', e => {
     clearTimeout(buscaTimer);
     buscaTimer = setTimeout(() => { estado.tx.busca = e.target.value.trim(); estado.tx.pagina = 1; carregarTransacoes(); }, 350);
-  });
-
-  // Criar categoria
-  document.getElementById('cat-criar').addEventListener('click', async () => {
-    const input = document.getElementById('cat-nova');
-    const nome = input.value.trim();
-    if (!nome) { toast('Digite um nome para a categoria', 'error'); return; }
-    try {
-      await api('/api/categories', { method: 'POST', body: JSON.stringify({ nome }) });
-      input.value = '';
-      toast('✅ Categoria criada!', 'success');
-      carregarCategorias();
-    } catch (err) { toast(err.message, 'error'); }
-  });
-  document.getElementById('cat-nova').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('cat-criar').click();
   });
 
   // Criar subcategoria
