@@ -198,6 +198,19 @@ function obterExcluirPendente(usuarioId) {
 }
 function limparExcluirPendente(usuarioId) { excluirPendentes.delete(usuarioId); }
 
+// Estado para remover cartão aguardando seleção (expira em 15 min)
+const removerCartaoPendentes = new Map();
+function salvarRemoverCartaoPendente(usuarioId, dados) {
+  removerCartaoPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterRemoverCartaoPendente(usuarioId) {
+  const dados = removerCartaoPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { removerCartaoPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparRemoverCartaoPendente(usuarioId) { removerCartaoPendentes.delete(usuarioId); }
+
 // Estado para editar transação (fluxo multi-turn, expira em 15 min)
 const editarTxPendentes = new Map();
 function salvarEditarTxPendente(usuarioId, dados) {
@@ -1625,6 +1638,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const remocaoContato = obterRemocaoContatoPendente(usuarioId);
   if (remocaoContato) {
     return await handleEscolhaRemocaoContato(usuarioId, msg, remocaoContato);
+  }
+
+  // Verificar se há seleção pendente para remover cartão
+  const removerCartaoPend = obterRemoverCartaoPendente(usuarioId);
+  if (removerCartaoPend) {
+    return await handleEscolhaRemoverCartao(usuarioId, msg, removerCartaoPend);
   }
 
   // Verificar se tem lembrete aguardando horário
@@ -4035,7 +4054,8 @@ async function handleRemoverCartao(usuarioId, resultado) {
 
   if (cartoes.length > 1) {
     const lista = cartoes.map((c, i) => `  ${i + 1}. *${c.nome}*`).join('\n');
-    return `Encontrei mais de um cartão com esse nome 😅 Qual você quer remover?\n\n${lista}\n\n_Manda o nome completo exato._`;
+    salvarRemoverCartaoPendente(usuarioId, { cartoes });
+    return `Encontrei mais de um cartão com esse nome 😅 Qual você quer remover?\n\n${lista}\n\nResponda com o *número* ou *"cancelar"* para desistir.`;
   }
 
   const cartao = cartoes[0];
@@ -4044,6 +4064,34 @@ async function handleRemoverCartao(usuarioId, resultado) {
     return `❌ Não foi possível remover o cartão.`;
   }
 
+  return `✅ Cartão *${nomeRemovido}* removido com sucesso!\n\n_Todas as transações, recorrências e lembretes vinculados a esse cartão foram excluídos._`;
+}
+
+async function handleEscolhaRemoverCartao(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'cancela' || lower === 'não' || lower === 'nao') {
+    limparRemoverCartaoPendente(usuarioId);
+    return '❌ Remoção de cartão cancelada.';
+  }
+
+  const num = parseInt(msg.trim(), 10);
+  if (isNaN(num) || num < 1 || num > pendente.cartoes.length) {
+    // Tentar buscar pelo nome exato
+    const cartaoByName = pendente.cartoes.find(c => c.nome.toLowerCase() === lower);
+    if (cartaoByName) {
+      limparRemoverCartaoPendente(usuarioId);
+      const nomeRemovido = await db.deletarCartaoCompleto(usuarioId, cartaoByName.id);
+      if (!nomeRemovido) return '❌ Não foi possível remover o cartão.';
+      return `✅ Cartão *${nomeRemovido}* removido com sucesso!\n\n_Todas as transações, recorrências e lembretes vinculados a esse cartão foram excluídos._`;
+    }
+    return `❌ Número inválido. Escolha entre 1 e ${pendente.cartoes.length}, ou "cancelar".`;
+  }
+
+  const cartao = pendente.cartoes[num - 1];
+  limparRemoverCartaoPendente(usuarioId);
+  const nomeRemovido = await db.deletarCartaoCompleto(usuarioId, cartao.id);
+  if (!nomeRemovido) return '❌ Não foi possível remover o cartão.';
   return `✅ Cartão *${nomeRemovido}* removido com sucesso!\n\n_Todas as transações, recorrências e lembretes vinculados a esse cartão foram excluídos._`;
 }
 
