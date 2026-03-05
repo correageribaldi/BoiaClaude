@@ -627,27 +627,32 @@ async function excluirCartao(id, nome) {
 }
 
 // ── Orçamento Mensal ──────────────────────────────────────────────────────────
-let _orcamentoData = { salario: 0, limites: [] };
+let _orcamentoData = { salario: 0, limites: [], categoriasPrincipais: [] };
 
 async function carregarOrcamento() {
   try {
-    const [salarioRes, limites] = await Promise.all([
+    const [salarioRes, limites, catsPrincipais] = await Promise.all([
       api('/api/salario'),
       api('/api/limites'),
+      api('/api/categorias-principais'),
     ]);
-    _orcamentoData = { salario: salarioRes.salario || 0, limites };
+    _orcamentoData = {
+      salario: salarioRes.salario || 0,
+      limites,
+      categoriasPrincipais: catsPrincipais || [],
+    };
     renderOrcamento();
     renderSubcategorias();
   } catch { /* silencioso se não tem dados */ }
 }
 
-// ── Categorias Principais (slider zero-sum com salário) ──────────────────
+// ── Categorias Principais (slider percentual que soma 100%) ──────────────────
 function renderOrcamento() {
   const container = document.getElementById('orcamento-container');
   const salarioBar = document.getElementById('orcamento-salario');
   const saldoEl = document.getElementById('orcamento-saldo');
   const btnSalvar = document.getElementById('orcamento-salvar');
-  const { salario, limites } = _orcamentoData;
+  const { salario, categoriasPrincipais } = _orcamentoData;
 
   if (!salario || salario <= 0) {
     container.innerHTML = '<p style="color:var(--text-muted)">Configure seu salário pelo Finanças em Dia para usar o orçamento.</p>';
@@ -660,22 +665,24 @@ function renderOrcamento() {
   salarioBar.classList.remove('hidden');
   salarioBar.innerHTML = `💰 <strong>Salário:</strong> ${fmtMoeda(salario)}`;
 
-  if (limites.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted)">Nenhum limite definido. Use o Finanças em Dia ou defina pelo WhatsApp.</p>';
+  if (categoriasPrincipais.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted)">Nenhuma categoria principal definida. Use o Finanças em Dia ou crie abaixo.</p>';
     saldoEl.classList.add('hidden');
     btnSalvar.classList.add('hidden');
     return;
   }
 
   let html = '';
-  for (const g of limites) {
-    const pct = salario > 0 ? Math.round((g.valor_limite / salario) * 100) : 0;
+  for (const cat of categoriasPrincipais) {
+    const valor = Math.round(salario * (cat.percentual / 100));
     html += `<div class="orcamento-card">`;
     html += `<div class="orcamento-card-header">`;
-    html += `<span class="orcamento-cat-nome">${esc(g.categoria)}</span>`;
-    html += `<span class="orcamento-cat-valor" id="principal-val-${esc(g.categoria)}">${fmtMoeda(g.valor_limite)} (${pct}%)</span>`;
-    html += `</div>`;
-    html += `<input type="range" class="orcamento-slider" min="0" max="${salario}" step="50" value="${g.valor_limite}" data-cat="${esc(g.categoria)}" oninput="atualizarSliderPrincipal(this)">`;
+    html += `<span class="orcamento-cat-nome">${esc(cat.nome)}</span>`;
+    html += `<div style="display:flex;align-items:center;gap:8px">`;
+    html += `<span class="orcamento-cat-valor" id="principal-val-${cat.id}">${fmtMoeda(valor)} (${cat.percentual}%)</span>`;
+    html += `<button class="cat-del" title="Excluir" onclick="excluirCategoriaPrincipal(${cat.id}, '${esc(cat.nome)}')">🗑️</button>`;
+    html += `</div></div>`;
+    html += `<input type="range" class="orcamento-slider" min="0" max="100" step="1" value="${cat.percentual}" data-id="${cat.id}" oninput="atualizarSliderPrincipal(this)">`;
     html += `</div>`;
   }
   container.innerHTML = html;
@@ -683,54 +690,98 @@ function renderOrcamento() {
 }
 
 function atualizarSliderPrincipal(slider) {
-  const cat = slider.dataset.cat;
-  const val = parseFloat(slider.value);
-  const g = _orcamentoData.limites.find(l => l.categoria === cat);
-  if (g) g.valor_limite = val;
-  const pct = _orcamentoData.salario > 0 ? Math.round((val / _orcamentoData.salario) * 100) : 0;
-  const valEl = document.getElementById(`principal-val-${cat}`);
-  if (valEl) valEl.textContent = `${fmtMoeda(val)} (${pct}%)`;
+  const id = parseInt(slider.dataset.id, 10);
+  const pct = parseFloat(slider.value);
+  const cat = _orcamentoData.categoriasPrincipais.find(c => c.id === id);
+  if (cat) cat.percentual = pct;
+  const valor = Math.round(_orcamentoData.salario * (pct / 100));
+  const valEl = document.getElementById(`principal-val-${id}`);
+  if (valEl) valEl.textContent = `${fmtMoeda(valor)} (${pct}%)`;
   recalcularSaldo();
 }
 
 function recalcularSaldo() {
   const saldoEl = document.getElementById('orcamento-saldo');
   const btnSalvar = document.getElementById('orcamento-salvar');
-  const { salario, limites } = _orcamentoData;
-  const soma = limites.reduce((s, l) => s + l.valor_limite, 0);
-  const diff = salario - soma;
+  const { categoriasPrincipais } = _orcamentoData;
+  const somaPct = categoriasPrincipais.reduce((s, c) => s + c.percentual, 0);
+  const diff = 100 - somaPct;
 
   saldoEl.classList.remove('hidden');
   btnSalvar.classList.remove('hidden');
 
   if (Math.abs(diff) < 1) {
-    saldoEl.innerHTML = `✅ Orçamento equilibrado`;
+    saldoEl.innerHTML = `✅ Orçamento equilibrado (100%)`;
     saldoEl.className = 'orcamento-saldo orcamento-saldo-ok';
     btnSalvar.disabled = false;
   } else if (diff > 0) {
-    saldoEl.innerHTML = `💡 Sobram <strong>${fmtMoeda(diff)}</strong> — distribua entre as categorias`;
+    saldoEl.innerHTML = `💡 Sobram <strong>${diff}%</strong> — distribua entre as categorias`;
     saldoEl.className = 'orcamento-saldo orcamento-saldo-sobra';
-    btnSalvar.disabled = true;
+    btnSalvar.disabled = false;
   } else {
-    saldoEl.innerHTML = `🚨 Faltam <strong>${fmtMoeda(Math.abs(diff))}</strong> — reduza alguma categoria`;
+    saldoEl.innerHTML = `🚨 Excede em <strong>${Math.abs(diff)}%</strong> — reduza alguma categoria`;
     saldoEl.className = 'orcamento-saldo orcamento-saldo-falta';
     btnSalvar.disabled = true;
   }
 }
 
 async function salvarOrcamento() {
-  const limites = [];
-  for (const g of _orcamentoData.limites) {
-    limites.push({ categoria: g.categoria, valor_limite: g.valor_limite, parent: null });
-  }
+  const categorias = _orcamentoData.categoriasPrincipais.map((c, i) => ({
+    id: c.id,
+    nome: c.nome,
+    percentual: c.percentual,
+    ordem: i,
+  }));
+  // Salvar categorias principais (percentuais)
+  try {
+    await api('/api/categorias-principais', { method: 'PUT', body: JSON.stringify({ categorias }) });
+  } catch (err) { toast(err.message, 'error'); return; }
+
+  // Também salvar os limites absolutos (baseados no salário atual) para compatibilidade com o WhatsApp
+  const limites = categorias.map(c => ({
+    categoria: c.nome,
+    valor_limite: Math.round(_orcamentoData.salario * (c.percentual / 100)),
+    parent: null,
+  }));
   try {
     await api('/api/limites', { method: 'PUT', body: JSON.stringify({ limites }) });
     toast('✅ Categorias salvas!', 'success');
-    renderSubcategorias(); // Atualizar max dos sliders de sub
+    renderSubcategorias();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function criarCategoriaPrincipal() {
+  const input = document.getElementById('catprincipal-nova-nome');
+  const nome = input.value.trim();
+  if (!nome) { toast('Digite o nome da categoria', 'error'); return; }
+  try {
+    await api('/api/categorias-principais', {
+      method: 'POST',
+      body: JSON.stringify({ nome, percentual: 0, ordem: _orcamentoData.categoriasPrincipais.length }),
+    });
+    input.value = '';
+    toast('✅ Categoria criada!', 'success');
+    await carregarOrcamento();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirCategoriaPrincipal(id, nome) {
+  if (!confirm(`Excluir a categoria principal "${nome}"?`)) return;
+  try {
+    await api(`/api/categorias-principais/${id}`, { method: 'DELETE' });
+    toast('Categoria excluída.', 'success');
+    await carregarOrcamento();
   } catch (err) { toast(err.message, 'error'); }
 }
 
 // ── Subcategorias (slider zero-sum com limite da principal) ──────────────
+function _getLimitePrincipal(categoria) {
+  const cat = _orcamentoData.categoriasPrincipais.find(c => c.nome === categoria);
+  if (cat) return Math.round(_orcamentoData.salario * (cat.percentual / 100));
+  const lim = _orcamentoData.limites.find(l => l.categoria === categoria);
+  return lim ? lim.valor_limite : 0;
+}
+
 function renderSubcategorias() {
   const container = document.getElementById('subcategorias-container');
   const btnSalvar = document.getElementById('subcategorias-salvar');
@@ -754,18 +805,19 @@ function renderSubcategorias() {
 
   for (const g of limites) {
     if (g.subs.length === 0) continue;
+    const maxVal = _getLimitePrincipal(g.categoria);
 
     html += `<div class="orcamento-card">`;
     html += `<div class="orcamento-card-header">`;
     html += `<span class="orcamento-cat-nome">${esc(g.categoria)}</span>`;
-    html += `<span class="orcamento-cat-valor" style="color:var(--text-muted)">Limite: ${fmtMoeda(g.valor_limite)}</span>`;
+    html += `<span class="orcamento-cat-valor" style="color:var(--text-muted)">Limite: ${fmtMoeda(maxVal)}</span>`;
     html += `</div>`;
 
     for (const sub of g.subs) {
-      const pct = g.valor_limite > 0 ? Math.round((sub.valor_limite / g.valor_limite) * 100) : 0;
+      const pct = maxVal > 0 ? Math.round((sub.valor_limite / maxVal) * 100) : 0;
       html += `<div class="orcamento-sub-row">`;
       html += `<span class="orcamento-sub-nome">${esc(sub.categoria)}</span>`;
-      html += `<input type="range" class="orcamento-slider-sub" min="0" max="${g.valor_limite}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(g.categoria)}" oninput="atualizarSliderSub(this)">`;
+      html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxVal}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(g.categoria)}" oninput="atualizarSliderSub(this)">`;
       html += `<span class="orcamento-sub-valor" id="sub-val-${esc(sub.categoria)}">${fmtMoeda(sub.valor_limite)} (${pct}%)</span>`;
       html += `</div>`;
     }
@@ -788,7 +840,7 @@ function atualizarSliderSub(slider) {
     const sub = g.subs.find(s => s.categoria === cat);
     if (sub) sub.valor_limite = val;
   }
-  const parentVal = g ? g.valor_limite : 0;
+  const parentVal = _getLimitePrincipal(parent);
   const pct = parentVal > 0 ? Math.round((val / parentVal) * 100) : 0;
   const valEl = document.getElementById(`sub-val-${cat}`);
   if (valEl) valEl.textContent = `${fmtMoeda(val)} (${pct}%)`;
@@ -799,7 +851,7 @@ function recalcularLivreSub(parentCat) {
   const g = _orcamentoData.limites.find(l => l.categoria === parentCat);
   if (!g || g.subs.length === 0) return;
   const somaSubs = g.subs.reduce((s, sub) => s + sub.valor_limite, 0);
-  const livre = g.valor_limite - somaSubs;
+  const livre = _getLimitePrincipal(parentCat) - somaSubs;
   const el = document.getElementById(`livre-${parentCat}`);
   if (el) {
     if (livre >= 0) {

@@ -365,6 +365,7 @@ const REGRA_503020 = {
 
 // Mapeamento de categorias de transação → bucket de orçamento (Finanças em Dia)
 const MAPA_BUDGET = {
+  'Despesas Fixas': [],
   'Variáveis':     ['Alimentacao', 'Transporte', 'Saude', 'Educacao', 'Moradia', 'Outros', 'Vestuario', 'Compras'],
   'Lazer':         ['Lazer'],
   'Investimentos': ['Investimentos', 'Poupanca'],
@@ -3817,9 +3818,13 @@ async function handleDefinirLimite(usuarioId, resultado) {
     return '❌ Não consegui entender. Tenta algo como: "limitar gastos com Lazer em 500 reais"';
   }
 
-  // Se é uma categoria principal (Variáveis, Lazer, etc.), salva sem parent
-  const PRINCIPAIS = ['Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
-  if (PRINCIPAIS.includes(categoria)) {
+  // Se é uma categoria principal (Despesas Fixas, Variáveis, Lazer, etc.), salva sem parent
+  const PRINCIPAIS_PADRAO = ['Despesas Fixas', 'Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
+  const catsPrincipaisDB = await db.listarCategoriasPrincipais(usuarioId);
+  const nomesPrincipais = catsPrincipaisDB.length > 0
+    ? catsPrincipaisDB.map(c => c.nome)
+    : PRINCIPAIS_PADRAO;
+  if (nomesPrincipais.includes(categoria)) {
     await db.definirLimite(usuarioId, categoria, valor, null);
     return `✅ *Limite definido!*\n\n📂 Categoria principal: ${categoria}\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
   }
@@ -4162,17 +4167,18 @@ async function handleAgenda(usuarioId, periodo) {
 
 // ==================== FINANÇAS EM DIA ====================
 
-function gerarOrcamentoProporcional(estado) {
+async function gerarOrcamentoProporcional(estado, categoriasPrincipais) {
   const totalReceitas = (estado.receitasFixas || []).reduce((s, r) => s + r.valor, 0);
   const totalFixas = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
-  const limiteFixas = totalReceitas * 0.50;
+  const cats = categoriasPrincipais || db.CATEGORIAS_PRINCIPAIS_PADRAO;
+  const orcamentos = cats.map(c => ({
+    descricao: c.nome,
+    valor: Math.round(totalReceitas * (c.percentual / 100)),
+    categoria: c.nome,
+  }));
+  const catFixas = cats.find(c => c.nome === 'Despesas Fixas');
+  const limiteFixas = catFixas ? Math.round(totalReceitas * (catFixas.percentual / 100)) : Math.round(totalReceitas * 0.50);
   const alertaFixas = totalFixas > limiteFixas;
-  const orcamentos = [
-    { descricao: 'Variáveis',     valor: Math.round(totalReceitas * 0.20), categoria: 'Variáveis' },
-    { descricao: 'Lazer',         valor: Math.round(totalReceitas * 0.10), categoria: 'Lazer' },
-    { descricao: 'Investimentos', valor: Math.round(totalReceitas * 0.15), categoria: 'Investimentos' },
-    { descricao: 'Objetivos',     valor: Math.round(totalReceitas * 0.05), categoria: 'Objetivos' },
-  ];
   return { totalReceitas, totalFixas, limiteFixas, alertaFixas, orcamentos };
 }
 
@@ -5008,7 +5014,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           const lista = (estado.cartoes || []).map(c => `  💳 *${c.nome}* — vence dia ${c.diaVencimento}${c.valorFatura > 0 ? ` | fatura ${fmt.formatarMoeda(c.valorFatura)}` : ''}`).join('\n');
           return `✅ ${qtd === 1 ? 'Cartão cadastrado' : `${qtd} cartões cadastrados`} com sucesso!\n\n${lista}`;
         }
-        const budget = gerarOrcamentoProporcional(estado);
+        const budget = await gerarOrcamentoProporcional(estado);
         estado.orcamentos = budget.orcamentos;
         return await finalizarPontoZero(usuarioId, estado);
       }
@@ -5025,7 +5031,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
     case 'despesas_dia_a_dia': {
       // Fallback para estados salvos — gera orçamento proporcional e finaliza
       if (estado.orcamentos.length === 0) {
-        const budget = gerarOrcamentoProporcional(estado);
+        const budget = await gerarOrcamentoProporcional(estado);
         estado.orcamentos = budget.orcamentos;
       }
       return await finalizarPontoZero(usuarioId, estado);
@@ -5140,6 +5146,9 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.criarCaixinha(usuarioId, inv.nome, inv.saldo, inv.meta, inv.tipo, inv.rendimento);
   }
 
+  // Inicializar categorias principais do usuário (com percentuais padrão)
+  await db.inicializarCategoriasPrincipais(usuarioId);
+
   // Orçamentos → criar limitadores de categoria
   for (const o of estado.orcamentos || []) {
     await db.definirLimite(usuarioId, o.categoria, o.valor);
@@ -5243,19 +5252,23 @@ async function finalizarPontoZero(usuarioId, estado) {
     msg += '\n';
   }
 
-  // Orçamento proporcional (regra 50/20/10/15/5)
+  // Orçamento proporcional (dinâmico baseado nas categorias principais do usuário)
   const totalReceitas = (estado.receitasFixas || []).reduce((s, r) => s + r.valor, 0);
   const totalFixasReal = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
-  const limiteFixas = Math.round(totalReceitas * 0.50);
+  let catsPrincipais = await db.listarCategoriasPrincipais(usuarioId);
+  if (catsPrincipais.length === 0) catsPrincipais = db.CATEGORIAS_PRINCIPAIS_PADRAO;
+  const catFixas = catsPrincipais.find(c => c.nome === 'Despesas Fixas');
+  const pctFixas = catFixas ? catFixas.percentual : 50;
+  const limiteFixas = Math.round(totalReceitas * (pctFixas / 100));
   const alertaFixas = totalFixasReal > limiteFixas;
 
-  const linhasOrcamento = [
-    { label: 'Fixas',         pct: 50, valor: limiteFixas,                      real: totalFixasReal, check: true },
-    { label: 'Variáveis',     pct: 20, valor: Math.round(totalReceitas * 0.20), real: null,           check: false },
-    { label: 'Lazer',         pct: 10, valor: Math.round(totalReceitas * 0.10), real: null,           check: false },
-    { label: 'Investimentos', pct: 15, valor: Math.round(totalReceitas * 0.15), real: null,           check: false },
-    { label: 'Objetivos',     pct:  5, valor: Math.round(totalReceitas * 0.05), real: null,           check: false },
-  ];
+  const linhasOrcamento = catsPrincipais.map(c => ({
+    label: c.nome === 'Despesas Fixas' ? 'Fixas' : c.nome,
+    pct: c.percentual,
+    valor: Math.round(totalReceitas * (c.percentual / 100)),
+    real: c.nome === 'Despesas Fixas' ? totalFixasReal : null,
+    check: c.nome === 'Despesas Fixas',
+  }));
 
   msg += `📊 *Orçamento mensal sugerido* _(baseado na sua renda de ${fmt.formatarMoeda(totalReceitas)})_\n\n`;
   for (const l of linhasOrcamento) {

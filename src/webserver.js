@@ -329,6 +329,59 @@ app.get('/api/salario', autenticar, async (req, res) => {
   }
 });
 
+// ── Categorias Principais (por usuário) ───────────────────────────────────────
+app.get('/api/categorias-principais', autenticar, async (req, res) => {
+  try {
+    let cats = await db.listarCategoriasPrincipais(req.usuarioId);
+    if (cats.length === 0) {
+      await db.inicializarCategoriasPrincipais(req.usuarioId);
+      cats = await db.listarCategoriasPrincipais(req.usuarioId);
+    }
+    res.json(cats);
+  } catch (err) {
+    console.error('[WEB] GET /api/categorias-principais:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/categorias-principais', autenticar, async (req, res) => {
+  try {
+    const { nome, percentual, ordem } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Nome obrigatório' });
+    if (percentual == null || percentual < 0) return res.status(400).json({ erro: 'Percentual inválido' });
+    const cat = await db.criarCategoriaPrincipal(req.usuarioId, nome, percentual, ordem);
+    res.json(cat);
+  } catch (err) {
+    console.error('[WEB] POST /api/categorias-principais:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/categorias-principais', autenticar, async (req, res) => {
+  try {
+    const { categorias } = req.body;
+    if (!Array.isArray(categorias)) return res.status(400).json({ erro: 'categorias deve ser um array' });
+    await db.salvarCategoriasPrincipaisBatch(req.usuarioId, categorias);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] PUT /api/categorias-principais:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/categorias-principais/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ erro: 'ID inválido' });
+    const result = await db.excluirCategoriaPrincipal(req.usuarioId, id);
+    if (!result) return res.status(404).json({ erro: 'Categoria principal não encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/categorias-principais:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Categorias ────────────────────────────────────────────────────────────────
 app.get('/api/categories', autenticar, async (req, res) => {
   try {

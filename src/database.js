@@ -267,6 +267,22 @@ async function initTables() {
     ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS parent TEXT;
   `);
 
+  // Tabela de categorias principais (por usuário) para distribuição de orçamento
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS categorias_principais (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      percentual NUMERIC(5,2) NOT NULL DEFAULT 0,
+      ordem INTEGER NOT NULL DEFAULT 0,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(usuario_id, nome)
+    );
+    CREATE INDEX IF NOT EXISTS idx_catprincipais_usuario
+      ON categorias_principais(usuario_id, ativo);
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contatos_compartilhados (
       id SERIAL PRIMARY KEY,
@@ -1834,6 +1850,101 @@ async function salvarBudgetCat(categoria, budgetCat) {
   );
 }
 
+// ── Categorias Principais (por usuário) ─────────────────────────────────────
+
+const CATEGORIAS_PRINCIPAIS_PADRAO = [
+  { nome: 'Despesas Fixas',    percentual: 50, ordem: 1 },
+  { nome: 'Variáveis',         percentual: 20, ordem: 2 },
+  { nome: 'Lazer',             percentual: 10, ordem: 3 },
+  { nome: 'Investimentos',     percentual: 15, ordem: 4 },
+  { nome: 'Objetivos',         percentual:  5, ordem: 5 },
+];
+
+async function listarCategoriasPrincipais(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, nome, percentual::float, ordem
+     FROM categorias_principais
+     WHERE usuario_id = $1 AND ativo = TRUE
+     ORDER BY ordem, nome`,
+    [uid]
+  );
+  return result.rows;
+}
+
+async function inicializarCategoriasPrincipais(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  // Só inicializa se o usuário não tem nenhuma
+  const check = await pool.query(
+    'SELECT id FROM categorias_principais WHERE usuario_id = $1 LIMIT 1',
+    [uid]
+  );
+  if (check.rows.length > 0) return;
+  for (const cat of CATEGORIAS_PRINCIPAIS_PADRAO) {
+    await pool.query(
+      `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (usuario_id, nome) DO NOTHING`,
+      [uid, cat.nome, cat.percentual, cat.ordem]
+    );
+  }
+}
+
+async function criarCategoriaPrincipal(usuarioId, nome, percentual, ordem = 99) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (usuario_id, nome)
+     DO UPDATE SET percentual = $3, ordem = $4, ativo = TRUE
+     RETURNING id, nome, percentual::float, ordem`,
+    [uid, nome.trim(), percentual, ordem]
+  );
+  return result.rows[0];
+}
+
+async function atualizarCategoriaPrincipal(usuarioId, id, nome, percentual) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `UPDATE categorias_principais SET nome = $3, percentual = $4
+     WHERE id = $2 AND usuario_id = $1 AND ativo = TRUE
+     RETURNING id, nome, percentual::float, ordem`,
+    [uid, id, nome.trim(), percentual]
+  );
+  return result.rows[0] || null;
+}
+
+async function excluirCategoriaPrincipal(usuarioId, id) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `UPDATE categorias_principais SET ativo = FALSE
+     WHERE id = $2 AND usuario_id = $1 AND ativo = TRUE
+     RETURNING id, nome`,
+    [uid, id]
+  );
+  return result.rows[0] || null;
+}
+
+async function salvarCategoriasPrincipaisBatch(usuarioId, categorias) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  for (const cat of categorias) {
+    if (cat.id) {
+      await pool.query(
+        `UPDATE categorias_principais SET nome = $3, percentual = $4, ordem = $5
+         WHERE id = $2 AND usuario_id = $1 AND ativo = TRUE`,
+        [uid, cat.id, cat.nome.trim(), cat.percentual, cat.ordem || 0]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (usuario_id, nome)
+         DO UPDATE SET percentual = $3, ordem = $4, ativo = TRUE`,
+        [uid, cat.nome.trim(), cat.percentual, cat.ordem || 0]
+      );
+    }
+  }
+}
+
 async function excluirCategoria(nome) {
   const result = await pool.query(
     'DELETE FROM categorias WHERE nome = $1 RETURNING nome',
@@ -2506,4 +2617,11 @@ module.exports = {
   salvarLimitesBatch,
   buscarSalarioUsuario,
   verificarLimiteSub,
+  listarCategoriasPrincipais,
+  inicializarCategoriasPrincipais,
+  criarCategoriaPrincipal,
+  atualizarCategoriaPrincipal,
+  excluirCategoriaPrincipal,
+  salvarCategoriasPrincipaisBatch,
+  CATEGORIAS_PRINCIPAIS_PADRAO,
 };

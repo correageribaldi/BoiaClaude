@@ -186,11 +186,18 @@
             <span class="accordion-icon">›</span>
           </button>
           <div class="accordion-body hidden">
-            <p class="accordion-desc">Distribua seu salário entre as categorias principais. A soma deve fechar com o salário total.</p>
+            <p class="accordion-desc">Distribua seu salário entre as categorias principais. A soma dos percentuais deve fechar em 100%.</p>
             <div id="orcamento-salario" class="orcamento-salario-bar hidden"></div>
             <div id="orcamento-container"></div>
             <div id="orcamento-saldo" class="orcamento-saldo hidden"></div>
             <button class="btn btn-primary hidden" id="orcamento-salvar" onclick="salvarOrcamento()">Salvar Orçamento</button>
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+              <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Adicionar nova categoria principal</p>
+              <div class="create-bar">
+                <input class="search-input" id="catprincipal-nova-nome" type="text" placeholder="Nome da categoria..." maxlength="50" />
+                <button class="btn btn-primary" id="catprincipal-criar" onclick="criarCategoriaPrincipal()">+ Criar</button>
+              </div>
+            </div>
           </div>
         </div>
 

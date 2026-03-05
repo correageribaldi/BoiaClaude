@@ -1003,13 +1003,13 @@ Use linguagem informal brasileira. *Negrito* para valores e termos-chave. NUNCA 
 
 // Classifica uma categoria desconhecida no bucket de orçamento correto (chamada única por categoria nova)
 async function classificarCategoriaBudget(categoria) {
-  const buckets = ['Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
+  const buckets = ['Despesas Fixas', 'Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
   try {
     const response = await getOpenAI().chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{
         role: 'user',
-        content: `Classifique a categoria de gasto "${categoria}" em um dos buckets de orçamento pessoal:\n- Variáveis: gastos do dia a dia (alimentação, transporte, saúde, moradia, educação, etc.)\n- Lazer: entretenimento, viagens, restaurantes, hobbies\n- Investimentos: aplicações financeiras, poupança\n- Objetivos: metas financeiras específicas\n\nResponda APENAS com uma das opções: Variáveis, Lazer, Investimentos, Objetivos`,
+        content: `Classifique a categoria de gasto "${categoria}" em um dos buckets de orçamento pessoal:\n- Despesas Fixas: contas fixas mensais (aluguel, internet, luz, água, streaming, seguros)\n- Variáveis: gastos do dia a dia (alimentação, transporte, saúde, moradia, educação, etc.)\n- Lazer: entretenimento, viagens, restaurantes, hobbies\n- Investimentos: aplicações financeiras, poupança\n- Objetivos: metas financeiras específicas\n\nResponda APENAS com uma das opções: Despesas Fixas, Variáveis, Lazer, Investimentos, Objetivos`,
       }],
       max_tokens: 10,
       temperature: 0,
