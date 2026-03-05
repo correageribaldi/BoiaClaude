@@ -121,7 +121,7 @@ function resolverData(valor) {
     if (diaAlvo >= 1 && diaAlvo <= 31) {
       let anoAlvo = anoH;
       let mesAlvo = mesH;
-      if (diaAlvo < diaH) {
+      if (diaAlvo <= diaH) {
         mesAlvo += 1;
         if (mesAlvo > 12) {
           mesAlvo = 1;
@@ -133,6 +133,16 @@ function resolverData(valor) {
         return `${anoAlvo}-${String(mesAlvo).padStart(2, '0')}-${String(diaAlvo).padStart(2, '0')}`;
       }
     }
+  }
+
+  // "semana que vem" / "proxima semana" → próxima segunda-feira
+  if (v === 'semana que vem' || v === 'proxima semana') {
+    const diaAtual = hoje.getDay(); // 0=dom, 1=seg
+    let diff = 1 - diaAtual; // dias até segunda
+    if (diff <= 0) diff += 7;
+    const d = new Date(hoje);
+    d.setDate(d.getDate() + diff);
+    return dateParaISO(d);
   }
 
   // Dia da semana → próxima ocorrência
@@ -169,16 +179,16 @@ function resolverData(valor) {
 const { pesquisarWeb, pesquisarLocal } = require('./search');
 const charts = require('./charts');
 
-// Estado temporário para confirmações pendentes (expira em 5 min)
+// Estado temporário para confirmações pendentes (expira em 15 min)
 const confirmacoesPendentes = new Map();
 
-// Estado para transações com dados incompletos (expira em 5 min)
+// Estado para transações com dados incompletos (expira em 15 min)
 const transacaoPendente = new Map();
 
-// Estado para excluir por nome aguardando seleção (expira em 5 min)
+// Estado para excluir por nome aguardando seleção (expira em 15 min)
 const excluirPendentes = new Map();
 function salvarExcluirPendente(usuarioId, dados) {
-  excluirPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+  excluirPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
 }
 function obterExcluirPendente(usuarioId) {
   const dados = excluirPendentes.get(usuarioId);
@@ -188,10 +198,10 @@ function obterExcluirPendente(usuarioId) {
 }
 function limparExcluirPendente(usuarioId) { excluirPendentes.delete(usuarioId); }
 
-// Estado para editar transação (fluxo multi-turn, expira em 5 min)
+// Estado para editar transação (fluxo multi-turn, expira em 15 min)
 const editarTxPendentes = new Map();
 function salvarEditarTxPendente(usuarioId, dados) {
-  editarTxPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+  editarTxPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
 }
 function obterEditarTxPendente(usuarioId) {
   const dados = editarTxPendentes.get(usuarioId);
@@ -204,7 +214,7 @@ function limparEditarTxPendente(usuarioId) { editarTxPendentes.delete(usuarioId)
 function salvarTransacaoPendente(usuarioId, dados) {
   transacaoPendente.set(usuarioId, {
     ...dados,
-    expiraEm: Date.now() + 5 * 60 * 1000,
+    expiraEm: Date.now() + 15 * 60 * 1000,
   });
 }
 
@@ -222,11 +232,11 @@ function limparTransacaoPendente(usuarioId) {
   transacaoPendente.delete(usuarioId);
 }
 
-// Estado do assessor de compra aguardando valor (expira em 5 min)
+// Estado do assessor de compra aguardando valor (expira em 15 min)
 const assessorCompraPendenteMap = new Map();
 
 function salvarAssessorCompra(usuarioId, dados) {
-  assessorCompraPendenteMap.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+  assessorCompraPendenteMap.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
 }
 
 function obterAssessorCompra(usuarioId) {
@@ -243,6 +253,22 @@ function limparAssessorCompra(usuarioId) {
   assessorCompraPendenteMap.delete(usuarioId);
 }
 
+// Estado para recorrência aguardando dia do mês (expira em 15 min)
+const recorrenciaDiaPendente = new Map();
+
+function salvarRecorrenciaDiaPendente(usuarioId, dados) {
+  recorrenciaDiaPendente.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+
+function obterRecorrenciaDiaPendente(usuarioId) {
+  const dados = recorrenciaDiaPendente.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { recorrenciaDiaPendente.delete(usuarioId); return null; }
+  return dados;
+}
+
+function limparRecorrenciaDiaPendente(usuarioId) { recorrenciaDiaPendente.delete(usuarioId); }
+
 // Verifica o que falta e pergunta o próximo campo
 function perguntarProximoCampo(pendente) {
   const { descricao, tipo } = pendente;
@@ -257,13 +283,13 @@ function perguntarProximoCampo(pendente) {
   return null; // tudo preenchido
 }
 
-// Lembretes aguardando horário (expira em 5 min)
+// Lembretes aguardando horário (expira em 15 min)
 const lembretesPendentes = new Map();
 
 function salvarLembretePendente(usuarioId, dados) {
   lembretesPendentes.set(usuarioId, {
     ...dados,
-    expiraEm: Date.now() + 5 * 60 * 1000,
+    expiraEm: Date.now() + 15 * 60 * 1000,
   });
 }
 
@@ -558,7 +584,7 @@ function montarResultadoBuscaLocal(resultado, textoOriginal) {
 function salvarConfirmacao(usuarioId, dados) {
   confirmacoesPendentes.set(usuarioId, {
     ...dados,
-    expiraEm: Date.now() + 5 * 60 * 1000,
+    expiraEm: Date.now() + 15 * 60 * 1000,
   });
 }
 
@@ -576,13 +602,13 @@ function limparConfirmacao(usuarioId) {
   confirmacoesPendentes.delete(usuarioId);
 }
 
-// Estado para remoção de contato compartilhado por seleção (expira em 5 min)
+// Estado para remoção de contato compartilhado por seleção (expira em 15 min)
 const removerContatoPendente = new Map();
 
 function salvarRemocaoContatoPendente(usuarioId, dados) {
   removerContatoPendente.set(usuarioId, {
     ...dados,
-    expiraEm: Date.now() + 5 * 60 * 1000,
+    expiraEm: Date.now() + 15 * 60 * 1000,
   });
 }
 
@@ -751,11 +777,11 @@ async function handleOnboardingInicio(usuarioId, texto) {
   );
 }
 
-// Estado de cadastro do painel web (aguardando usuário/senha) — expira em 5 min
+// Estado de cadastro do painel web (aguardando usuário/senha) — expira em 15 min
 const cadastroPainelEstados = new Map();
 
 function salvarCadastroPainel(usuarioId, dados) {
-  cadastroPainelEstados.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+  cadastroPainelEstados.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
 }
 function obterCadastroPainel(usuarioId) {
   const dados = cadastroPainelEstados.get(usuarioId);
@@ -924,6 +950,20 @@ function extrairPeriodoNaturalNoTexto(texto) {
   if (t.includes('este mes') || t.includes('esse mes') || t.includes('nesse mes') || t.includes('neste mes') || t === 'mes') {
     const p = intervaloMes(0);
     return { ...p, rotulo: 'este mes', dataUnica: false };
+  }
+
+  // "últimos X dias" / "ultimos X dias"
+  const mUltimosDias = t.match(/ultimos?\s+(\d+)\s+dias?/);
+  if (mUltimosDias) {
+    const n = parseInt(mUltimosDias[1], 10);
+    if (n > 0 && n <= 365) {
+      const hojeISO = dateParaISO(new Date());
+      const [ano, mes, dia] = hojeISO.split('-').map(Number);
+      const hoje = new Date(ano, mes - 1, dia, 12, 0, 0);
+      const inicio = new Date(hoje);
+      inicio.setDate(inicio.getDate() - n);
+      return { dataInicio: dateParaISO(inicio), dataFim: hojeISO, rotulo: `ultimos ${n} dias`, dataUnica: false };
+    }
   }
 
   return null;
@@ -1591,6 +1631,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const lembretePend = obterLembretePendente(usuarioId);
   if (lembretePend) {
     return await handleLembreteHorario(usuarioId, msg, lembretePend);
+  }
+
+  // Verificar se há recorrência aguardando dia do mês
+  const recPend = obterRecorrenciaDiaPendente(usuarioId);
+  if (recPend) {
+    return await handleRecorrenciaDiaResposta(usuarioId, msg, recPend);
   }
 
   // Verificar se está no fluxo Análise Financeira
@@ -2355,7 +2401,7 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
   let status;
   if (resposta === '1' || resposta === 'pago' || resposta === 'sim' || resposta === 'já paguei' || resposta === 'ja paguei') {
     status = 'pago';
-  } else if (resposta === '2' || resposta === 'pendente' || resposta === 'a pagar') {
+  } else if (resposta === '2' || resposta === 'pendente' || resposta === 'a pagar' || resposta === 'nao' || resposta === 'não' || resposta === 'ainda nao' || resposta === 'ainda não' || resposta === 'nao paguei' || resposta === 'não paguei' || resposta === 'a receber') {
     status = 'pendente';
   } else {
     // Resposta não reconhecida - manter a confirmação ativa
@@ -2707,7 +2753,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
         const nomePrimeiro = resultado.cartao_nome.toLowerCase().split(/\s+/)[0];
         const cartaoNoInicio = lower.startsWith(nomePrimeiro + ' ');
         const reContextoCartao = new RegExp(
-          `\\b(?:no\\s+(?:cart[aã]o\\s+)?${nomePrimeiro}|via\\s+${nomePrimeiro}|pelo\\s+${nomePrimeiro}|${nomePrimeiro}\\s+(?:cart[aã]o)|comprei\\s+(?:n[oa]\\s+)?${nomePrimeiro})\\b`,
+          `\\b(?:no\\s+(?:cart[aã]o\\s+)?${nomePrimeiro}|via\\s+${nomePrimeiro}|pelo\\s+${nomePrimeiro}|${nomePrimeiro}\\s+(?:cart[aã]o)|comprei\\s+(?:n[oa]\\s+)?${nomePrimeiro}|\\d+(?:[.,]\\d+)?\\s+${nomePrimeiro})\\b`,
           'i'
         );
         if (cartaoNoInicio || reContextoCartao.test(lower)) {
@@ -3418,6 +3464,12 @@ async function handleTransacaoRecorrente(usuarioId, resultado) {
     return '❌ Preciso saber o nome dessa despesa/receita recorrente.';
   }
 
+  // Para recorrências mensais sem dia definido, perguntar ao usuário
+  if (frequencia !== 'semanal' && !dia_mes && dia_mes !== 0) {
+    salvarRecorrenciaDiaPendente(usuarioId, { tipo, valor, descricao, categoria, frequencia, dia_semana });
+    return `📅 Pra qual *dia do mês* você quer cadastrar essa recorrência de *${descricao}*?\n\n_Ex: "5", "10", "20"_`;
+  }
+
   try {
     // 1. Criar regra de recorrência
     const diaM = frequencia === 'semanal' ? null : (dia_mes ?? null);
@@ -3461,6 +3513,23 @@ async function handleTransacaoRecorrente(usuarioId, resultado) {
     console.error('[TRANSACAO_RECORRENTE] Erro:', err.message);
     return '❌ Erro ao cadastrar a recorrência. Tente novamente!';
   }
+}
+
+async function handleRecorrenciaDiaResposta(usuarioId, msg, pendente) {
+  const lower = msg.trim().toLowerCase();
+
+  if (lower === 'cancelar' || lower === '0') {
+    limparRecorrenciaDiaPendente(usuarioId);
+    return '❌ Cadastro de recorrência cancelado.';
+  }
+
+  const dia = parseInt(lower.replace(/^dia\s*/, ''), 10);
+  if (isNaN(dia) || dia < 1 || dia > 31) {
+    return '❌ Informe um dia válido entre 1 e 31.\n\n_Ex: "5", "10", "dia 20"_';
+  }
+
+  limparRecorrenciaDiaPendente(usuarioId);
+  return await handleTransacaoRecorrente(usuarioId, { ...pendente, dia_mes: dia });
 }
 
 async function handleLembreteRecorrente(usuarioId, resultado) {

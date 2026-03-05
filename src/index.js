@@ -174,6 +174,7 @@ client.on('message', async (msg) => {
       const media = await msg.downloadMedia();
       if (media && media.data) {
         console.log(`[ÁUDIO] Recebido áudio de ${usuarioId}, transcrevendo...`);
+        await msg.reply('🎙️ Transcrevendo áudio...');
         texto = await transcreverAudio(media.data);
         if (!texto) {
           await msg.reply('❌ Não consegui entender o áudio. Tente novamente ou envie por texto.');
