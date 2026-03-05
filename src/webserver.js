@@ -297,6 +297,38 @@ app.post('/api/transactions/skip-occurrence', autenticar, async (req, res) => {
   }
 });
 
+// ── Limites / Orçamento ───────────────────────────────────────────────────────
+app.get('/api/limites', autenticar, async (req, res) => {
+  try {
+    res.json(await db.listarLimitesComSub(req.usuarioId));
+  } catch (err) {
+    console.error('[WEB] GET /api/limites:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/limites', autenticar, async (req, res) => {
+  try {
+    const { limites } = req.body;
+    if (!Array.isArray(limites)) return res.status(400).json({ erro: 'limites deve ser um array' });
+    await db.salvarLimitesBatch(req.usuarioId, limites);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] PUT /api/limites:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.get('/api/salario', autenticar, async (req, res) => {
+  try {
+    const salario = await db.buscarSalarioUsuario(req.usuarioId);
+    res.json({ salario });
+  } catch (err) {
+    console.error('[WEB] GET /api/salario:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Categorias ────────────────────────────────────────────────────────────────
 app.get('/api/categories', autenticar, async (req, res) => {
   try {

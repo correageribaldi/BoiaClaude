@@ -262,6 +262,11 @@ async function initTables() {
       ON limites_categoria(usuario_id, ativo);
   `);
 
+  // Migração: coluna parent para hierarquia principal/subcategoria
+  await pool.query(`
+    ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS parent TEXT;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contatos_compartilhados (
       id SERIAL PRIMARY KEY,
@@ -1399,16 +1404,16 @@ async function limparDadosUsuario(usuarioId) {
   return true;
 }
 
-// Definir limite de gastos para uma categoria
-async function definirLimite(usuarioId, categoria, valorLimite) {
+// Definir limite de gastos para uma categoria (principal ou subcategoria)
+async function definirLimite(usuarioId, categoria, valorLimite, parent = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite)
-     VALUES ($1, $2, $3)
+    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (usuario_id, categoria)
-     DO UPDATE SET valor_limite = $3, ativo = TRUE
+     DO UPDATE SET valor_limite = $3, ativo = TRUE, parent = $4
      RETURNING id`,
-    [uid, categoria, valorLimite]
+    [uid, categoria, valorLimite, parent]
   );
   return result.rows[0].id;
 }
@@ -1417,13 +1422,71 @@ async function definirLimite(usuarioId, categoria, valorLimite) {
 async function listarLimites(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT categoria, valor_limite::float
+    `SELECT categoria, valor_limite::float, parent
      FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE
-     ORDER BY categoria`,
+     ORDER BY parent NULLS FIRST, categoria`,
     [uid]
   );
   return result.rows;
+}
+
+// Listar limites agrupados: principais + subcategorias
+async function listarLimitesComSub(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT categoria, valor_limite::float, parent
+     FROM limites_categoria
+     WHERE usuario_id = $1 AND ativo = TRUE
+     ORDER BY parent NULLS FIRST, categoria`,
+    [uid]
+  );
+  // Agrupar: {categoria, valor_limite, subs: [{categoria, valor_limite}]}
+  const principais = [];
+  const subMap = {};
+  for (const r of result.rows) {
+    if (!r.parent) {
+      principais.push({ categoria: r.categoria, valor_limite: r.valor_limite, subs: [] });
+    } else {
+      if (!subMap[r.parent]) subMap[r.parent] = [];
+      subMap[r.parent].push({ categoria: r.categoria, valor_limite: r.valor_limite });
+    }
+  }
+  for (const p of principais) {
+    p.subs = subMap[p.categoria] || [];
+  }
+  return principais;
+}
+
+// Salvar limites em batch (para o painel)
+async function salvarLimitesBatch(usuarioId, limites) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  for (const l of limites) {
+    await pool.query(
+      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (usuario_id, categoria)
+       DO UPDATE SET valor_limite = $3, ativo = TRUE, parent = $4`,
+      [uid, l.categoria, l.valor_limite, l.parent || null]
+    );
+  }
+}
+
+// Buscar salário (receitas fixas) do mês atual
+async function buscarSalarioUsuario(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const agora = new Date();
+  const mesStr = String(agora.getMonth() + 1).padStart(2, '0');
+  const inicioMes = `${agora.getFullYear()}-${mesStr}-01`;
+  const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).getDate();
+  const fimMes = `${agora.getFullYear()}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(valor), 0)::float as total
+     FROM transacoes
+     WHERE usuario_id = $1 AND tipo = 'receita' AND data >= $2 AND data <= $3`,
+    [uid, inicioMes, fimMes]
+  );
+  return result.rows[0].total;
 }
 
 // Remover limite de uma categoria
@@ -1510,6 +1573,50 @@ async function buscarLembretesRecorrentesPorMes(usuarioId, ano, mes) {
   }
 
   return ocorrencias;
+}
+
+// Verificar limite de uma subcategoria individual (parent != NULL)
+async function verificarLimiteSub(usuarioId, categoriaSub) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = agora.getMonth() + 1;
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const mesStr = String(mes).padStart(2, '0');
+  const inicioMes = `${ano}-${mesStr}-01`;
+  const fimMes = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
+
+  const limiteResult = await pool.query(
+    `SELECT valor_limite::float, parent FROM limites_categoria
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE AND parent IS NOT NULL`,
+    [uid, categoriaSub]
+  );
+  if (limiteResult.rows.length === 0) return null;
+
+  const limite = limiteResult.rows[0].valor_limite;
+  const gastosResult = await pool.query(
+    `SELECT COALESCE(SUM(valor), 0)::float as total
+     FROM transacoes
+     WHERE usuario_id = $1 AND tipo = 'despesa'
+       AND data >= $2 AND data <= $3
+       AND categoria = $4`,
+    [uid, inicioMes, fimMes, categoriaSub]
+  );
+  const gastos = gastosResult.rows[0].total;
+  const restante = limite - gastos;
+  const percentual = limite > 0 ? (gastos / limite) * 100 : 0;
+
+  return {
+    categoria: categoriaSub,
+    limite,
+    limiteEfetivo: limite,
+    gastos,
+    restante,
+    percentual: Math.round(percentual),
+    proporcional: false,
+    diasMes: ultimoDia,
+    diasUsuario: ultimoDia,
+  };
 }
 
 // Verificar limite e gastos de uma categoria no mês atual
@@ -2395,4 +2502,8 @@ module.exports = {
   listarRecorrentesAtivos,
   buscarLembreteRecorrentePorId,
   calcularProximaOcorrenciaRecorrente,
+  listarLimitesComSub,
+  salvarLimitesBatch,
+  buscarSalarioUsuario,
+  verificarLimiteSub,
 };

@@ -581,6 +581,7 @@ async function carregarCategorias() {
   }
 
   await carregarCartoes();
+  await carregarOrcamento();
 }
 
 async function carregarCartoes() {
@@ -622,6 +623,167 @@ async function excluirCartao(id, nome) {
     await api(`/api/cartoes/${id}`, { method: 'DELETE' });
     toast(`Cartão "${nome}" excluído com sucesso.`, 'success');
     carregarCartoes();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Orçamento Mensal ──────────────────────────────────────────────────────────
+let _orcamentoData = { salario: 0, limites: [] };
+
+async function carregarOrcamento() {
+  try {
+    const [salarioRes, limites] = await Promise.all([
+      api('/api/salario'),
+      api('/api/limites'),
+    ]);
+    _orcamentoData = { salario: salarioRes.salario || 0, limites };
+    renderOrcamento();
+  } catch { /* silencioso se não tem dados */ }
+}
+
+function renderOrcamento() {
+  const container = document.getElementById('orcamento-container');
+  const salarioBar = document.getElementById('orcamento-salario');
+  const saldoEl = document.getElementById('orcamento-saldo');
+  const btnSalvar = document.getElementById('orcamento-salvar');
+  const { salario, limites } = _orcamentoData;
+
+  if (!salario || salario <= 0) {
+    container.innerHTML = '<p style="color:var(--text-muted)">Configure seu salário pelo Finanças em Dia para usar o orçamento.</p>';
+    salarioBar.classList.add('hidden');
+    saldoEl.classList.add('hidden');
+    btnSalvar.classList.add('hidden');
+    return;
+  }
+
+  salarioBar.classList.remove('hidden');
+  salarioBar.innerHTML = `💰 <strong>Salário:</strong> ${fmtMoeda(salario)}`;
+
+  if (limites.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted)">Nenhum limite definido. Use o Finanças em Dia ou defina pelo WhatsApp.</p>';
+    saldoEl.classList.add('hidden');
+    btnSalvar.classList.add('hidden');
+    return;
+  }
+
+  let html = '';
+  for (const g of limites) {
+    const pct = salario > 0 ? Math.round((g.valor_limite / salario) * 100) : 0;
+    html += `<div class="orcamento-card">`;
+    html += `<div class="orcamento-card-header">`;
+    html += `<span class="orcamento-cat-nome">${esc(g.categoria)}</span>`;
+    html += `<span class="orcamento-cat-valor">${fmtMoeda(g.valor_limite)} (${pct}%)</span>`;
+    html += `</div>`;
+    html += `<input type="range" class="orcamento-slider" min="0" max="${salario}" step="50" value="${g.valor_limite}" data-cat="${esc(g.categoria)}" data-level="principal" oninput="atualizarSliderPrincipal(this)">`;
+
+    // Subcategorias
+    if (g.subs.length > 0) {
+      html += `<div class="orcamento-subs">`;
+      for (const sub of g.subs) {
+        const subPct = g.valor_limite > 0 ? Math.round((sub.valor_limite / g.valor_limite) * 100) : 0;
+        html += `<div class="orcamento-sub-row">`;
+        html += `<span class="orcamento-sub-nome">${esc(sub.categoria)}</span>`;
+        html += `<input type="range" class="orcamento-slider-sub" min="0" max="${g.valor_limite}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(g.categoria)}" data-level="sub" oninput="atualizarSliderSub(this)">`;
+        html += `<span class="orcamento-sub-valor" id="sub-val-${esc(sub.categoria)}">${fmtMoeda(sub.valor_limite)} (${subPct}%)</span>`;
+        html += `</div>`;
+      }
+      html += `<div class="orcamento-sub-livre" id="livre-${esc(g.categoria)}"></div>`;
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+  recalcularSaldo();
+  for (const g of limites) {
+    recalcularLivreSub(g.categoria);
+  }
+}
+
+function atualizarSliderPrincipal(slider) {
+  const cat = slider.dataset.cat;
+  const val = parseFloat(slider.value);
+  const g = _orcamentoData.limites.find(l => l.categoria === cat);
+  if (g) {
+    g.valor_limite = val;
+    // Atualizar max dos sliders de sub
+    const subSliders = document.querySelectorAll(`[data-parent="${cat}"]`);
+    subSliders.forEach(s => { s.max = val; if (parseFloat(s.value) > val) s.value = val; });
+  }
+  const pct = _orcamentoData.salario > 0 ? Math.round((val / _orcamentoData.salario) * 100) : 0;
+  slider.closest('.orcamento-card').querySelector('.orcamento-cat-valor').textContent = `${fmtMoeda(val)} (${pct}%)`;
+  recalcularSaldo();
+  recalcularLivreSub(cat);
+}
+
+function atualizarSliderSub(slider) {
+  const cat = slider.dataset.cat;
+  const parent = slider.dataset.parent;
+  const val = parseFloat(slider.value);
+  const g = _orcamentoData.limites.find(l => l.categoria === parent);
+  if (g) {
+    const sub = g.subs.find(s => s.categoria === cat);
+    if (sub) sub.valor_limite = val;
+  }
+  const parentVal = g ? g.valor_limite : 0;
+  const pct = parentVal > 0 ? Math.round((val / parentVal) * 100) : 0;
+  const valEl = document.getElementById(`sub-val-${cat}`);
+  if (valEl) valEl.textContent = `${fmtMoeda(val)} (${pct}%)`;
+  recalcularLivreSub(parent);
+}
+
+function recalcularSaldo() {
+  const saldoEl = document.getElementById('orcamento-saldo');
+  const btnSalvar = document.getElementById('orcamento-salvar');
+  const { salario, limites } = _orcamentoData;
+  const soma = limites.reduce((s, l) => s + l.valor_limite, 0);
+  const diff = salario - soma;
+
+  saldoEl.classList.remove('hidden');
+  btnSalvar.classList.remove('hidden');
+
+  if (Math.abs(diff) < 1) {
+    saldoEl.innerHTML = `✅ Orçamento equilibrado`;
+    saldoEl.className = 'orcamento-saldo orcamento-saldo-ok';
+    btnSalvar.disabled = false;
+  } else if (diff > 0) {
+    saldoEl.innerHTML = `💡 Sobram <strong>${fmtMoeda(diff)}</strong> — distribua entre as categorias`;
+    saldoEl.className = 'orcamento-saldo orcamento-saldo-sobra';
+    btnSalvar.disabled = true;
+  } else {
+    saldoEl.innerHTML = `🚨 Faltam <strong>${fmtMoeda(Math.abs(diff))}</strong> — reduza alguma categoria`;
+    saldoEl.className = 'orcamento-saldo orcamento-saldo-falta';
+    btnSalvar.disabled = true;
+  }
+}
+
+function recalcularLivreSub(parentCat) {
+  const g = _orcamentoData.limites.find(l => l.categoria === parentCat);
+  if (!g || g.subs.length === 0) return;
+  const somaSubs = g.subs.reduce((s, sub) => s + sub.valor_limite, 0);
+  const livre = g.valor_limite - somaSubs;
+  const el = document.getElementById(`livre-${parentCat}`);
+  if (el) {
+    if (livre >= 0) {
+      el.innerHTML = `💡 Livre: ${fmtMoeda(livre)}`;
+      el.className = 'orcamento-sub-livre';
+    } else {
+      el.innerHTML = `🚨 Excedido em ${fmtMoeda(Math.abs(livre))}`;
+      el.className = 'orcamento-sub-livre orcamento-sub-excedido';
+    }
+  }
+}
+
+async function salvarOrcamento() {
+  const limites = [];
+  for (const g of _orcamentoData.limites) {
+    limites.push({ categoria: g.categoria, valor_limite: g.valor_limite, parent: null });
+    for (const sub of g.subs) {
+      limites.push({ categoria: sub.categoria, valor_limite: sub.valor_limite, parent: g.categoria });
+    }
+  }
+  try {
+    await api('/api/limites', { method: 'PUT', body: JSON.stringify({ limites }) });
+    toast('✅ Orçamento salvo!', 'success');
   } catch (err) { toast(err.message, 'error'); }
 }
 

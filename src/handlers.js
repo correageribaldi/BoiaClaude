@@ -2327,11 +2327,15 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
   }
 
-  // Verificar limite de gastos (apenas para despesas)
+  // Verificar limites de gastos (apenas para despesas)
   if (tipo === 'despesa' && categoria) {
+    // 1. Limite da subcategoria individual (se existir)
+    const limiteSubInfo = await db.verificarLimiteSub(usuarioId, categoria);
+    if (limiteSubInfo) msg += formatarBlocoLimite(limiteSubInfo, categoria, categoria);
+
+    // 2. Limite da categoria principal (bucket)
     const budgetCat = await resolverBudgetCategoria(categoria);
     if (budgetCat) {
-      // subcats: categorias hardcoded do bucket + a própria categoria (cobre categorias novas)
       const subcats = [...(MAPA_BUDGET[budgetCat] || []), categoria].filter((v, i, a) => a.indexOf(v) === i);
       const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
       if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
@@ -3813,37 +3817,79 @@ async function handleDefinirLimite(usuarioId, resultado) {
     return '❌ Não consegui entender. Tenta algo como: "limitar gastos com Lazer em 500 reais"';
   }
 
-  await db.definirLimite(usuarioId, categoria, valor);
-  return `✅ *Limite definido!*\n\n📂 Categoria: ${categoria}\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
+  // Se é uma categoria principal (Variáveis, Lazer, etc.), salva sem parent
+  const PRINCIPAIS = ['Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
+  if (PRINCIPAIS.includes(categoria)) {
+    await db.definirLimite(usuarioId, categoria, valor, null);
+    return `✅ *Limite definido!*\n\n📂 Categoria principal: ${categoria}\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
+  }
+
+  // Subcategoria: resolver a principal e salvar com parent
+  const budgetCat = await resolverBudgetCategoria(categoria);
+  const parent = budgetCat || 'Variáveis';
+  await db.definirLimite(usuarioId, categoria, valor, parent);
+
+  // Verificar se soma das subs excede o limite da principal
+  let aviso = '';
+  const limitePrincipal = await db.verificarLimite(usuarioId, parent);
+  if (limitePrincipal) {
+    const limites = await db.listarLimites(usuarioId);
+    const somaSubs = limites
+      .filter(l => l.parent === parent)
+      .reduce((s, l) => s + l.valor_limite, 0);
+    if (somaSubs > limitePrincipal.limite) {
+      aviso = `\n\n⚠️ _Atenção: a soma das subcategorias de ${parent} (${fmt.formatarMoeda(somaSubs)}) excede o limite da principal (${fmt.formatarMoeda(limitePrincipal.limite)}). Considere ajustar!_`;
+    }
+  }
+
+  return `✅ *Limite definido!*\n\n📂 Subcategoria: ${categoria} _(dentro de ${parent})_\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_${aviso}`;
 }
 
 async function handleListarLimites(usuarioId) {
-  const limites = await db.listarLimites(usuarioId);
+  const grupos = await db.listarLimitesComSub(usuarioId);
 
-  if (limites.length === 0) {
+  if (grupos.length === 0) {
     return '📊 Você ainda não definiu nenhum limite de gastos.\n\n_Dica: Me fala algo como "limitar gastos com Alimentação em 1000 reais"_';
   }
 
   let msg = '📊 *Seus limites de gastos:*\n\n';
-  for (const l of limites) {
-    const info = await db.verificarLimite(usuarioId, l.categoria);
-    if (info) {
-      const { gastos, limite, restante, percentual } = info;
-      let emoji = '';
-      if (percentual >= 100) emoji = '🚨';
-      else if (percentual >= 80) emoji = '⚠️';
-      else if (percentual >= 60) emoji = '📊';
-      else emoji = '✅';
+  for (const g of grupos) {
+    // Categoria principal
+    const subcats = [...(MAPA_BUDGET[g.categoria] || [])];
+    const info = await db.verificarLimite(usuarioId, g.categoria, subcats.length > 0 ? subcats : null);
+    if (!info) continue;
 
-      msg += `${emoji} *${l.categoria}*\n`;
-      msg += `   Limite: ${fmt.formatarMoeda(limite)}\n`;
-      msg += `   Gasto: ${fmt.formatarMoeda(gastos)} (${percentual}%)\n`;
-      if (restante > 0) {
-        msg += `   Restam: ${fmt.formatarMoeda(restante)}\n\n`;
-      } else {
-        msg += `   ⚠️ Excedido em ${fmt.formatarMoeda(Math.abs(restante))}\n\n`;
-      }
+    const { gastos, limite, restante, percentual } = info;
+    let emoji = '';
+    if (percentual >= 100) emoji = '🚨';
+    else if (percentual >= 80) emoji = '⚠️';
+    else if (percentual >= 60) emoji = '📊';
+    else emoji = '✅';
+
+    msg += `${emoji} *${g.categoria}* — ${fmt.formatarMoeda(limite)}\n`;
+    msg += `   Gasto: ${fmt.formatarMoeda(gastos)} (${percentual}%)`;
+    if (restante > 0) msg += ` | Restam: ${fmt.formatarMoeda(restante)}`;
+    else msg += ` | ⚠️ Excedido em ${fmt.formatarMoeda(Math.abs(restante))}`;
+    msg += '\n';
+
+    // Subcategorias
+    for (const sub of g.subs) {
+      const subInfo = await db.verificarLimiteSub(usuarioId, sub.categoria);
+      if (!subInfo) continue;
+      let subEmoji = '';
+      if (subInfo.percentual >= 100) subEmoji = '🚨';
+      else if (subInfo.percentual >= 80) subEmoji = '⚠️';
+      else subEmoji = '✅';
+      msg += `   ${subEmoji} ${sub.categoria}: ${fmt.formatarMoeda(subInfo.gastos)}/${fmt.formatarMoeda(sub.valor_limite)} (${subInfo.percentual}%)\n`;
     }
+
+    // Valor livre (não alocado em subcategorias)
+    const somaSubs = g.subs.reduce((s, sub) => s + sub.valor_limite, 0);
+    const livre = g.valor_limite - somaSubs;
+    if (livre > 0 && g.subs.length > 0) {
+      msg += `   💡 ${fmt.formatarMoeda(livre)} livre\n`;
+    }
+    msg += '\n';
   }
 
   return msg;
