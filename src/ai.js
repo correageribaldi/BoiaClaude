@@ -55,11 +55,13 @@ TIPOS DE AÇÃO:
 - Exemplos: "adicionar receita de 3000 salário" → transacao, tipo: receita, valor: 3000, descricao: Salário
 - Exemplos: "registrar despesa 80 gasolina" → transacao, tipo: despesa, valor: 80, descricao: Gasolina
 
-2b. CONSULTAR USO DO CARTÃO (quanto usei do cartão, limite, saldo disponível no cartão, uso do Nubank, etc):
+2b. CONSULTAR USO DO CARTÃO (quanto usei do cartão, limite, saldo disponível no cartão, uso do Nubank, fatura, ver cartão, meus cartões, etc):
 {"acao": "uso_cartao", "cartao_nome": "nome do cartão ou null se não especificou"}
+Se o usuário pedir para ver um cartão específico (ex: "ver cartão Nubank Renata", "somente o Nubank", "mostra o cartão Renata"), extraia o nome em cartao_nome.
 
 2c. REMOVER CARTÃO (remover cartão, excluir cartão, deletar cartão, apagar cartão, tirar cartão, não quero mais o cartão X):
-{"acao": "remover_cartao", "cartao_nome": "nome do cartão"}
+{"acao": "remover_cartao", "cartao_nome": "nome do cartão ou null se não especificou qual"}
+Se o usuário disser genérico "excluir cartão de crédito" ou "remover cartão" sem especificar nome, use cartao_nome = null.
 
 2d. EXCLUIR TRANSAÇÃO (excluir/remover/deletar/apagar/tirar despesa ou receita por nome — ex: "excluir aluguel", "remover despesa mercado", "apagar receita salário", "quero tirar o lançamento de luz"):
 {"acao": "excluir_transacao", "descricao_busca": "nome ou parte da descrição para buscar", "tipo": "despesa|receita|null"}

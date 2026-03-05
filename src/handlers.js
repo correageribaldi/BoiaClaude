@@ -4043,19 +4043,20 @@ async function handleListarLimites(usuarioId) {
 async function handleRemoverCartao(usuarioId, resultado) {
   const { cartao_nome } = resultado;
 
-  if (!cartao_nome) {
-    return '❌ Qual cartão você quer remover?';
-  }
+  const cartoes = cartao_nome
+    ? await db.buscarCartoesPorNome(usuarioId, cartao_nome)
+    : await db.listarCartoes(usuarioId);
 
-  const cartoes = await db.buscarCartoesPorNome(usuarioId, cartao_nome);
   if (cartoes.length === 0) {
-    return `❌ Não encontrei nenhum cartão com o nome *${cartao_nome}*.\n_Use "meus cartões" para ver os cadastrados._`;
+    return cartao_nome
+      ? `❌ Não encontrei nenhum cartão com o nome *${cartao_nome}*.\n_Use "meus cartões" para ver os cadastrados._`
+      : `❌ Você não tem cartões cadastrados.\n_Cadastre com "novo cartão" ou pelo fluxo Finanças em Dia._`;
   }
 
-  if (cartoes.length > 1) {
+  if (cartoes.length > 1 || !cartao_nome) {
     const lista = cartoes.map((c, i) => `  ${i + 1}. *${c.nome}*`).join('\n');
     salvarRemoverCartaoPendente(usuarioId, { cartoes });
-    return `Encontrei mais de um cartão com esse nome 😅 Qual você quer remover?\n\n${lista}\n\nResponda com o *número* ou *"cancelar"* para desistir.`;
+    return `Qual cartão você quer remover?\n\n${lista}\n\nResponda com o *número* ou *"cancelar"* para desistir.`;
   }
 
   const cartao = cartoes[0];
