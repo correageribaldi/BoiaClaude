@@ -1847,10 +1847,14 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
 
   // Comando: excluir cartão de crédito (redirecionar para remover cartão)
-  if (/^(?:excluir|remover|deletar|apagar)\s+cart[aã]o/.test(lower)) {
-    const nomeMatch = lower.match(/cart[aã]o(?:\s+de\s+cr[eé]dito)?\s+(.+)/);
-    const cartao_nome = nomeMatch ? nomeMatch[1].trim() : null;
-    return await handleRemoverCartao(usuarioId, { cartao_nome: cartao_nome || null });
+  if (/^(?:excluir|remover|deletar|apagar)\s+cart[aã]o/i.test(lower)) {
+    // Remove o verbo e "cartão de crédito" / "cartão" para extrair o nome real do cartão
+    const resto = lower
+      .replace(/^(?:excluir|remover|deletar|apagar)\s+/, '')
+      .replace(/^cart[aã]o\s*(?:de\s+cr[eé]dito)?\s*/, '')
+      .trim();
+    const cartao_nome = resto || null;
+    return await handleRemoverCartao(usuarioId, { cartao_nome });
   }
 
   // Comando: excluir
