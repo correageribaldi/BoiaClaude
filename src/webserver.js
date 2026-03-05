@@ -205,6 +205,39 @@ app.get('/api/transactions', autenticar, async (req, res) => {
       }
     }
 
+    // Projetar faturas de cartão para meses futuros (baseado nas parcelas pendentes)
+    if (status !== 'pago' && dataInicio && dataFim) {
+      const mesConsulta = dataInicio.substring(0, 7); // "YYYY-MM"
+      const cartoes = await db.listarCartoes(req.usuarioId);
+      for (const cartao of cartoes) {
+        // Verificar se já existe uma transação de fatura para este cartão neste mês
+        const jaTemFatura = resultado.some(
+          t => t.cartao_id === cartao.id && t.descricao && t.descricao.startsWith('Fatura ')
+        );
+        if (jaTemFatura) continue;
+
+        const projecoes = await db.projetarFaturasCartao(cartao.id);
+        const valorMes = projecoes[mesConsulta];
+        if (valorMes && valorMes > 0) {
+          const diaVenc = cartao.dia_vencimento || 1;
+          const pad = (n) => String(n).padStart(2, '0');
+          const dataFatura = `${mesConsulta}-${pad(diaVenc)}`;
+          resultado.push({
+            id: null,
+            tipo: 'despesa',
+            valor: Math.round(valorMes * 100) / 100,
+            descricao: `Fatura ${cartao.nome}`,
+            categoria: 'Fatura',
+            data: dataFatura,
+            status: 'pendente',
+            projetado: true,
+            cartao_id: cartao.id,
+          });
+        }
+      }
+      resultado.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+    }
+
     res.json(resultado);
   } catch (err) {
     console.error('[WEB] /api/transactions:', err.message);

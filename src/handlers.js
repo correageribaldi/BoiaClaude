@@ -5048,16 +5048,12 @@ async function handlePontoZero(usuarioId, texto, estado) {
         if (estado.standalone === 'cartao') {
           // Modo standalone: salvar cartões diretamente e encerrar
           for (const c of estado.cartoes || []) {
-            // Persistir o cartão para vínculo de compras futuras
             const cartaoId = await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
 
-            const recorrenciaId = await db.criarRecorrencia(
-              usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
-              'mensal', c.diaVencimento || 1, null, null, null
-            );
+            // Se informou valor da fatura atual, registrar como transação pendente avulsa (sem recorrência)
             if (c.valorFatura && c.valorFatura > 0) {
               const dataVenc = calcularDataPendenteMesAtual(c.diaVencimento);
-              await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataVenc, 'pendente', recorrenciaId, cartaoId);
+              await db.adicionarTransacao(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Fatura', dataVenc, 'pendente', cartaoId);
             }
           }
           limparPontoZero(usuarioId);
@@ -5178,18 +5174,13 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
   }
 
-  // Cartões → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
+  // Cartões → criar cartão + transação avulsa da fatura atual (sem recorrência — projeção vem das parcelas)
   for (const c of estado.cartoes || []) {
-    // Persistir o cartão para vínculo de compras futuras
     const cartaoId = await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
 
-    const recorrenciaId = await db.criarRecorrencia(
-      usuarioId, 'despesa', c.valorFatura || 0, `Fatura ${c.nome}`, 'Cartão',
-      'mensal', c.diaVencimento || 1, null, null, null
-    );
     if (c.valorFatura && c.valorFatura > 0) {
       const dataVenc = calcularDataPendenteMesAtual(c.diaVencimento);
-      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataVenc, 'pendente', recorrenciaId, cartaoId);
+      await db.adicionarTransacao(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Fatura', dataVenc, 'pendente', cartaoId);
     }
   }
 

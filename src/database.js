@@ -542,9 +542,9 @@ async function initTables() {
     ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS cartao_id INTEGER REFERENCES cartoes(id);
   `);
 
-  // Categoria padrão para cartões
+  // Categoria padrão para faturas de cartão
   await pool.query(`
-    INSERT INTO categorias (nome) VALUES ('Cartão') ON CONFLICT (nome) DO NOTHING;
+    INSERT INTO categorias (nome) VALUES ('Fatura') ON CONFLICT (nome) DO NOTHING;
   `);
 
   // Tabela de lembretes pontuais (substituição de lembretes_gerais, com BullMQ)
@@ -1094,8 +1094,28 @@ async function calcularSaldos(usuarioId) {
   );
   const totalCaixinhas = caixRes.rows[0].total;
 
+  // 3. Projeção de faturas de cartão do mês atual (parcelas pendentes que não têm fatura criada)
+  const anoMesHoje = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const cartoesRes = await pool.query(
+    `SELECT id FROM cartoes WHERE usuario_id = $1`, [uid]
+  );
+  let faturaCartaoProjetada = 0;
+  for (const cartao of cartoesRes.rows) {
+    // Verificar se já existe transação de fatura neste mês para este cartão
+    const faturaExiste = await pool.query(
+      `SELECT 1 FROM transacoes
+       WHERE usuario_id = $1 AND cartao_id = $2 AND descricao ILIKE 'Fatura %'
+         AND TO_CHAR(data, 'YYYY-MM') = $3 LIMIT 1`,
+      [uid, cartao.id, anoMesHoje]
+    );
+    if (faturaExiste.rows.length > 0) continue; // fatura já criada, já está em despesas_pendentes
+
+    const projMap = await projetarFaturasCartao(cartao.id);
+    if (projMap[anoMesHoje]) faturaCartaoProjetada += projMap[anoMesHoje];
+  }
+
   const receitasPendentes = r.receitas_pendentes + receitasRecorrentes;
-  const despesasPendentes = r.despesas_pendentes + despesasRecorrentes;
+  const despesasPendentes = r.despesas_pendentes + despesasRecorrentes + faturaCartaoProjetada;
 
   return {
     saldoAtual,
@@ -2459,6 +2479,22 @@ async function calcularUsoCartao(cartaoId, diaFechamento) {
   return { total: res.rows[0].total, qtd: res.rows[0].qtd, inicioStr, fimStr: hojeStr };
 }
 
+// Projetar faturas futuras de um cartão baseado nas parcelas pendentes por mês
+async function projetarFaturasCartao(cartaoId, meses = 12) {
+  const res = await pool.query(
+    `SELECT valor::float, TO_CHAR(data, 'YYYY-MM') as mes
+     FROM transacoes
+     WHERE cartao_id = $1 AND status = 'pendente' AND data >= NOW()
+     ORDER BY data`,
+    [cartaoId]
+  );
+  const porMes = {};
+  for (const row of res.rows) {
+    porMes[row.mes] = (porMes[row.mes] || 0) + row.valor;
+  }
+  return porMes;
+}
+
 // ─── Reminders (BullMQ) ──────────────────────────────────────────────────────
 
 async function createReminder(usuarioId, mensagem, runAt) {
@@ -2721,6 +2757,7 @@ module.exports = {
   deletarCartaoCompleto,
   calcularUsoCartao,
   calcularCreditoComprometido,
+  projetarFaturasCartao,
   adicionarTransacoesParcelas,
   createReminder,
   claimReminder,
