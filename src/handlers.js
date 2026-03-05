@@ -4951,8 +4951,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
               'mensal', c.diaVencimento || 1, null, null, null
             );
             if (c.valorFatura && c.valorFatura > 0) {
-              const hojeISO = dateParaISO(new Date());
-              await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', hojeISO, 'pendente', recorrenciaId, cartaoId);
+              const dataVenc = calcularDataPendenteMesAtual(c.diaVencimento);
+              await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataVenc, 'pendente', recorrenciaId, cartaoId);
             }
           }
           limparPontoZero(usuarioId);
@@ -5083,10 +5083,8 @@ async function salvarDadosPontoZero(usuarioId, estado) {
       'mensal', c.diaVencimento || 1, null, null, null
     );
     if (c.valorFatura && c.valorFatura > 0) {
-      // Usar data de hoje para que calcularUsoCartao inclua a fatura inicial no ciclo atual.
-      // O cartao_id vincula ao cartão correto para rastrear uso/limite disponível.
-      const hojeISO = dateParaISO(new Date());
-      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', hojeISO, 'pendente', recorrenciaId, cartaoId);
+      const dataVenc = calcularDataPendenteMesAtual(c.diaVencimento);
+      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valorFatura, `Fatura ${c.nome}`, 'Cartão', dataVenc, 'pendente', recorrenciaId, cartaoId);
     }
   }
 
