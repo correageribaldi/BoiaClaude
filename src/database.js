@@ -1450,6 +1450,8 @@ async function listarLimites(usuarioId) {
 // Listar limites agrupados: principais + subcategorias
 async function listarLimitesComSub(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  // Buscar limites existentes
   const result = await pool.query(
     `SELECT categoria, valor_limite::float, parent
      FROM limites_categoria
@@ -1457,17 +1459,33 @@ async function listarLimitesComSub(usuarioId) {
      ORDER BY parent NULLS FIRST, categoria`,
     [uid]
   );
+
+  // Buscar categorias principais do usuário (podem não ter limite em limites_categoria)
+  const catsPrincipais = await listarCategoriasPrincipais(usuarioId);
+
   // Agrupar: {categoria, valor_limite, subs: [{categoria, valor_limite}]}
-  const principais = [];
+  const principaisMap = {};
   const subMap = {};
+
+  // Primeiro: garantir que todas as categorias principais existam
+  for (const cp of catsPrincipais) {
+    principaisMap[cp.nome] = { categoria: cp.nome, valor_limite: 0, subs: [] };
+  }
+
   for (const r of result.rows) {
     if (!r.parent) {
-      principais.push({ categoria: r.categoria, valor_limite: r.valor_limite, subs: [] });
+      if (principaisMap[r.categoria]) {
+        principaisMap[r.categoria].valor_limite = r.valor_limite;
+      } else {
+        principaisMap[r.categoria] = { categoria: r.categoria, valor_limite: r.valor_limite, subs: [] };
+      }
     } else {
       if (!subMap[r.parent]) subMap[r.parent] = [];
       subMap[r.parent].push({ categoria: r.categoria, valor_limite: r.valor_limite });
     }
   }
+
+  const principais = Object.values(principaisMap);
   for (const p of principais) {
     p.subs = subMap[p.categoria] || [];
   }
