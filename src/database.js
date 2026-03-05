@@ -1999,6 +1999,95 @@ async function deletarCartao(usuarioId, cartaoId) {
   return res.rows[0]?.nome || null;
 }
 
+// Exclui o cartão e todos os dados associados (recorrências, transações, lembretes)
+async function deletarCartaoCompleto(usuarioId, cartaoId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Confirmar que o cartão pertence ao usuário e pegar o nome
+    const cartaoRes = await client.query(
+      `SELECT id, nome FROM cartoes WHERE id = $1 AND usuario_id = $2`,
+      [cartaoId, uid]
+    );
+    if (cartaoRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const nome = cartaoRes.rows[0].nome;
+
+    // 2. Buscar recorrências da fatura deste cartão
+    const recRes = await client.query(
+      `SELECT id FROM recorrencias
+       WHERE usuario_id = $1 AND descricao = $2`,
+      [uid, `Fatura ${nome}`]
+    );
+    const recIds = recRes.rows.map(r => r.id);
+
+    // 3. Excluir lembretes_enviados das transações vinculadas ao cartão
+    await client.query(
+      `DELETE FROM lembretes_enviados
+       WHERE transacao_id IN (
+         SELECT id FROM transacoes WHERE usuario_id = $1 AND cartao_id = $2
+       )`,
+      [uid, cartaoId]
+    );
+
+    // 4. Excluir lembretes_enviados das transações das recorrências da fatura
+    if (recIds.length > 0) {
+      await client.query(
+        `DELETE FROM lembretes_enviados
+         WHERE transacao_id IN (
+           SELECT id FROM transacoes WHERE usuario_id = $1 AND recorrencia_id = ANY($2::int[])
+         )`,
+        [uid, recIds]
+      );
+    }
+
+    // 5. Excluir todas as transações vinculadas ao cartão (compras + fatura)
+    await client.query(
+      `DELETE FROM transacoes WHERE usuario_id = $1 AND cartao_id = $2`,
+      [uid, cartaoId]
+    );
+
+    // 6. Excluir transações vinculadas às recorrências da fatura
+    if (recIds.length > 0) {
+      await client.query(
+        `DELETE FROM transacoes WHERE usuario_id = $1 AND recorrencia_id = ANY($2::int[])`,
+        [uid, recIds]
+      );
+
+      // 7. Excluir as recorrências da fatura
+      await client.query(
+        `DELETE FROM recorrencias WHERE id = ANY($1::int[]) AND usuario_id = $2`,
+        [recIds, uid]
+      );
+    }
+
+    // 8. Excluir lembretes recorrentes de vencimento deste cartão
+    await client.query(
+      `DELETE FROM lembretes_recorrentes
+       WHERE usuario_id = $1 AND mensagem LIKE $2`,
+      [uid, `💳 Vencimento fatura ${nome}%`]
+    );
+
+    // 9. Excluir o cartão
+    await client.query(
+      `DELETE FROM cartoes WHERE id = $1 AND usuario_id = $2`,
+      [cartaoId, uid]
+    );
+
+    await client.query('COMMIT');
+    return nome;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Soma todas as transações pendentes (parcelas futuras incluídas) para mostrar crédito comprometido
 async function calcularCreditoComprometido(cartaoId) {
   const res = await pool.query(
@@ -2271,6 +2360,7 @@ module.exports = {
   listarCartoes,
   buscarCartoesPorNome,
   deletarCartao,
+  deletarCartaoCompleto,
   calcularUsoCartao,
   calcularCreditoComprometido,
   adicionarTransacoesParcelas,

@@ -528,6 +528,50 @@ async function carregarCategorias() {
     `;
     grid.appendChild(card);
   }
+
+  await carregarCartoes();
+}
+
+async function carregarCartoes() {
+  let cartoes;
+  try { cartoes = await api('/api/cartoes'); }
+  catch { return; }
+
+  const list = document.getElementById('cartoes-list');
+  const empty = document.getElementById('cartoes-empty');
+  list.innerHTML = '';
+
+  if (!cartoes.length) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  for (const c of cartoes) {
+    const row = document.createElement('div');
+    row.className = 'cartao-row';
+    const fechamento = c.dia_fechamento ? `Fecha dia ${c.dia_fechamento}` : '';
+    const vencimento = c.dia_vencimento ? `Vence dia ${c.dia_vencimento}` : '';
+    const limite = c.limite_total ? `Limite ${fmtMoeda(c.limite_total)}` : '';
+    const info = [fechamento, vencimento, limite].filter(Boolean).join(' · ');
+    row.innerHTML = `
+      <div class="cartao-info">
+        <span class="cartao-nome">💳 ${esc(c.nome)}</span>
+        ${info ? `<span class="cartao-meta">${esc(info)}</span>` : ''}
+      </div>
+      <button class="action-btn btn-danger" onclick="excluirCartao(${c.id}, '${esc(c.nome)}')">🗑️ Excluir</button>
+    `;
+    list.appendChild(row);
+  }
+}
+
+async function excluirCartao(id, nome) {
+  if (!confirm(`Excluir o cartão "${nome}" e TODOS os seus registros?\n\nIsso irá apagar todas as transações, recorrências e lembretes vinculados. Essa ação não pode ser desfeita.`)) return;
+  try {
+    await api(`/api/cartoes/${id}`, { method: 'DELETE' });
+    toast(`Cartão "${nome}" excluído com sucesso.`, 'success');
+    carregarCartoes();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 async function excluirCategoria(nome) {

@@ -313,6 +313,30 @@ app.delete('/api/categories/:nome', autenticar, async (req, res) => {
   }
 });
 
+// ── Cartões de crédito ───────────────────────────────────────────────────────
+
+app.get('/api/cartoes', autenticar, async (req, res) => {
+  try {
+    const cartoes = await db.listarCartoes(req.usuarioId);
+    res.json(cartoes);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/cartoes/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const nome = await db.deletarCartaoCompleto(req.usuarioId, id);
+    if (!nome) return res.status(404).json({ erro: 'Cartão não encontrado' });
+    res.json({ ok: true, nome });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/cartoes/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Redirect pós-pagamento InfinityPay ───────────────────────────────────────
 // InfinityPay redireciona o browser do cliente aqui após pagamento confirmado
 // URL: GET /pagamento/sucesso?order_nsu=...&transaction_nsu=...&slug=...&receipt_url=...

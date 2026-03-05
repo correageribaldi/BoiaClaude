@@ -3866,12 +3866,12 @@ async function handleRemoverCartao(usuarioId, resultado) {
   }
 
   const cartao = cartoes[0];
-  const nomeRemovido = await db.deletarCartao(usuarioId, cartao.id);
+  const nomeRemovido = await db.deletarCartaoCompleto(usuarioId, cartao.id);
   if (!nomeRemovido) {
     return `❌ Não foi possível remover o cartão.`;
   }
 
-  return `✅ Cartão *${nomeRemovido}* removido com sucesso!`;
+  return `✅ Cartão *${nomeRemovido}* removido com sucesso!\n\n_Todas as transações, recorrências e lembretes vinculados a esse cartão foram excluídos._`;
 }
 
 async function handleRemoverLimite(usuarioId, resultado) {
