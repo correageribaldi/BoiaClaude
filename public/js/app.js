@@ -394,6 +394,47 @@ function renderTabelaTransacoes(transacoes) {
     tbody.appendChild(tr);
   }
 
+  // ── Totais (calculados sobre TODAS as transações, não só a página atual)
+  const elTotais = document.getElementById('tx-totais');
+  const totalReceitas = transacoes.filter(t => t.tipo === 'receita').reduce((s, t) => s + t.valor, 0);
+  const totalDespesas = transacoes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + t.valor, 0);
+  const temReceita = totalReceitas > 0;
+  const temDespesa = totalDespesas > 0;
+
+  if (!temReceita && !temDespesa) {
+    elTotais.classList.add('hidden');
+  } else {
+    elTotais.classList.remove('hidden');
+    let html = '';
+
+    if (temReceita) {
+      html += `<div class="tx-totais-item">
+        <span class="tx-totais-label">Receitas</span>
+        <span class="tx-totais-valor valor-positivo">+${fmtMoeda(totalReceitas)}</span>
+      </div>`;
+    }
+    if (temReceita && temDespesa) {
+      html += `<div class="tx-totais-sep"></div>`;
+    }
+    if (temDespesa) {
+      html += `<div class="tx-totais-item">
+        <span class="tx-totais-label">Despesas</span>
+        <span class="tx-totais-valor valor-negativo">-${fmtMoeda(totalDespesas)}</span>
+      </div>`;
+    }
+    if (temReceita && temDespesa) {
+      const saldo = totalReceitas - totalDespesas;
+      const cls = saldo >= 0 ? 'tx-totais-saldo-pos' : 'tx-totais-saldo-neg';
+      const sinal = saldo >= 0 ? '+' : '-';
+      html += `<div class="tx-totais-sep"></div>
+      <div class="tx-totais-item">
+        <span class="tx-totais-label">Saldo do período</span>
+        <span class="tx-totais-valor ${cls}">${sinal}${fmtMoeda(Math.abs(saldo))}</span>
+      </div>`;
+    }
+    elTotais.innerHTML = html;
+  }
+
   const totalPags = Math.ceil(total / POR_PAG);
   const pag = document.getElementById('tx-pagination');
   pag.innerHTML = '';
