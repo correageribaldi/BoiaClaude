@@ -1177,9 +1177,13 @@ async function cancelarLembreteGeral(usuarioId, lembreteId) {
 // Criar lembrete recorrente
 async function criarLembreteRecorrente(usuarioId, mensagem, horario, frequencia, diaSemana, diaMes, dataFim, oculto = false) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  // Se o horário agendado já passou hoje, define ultimo_envio = hoje para evitar
+  // disparo imediato — o lembrete só disparará na próxima ocorrência.
   const result = await pool.query(
-    `INSERT INTO lembretes_recorrentes (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim, oculto)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO lembretes_recorrentes
+       (usuario_id, mensagem, horario, frequencia, dia_semana, dia_mes, data_fim, oculto, ultimo_envio)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+       CASE WHEN $3::time <= LOCALTIME THEN CURRENT_DATE ELSE NULL END)
      RETURNING id`,
     [uid, mensagem, horario, frequencia, diaSemana, diaMes, dataFim, oculto]
   );

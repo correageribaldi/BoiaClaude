@@ -198,29 +198,41 @@ async function verificarLembretesRecorrentes(client) {
   }
 }
 
+// Guard para evitar execuções sobrepostas no cron de lembretes por minuto
+let _rodandoVerificacao = false;
+
 function iniciarLembretes(client) {
   // Rodada 1: 10:00
-  cron.schedule('0 10 * * *', () => {
+  cron.schedule('0 10 * * *', async () => {
     console.log('[LEMBRETE] Iniciando rodada 1 (10:00)...');
-    executarRodada(client, 1);
+    await executarRodada(client, 1);
   }, { timezone: 'America/Sao_Paulo' });
 
   // Rodada 2: 13:00
-  cron.schedule('0 13 * * *', () => {
+  cron.schedule('0 13 * * *', async () => {
     console.log('[LEMBRETE] Iniciando rodada 2 (13:00)...');
-    executarRodada(client, 2);
+    await executarRodada(client, 2);
   }, { timezone: 'America/Sao_Paulo' });
 
   // Rodada 3: 20:00
-  cron.schedule('0 20 * * *', () => {
+  cron.schedule('0 20 * * *', async () => {
     console.log('[LEMBRETE] Iniciando rodada 3 (20:00)...');
-    executarRodada(client, 3);
+    await executarRodada(client, 3);
   }, { timezone: 'America/Sao_Paulo' });
 
   // Lembretes gerais e recorrentes: verifica a cada minuto
-  cron.schedule('* * * * *', () => {
-    verificarLembretesGerais(client);
-    verificarLembretesRecorrentes(client);
+  cron.schedule('* * * * *', async () => {
+    if (_rodandoVerificacao) {
+      console.log('[LEMBRETE] Tick ignorado — verificação anterior ainda em andamento.');
+      return;
+    }
+    _rodandoVerificacao = true;
+    try {
+      await verificarLembretesGerais(client);
+      await verificarLembretesRecorrentes(client);
+    } finally {
+      _rodandoVerificacao = false;
+    }
   }, { timezone: 'America/Sao_Paulo' });
 
   console.log('⏰ Lembretes financeiros: 10:00, 13:00 e 20:00 (horário de Brasília)');
