@@ -211,9 +211,19 @@
             <div id="subcategorias-container"></div>
             <button class="btn btn-primary hidden" id="subcategorias-salvar" onclick="salvarSubcategorias()">Salvar Subcategorias</button>
             <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-              <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Criar nova subcategoria</p>
+              <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Adicionar subcategoria</p>
+              <div class="create-bar" style="gap:8px">
+                <select class="search-input" id="sub-parent-select" style="flex:0 0 auto;width:auto;min-width:140px">
+                  <option value="">Categoria...</option>
+                </select>
+                <input class="search-input" id="sub-nova-nome" type="text" placeholder="Nome da subcategoria..." maxlength="50" style="flex:1" />
+                <button class="btn btn-primary" id="sub-criar">+ Criar</button>
+              </div>
+            </div>
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+              <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Criar nova categoria (transação)</p>
               <div class="create-bar">
-                <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova subcategoria..." maxlength="50" />
+                <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova categoria..." maxlength="50" />
                 <button class="btn btn-primary" id="cat-criar">+ Criar</button>
               </div>
               <div class="cat-grid" id="cat-grid"></div>

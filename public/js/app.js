@@ -782,20 +782,43 @@ function _getLimitePrincipal(categoria) {
   return lim ? lim.valor_limite : 0;
 }
 
+function _populateParentSelect() {
+  const sel = document.getElementById('sub-parent-select');
+  if (!sel) return;
+  const { categoriasPrincipais } = _orcamentoData;
+  sel.innerHTML = '<option value="">Categoria...</option>';
+  for (const cat of categoriasPrincipais) {
+    sel.innerHTML += `<option value="${esc(cat.nome)}">${esc(cat.nome)}</option>`;
+  }
+}
+
 function renderSubcategorias() {
   const container = document.getElementById('subcategorias-container');
   const btnSalvar = document.getElementById('subcategorias-salvar');
-  const { limites } = _orcamentoData;
+  const { limites, categoriasPrincipais } = _orcamentoData;
 
-  if (limites.length === 0) {
+  _populateParentSelect();
+
+  if (categoriasPrincipais.length === 0) {
     container.innerHTML = '<p style="color:var(--text-muted)">Defina as categorias principais primeiro.</p>';
     btnSalvar.classList.add('hidden');
     return;
   }
 
-  const temSubs = limites.some(g => g.subs.length > 0);
+  // Build a map: each principal category -> its subs (from limites data)
+  const grupoMap = {};
+  for (const cat of categoriasPrincipais) {
+    grupoMap[cat.nome] = { valor_limite: _getLimitePrincipal(cat.nome), subs: [] };
+  }
+  for (const g of limites) {
+    if (grupoMap[g.categoria]) {
+      grupoMap[g.categoria].subs = g.subs || [];
+    }
+  }
+
+  const temSubs = Object.values(grupoMap).some(g => g.subs.length > 0);
   if (!temSubs) {
-    container.innerHTML = '<p style="color:var(--text-muted)">Nenhuma subcategoria definida. Use o WhatsApp: "limitar Alimentação em 800 reais"</p>';
+    container.innerHTML = '<p style="color:var(--text-muted)">Nenhuma subcategoria definida. Use o botão acima para criar subcategorias dentro de cada categoria principal.</p>';
     btnSalvar.classList.add('hidden');
     return;
   }
@@ -803,13 +826,13 @@ function renderSubcategorias() {
   btnSalvar.classList.remove('hidden');
   let html = '';
 
-  for (const g of limites) {
+  for (const [catNome, g] of Object.entries(grupoMap)) {
     if (g.subs.length === 0) continue;
-    const maxVal = _getLimitePrincipal(g.categoria);
+    const maxVal = g.valor_limite;
 
     html += `<div class="orcamento-card">`;
     html += `<div class="orcamento-card-header">`;
-    html += `<span class="orcamento-cat-nome">${esc(g.categoria)}</span>`;
+    html += `<span class="orcamento-cat-nome">${esc(catNome)}</span>`;
     html += `<span class="orcamento-cat-valor" style="color:var(--text-muted)">Limite: ${fmtMoeda(maxVal)}</span>`;
     html += `</div>`;
 
@@ -817,17 +840,18 @@ function renderSubcategorias() {
       const pct = maxVal > 0 ? Math.round((sub.valor_limite / maxVal) * 100) : 0;
       html += `<div class="orcamento-sub-row">`;
       html += `<span class="orcamento-sub-nome">${esc(sub.categoria)}</span>`;
-      html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxVal}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(g.categoria)}" oninput="atualizarSliderSub(this)">`;
+      html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxVal}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(catNome)}" oninput="atualizarSliderSub(this)">`;
       html += `<span class="orcamento-sub-valor" id="sub-val-${esc(sub.categoria)}">${fmtMoeda(sub.valor_limite)} (${pct}%)</span>`;
+      html += `<button class="cat-del" title="Excluir subcategoria" onclick="excluirSubcategoria('${esc(sub.categoria)}', '${esc(catNome)}')">🗑️</button>`;
       html += `</div>`;
     }
-    html += `<div class="orcamento-sub-livre" id="livre-${esc(g.categoria)}"></div>`;
+    html += `<div class="orcamento-sub-livre" id="livre-${esc(catNome)}"></div>`;
     html += `</div>`;
   }
 
   container.innerHTML = html;
-  for (const g of limites) {
-    recalcularLivreSub(g.categoria);
+  for (const catNome of Object.keys(grupoMap)) {
+    if (grupoMap[catNome].subs.length > 0) recalcularLivreSub(catNome);
   }
 }
 
@@ -874,6 +898,35 @@ async function salvarSubcategorias() {
   try {
     await api('/api/limites', { method: 'PUT', body: JSON.stringify({ limites }) });
     toast('✅ Subcategorias salvas!', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function criarSubcategoria() {
+  const select = document.getElementById('sub-parent-select');
+  const input = document.getElementById('sub-nova-nome');
+  const parent = select.value;
+  const nome = input.value.trim();
+
+  if (!parent) { toast('Selecione uma categoria principal', 'error'); return; }
+  if (!nome) { toast('Digite um nome para a subcategoria', 'error'); return; }
+
+  try {
+    await api('/api/subcategorias', {
+      method: 'POST',
+      body: JSON.stringify({ nome, parent }),
+    });
+    input.value = '';
+    toast('✅ Subcategoria criada!', 'success');
+    await carregarOrcamento();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirSubcategoria(nome, parent) {
+  if (!confirm(`Excluir a subcategoria "${nome}" de "${parent}"?`)) return;
+  try {
+    await api('/api/subcategorias/' + encodeURIComponent(nome), { method: 'DELETE' });
+    toast('Subcategoria excluída.', 'success');
+    await carregarOrcamento();
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -1409,6 +1462,12 @@ function inicializar() {
   });
   document.getElementById('cat-nova').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('cat-criar').click();
+  });
+
+  // Criar subcategoria
+  document.getElementById('sub-criar').addEventListener('click', criarSubcategoria);
+  document.getElementById('sub-nova-nome').addEventListener('keydown', e => {
+    if (e.key === 'Enter') criarSubcategoria();
   });
 
   // Agenda nav

@@ -319,6 +319,33 @@ app.put('/api/limites', autenticar, async (req, res) => {
   }
 });
 
+// ── Subcategorias (criar/excluir vinculada a categoria principal) ────────────
+
+app.post('/api/subcategorias', autenticar, async (req, res) => {
+  try {
+    const { nome, parent } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Nome obrigatório' });
+    if (!parent || !parent.trim()) return res.status(400).json({ erro: 'Categoria principal obrigatória' });
+    await db.criarSubcategoria(req.usuarioId, nome.trim(), parent.trim());
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] POST /api/subcategorias:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/subcategorias/:nome', autenticar, async (req, res) => {
+  try {
+    const nome = decodeURIComponent(req.params.nome);
+    const resultado = await db.excluirSubcategoria(req.usuarioId, nome);
+    if (!resultado) return res.status(404).json({ erro: 'Subcategoria não encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/subcategorias:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 app.get('/api/salario', autenticar, async (req, res) => {
   try {
     const salario = await db.buscarSalarioUsuario(req.usuarioId);

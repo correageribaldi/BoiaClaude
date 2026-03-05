@@ -1505,6 +1505,32 @@ async function buscarSalarioUsuario(usuarioId) {
   return result.rows[0].total;
 }
 
+// Criar subcategoria vinculada a uma categoria principal (valor_limite começa em 0)
+async function criarSubcategoria(usuarioId, nome, parent) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
+     VALUES ($1, $2, 0, $3)
+     ON CONFLICT (usuario_id, categoria)
+     DO UPDATE SET ativo = TRUE, parent = $3
+     RETURNING id`,
+    [uid, nome.trim(), parent.trim()]
+  );
+  return result.rows[0].id;
+}
+
+// Excluir subcategoria (desativar)
+async function excluirSubcategoria(usuarioId, nome) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `UPDATE limites_categoria SET ativo = FALSE
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE AND parent IS NOT NULL
+     RETURNING id`,
+    [uid, nome.trim()]
+  );
+  return result.rows[0] || null;
+}
+
 // Remover limite de uma categoria
 async function removerLimite(usuarioId, categoria) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
@@ -2548,6 +2574,8 @@ module.exports = {
   definirLimite,
   listarLimites,
   removerLimite,
+  criarSubcategoria,
+  excluirSubcategoria,
   verificarLimite,
   limparDadosUsuario,
   buscarLembretesGeraisPorPeriodo,
