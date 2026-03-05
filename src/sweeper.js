@@ -36,8 +36,14 @@ async function sweeperRecorrentes(reminderQueue) {
     const regras = await db.listarRecorrentesAtivos();
     const agora = new Date();
 
+    const hojeStr = agora.toISOString().substring(0, 10);
+
     for (const r of regras) {
-      const proxima = db.calcularProximaOcorrenciaRecorrente(r, agora);
+      // Se já foi enviado hoje, calcular a partir do fim do dia para pular para amanhã
+      const refDate = (r.ultimo_envio === hojeStr)
+        ? new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 23, 59, 59)
+        : agora;
+      const proxima = db.calcularProximaOcorrenciaRecorrente(r, refDate);
       if (!proxima) continue;
 
       const jobId = `rec-${r.id}-${proxima.toISOString().substring(0, 10)}`;
@@ -74,19 +80,23 @@ async function reEnqueueOnStartup() {
 
     // Reminders pontuais futuros ainda pending
     const result = await db.pool?.query(
-      `SELECT id FROM reminders WHERE status = 'pending' AND run_at > NOW()`
+      `SELECT id, run_at FROM reminders WHERE status = 'pending' AND run_at > NOW()`
     );
     if (result && result.rows.length > 0) {
       for (const r of result.rows) {
-        const row = await db.pool.query(`SELECT id, run_at FROM reminders WHERE id = $1`, [r.id]);
-        if (!row.rows[0]) continue;
-        const runAt = new Date(row.rows[0].run_at);
+        const runAt = new Date(r.run_at);
         const delay = Math.max(0, runAt.getTime() - Date.now());
-        await reminderQueue.add('reminder',
-          { tipo: 'one_time', reminderId: r.id },
-          { jobId: `one-${r.id}`, delay, removeOnComplete: true, attempts: 5,
-            backoff: { type: 'exponential', delay: 10000 } }
-        );
+        try {
+          await reminderQueue.add('reminder',
+            { tipo: 'one_time', reminderId: r.id },
+            { jobId: `one-${r.id}`, delay, removeOnComplete: true, attempts: 5,
+              backoff: { type: 'exponential', delay: 10000 } }
+          );
+        } catch (err) {
+          if (!err.message?.includes('exists')) {
+            console.error(`[SWEEPER] Startup: erro ao re-enfileirar reminder ${r.id}:`, err.message);
+          }
+        }
       }
       console.log(`[SWEEPER] Startup: ${result.rows.length} reminder(s) pontual(is) re-enfileirado(s).`);
     }

@@ -3449,6 +3449,10 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
         { jobId, delay, removeOnComplete: true, attempts: 3,
           backoff: { type: 'exponential', delay: 30000 } }
       );
+      const delayMin = Math.round(delay / 60000);
+      console.log(`[HANDLER] Recorrente #${id} enfileirado: próxima ocorrência ${proxima.toISOString()} (delay ~${delayMin}min, jobId=${jobId})`);
+    } else {
+      console.warn(`[HANDLER] Recorrente #${id}: calcularProximaOcorrencia retornou null — sem job agendado`);
     }
   } catch (err) {
     console.error('[HANDLER] Erro ao enfileirar recorrente no BullMQ:', err.message);

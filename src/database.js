@@ -2144,37 +2144,38 @@ async function buscarLembreteRecorrentePorId(id) {
 }
 
 // Calcula a próxima data de disparo de um lembrete recorrente (pura, sem I/O)
+// aposData: Date de referência (geralmente now). Retorna a próxima Date de
+// disparo (incluindo hoje se o horário ainda não passou), ou null se expirou.
 function calcularProximaOcorrenciaRecorrente(regra, aposData) {
-  const d = new Date(aposData);
+  const ref = new Date(aposData);
   const [h, m] = regra.horario.split(':').map(Number);
+  const dataFimObj = regra.data_fim ? new Date(regra.data_fim + 'T23:59:59') : null;
 
-  // Começa a buscar a partir do dia seguinte para não re-disparar no mesmo dia
+  function diaValido(d) {
+    if (regra.frequencia === 'diario') return true;
+    if (regra.frequencia === 'semanal') return d.getDay() === regra.dia_semana;
+    if (regra.frequencia === 'mensal') return d.getDate() === regra.dia_mes;
+    return false;
+  }
+
+  // 1. Verificar se HOJE ainda tem uma ocorrência futura (horário > agora)
+  const hoje = new Date(ref);
+  hoje.setHours(h, m, 0, 0);
+  if (hoje > ref && diaValido(hoje)) {
+    if (!dataFimObj || hoje <= dataFimObj) return hoje;
+  }
+
+  // 2. Buscar o próximo dia válido a partir de amanhã
+  const d = new Date(ref);
   d.setDate(d.getDate() + 1);
   d.setHours(h, m, 0, 0);
 
-  const dataFimObj = regra.data_fim ? new Date(regra.data_fim + 'T23:59:59') : null;
-
-  if (regra.frequencia === 'diario') {
-    if (dataFimObj && d > dataFimObj) return null;
-    return d;
-  }
-  if (regra.frequencia === 'semanal') {
-    for (let i = 0; i < 7; i++) {
-      if (d.getDay() === regra.dia_semana) break;
-      d.setDate(d.getDate() + 1);
+  for (let i = 0; i < 400; i++) {
+    if (diaValido(d)) {
+      if (dataFimObj && d > dataFimObj) return null;
+      return new Date(d);
     }
-    if (dataFimObj && d > dataFimObj) return null;
-    return d;
-  }
-  if (regra.frequencia === 'mensal') {
-    // Tenta o dia certo no mês atual; se já passou, vai pro próximo mês
-    d.setDate(regra.dia_mes);
-    if (d <= aposData) {
-      d.setMonth(d.getMonth() + 1);
-      d.setDate(regra.dia_mes);
-    }
-    if (dataFimObj && d > dataFimObj) return null;
-    return d;
+    d.setDate(d.getDate() + 1);
   }
   return null;
 }
