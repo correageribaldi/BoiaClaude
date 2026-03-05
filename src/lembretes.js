@@ -179,9 +179,6 @@ async function verificarLembretesRecorrentes(client) {
   }
 }
 
-// Guard para evitar execuções sobrepostas no cron de lembretes por minuto
-let _rodandoVerificacao = false;
-
 function iniciarLembretes(client) {
   // Rodada 1: 10:00
   cron.schedule('0 10 * * *', async () => {
@@ -201,23 +198,8 @@ function iniciarLembretes(client) {
     await executarRodada(client, 3);
   }, { timezone: 'America/Sao_Paulo' });
 
-  // Lembretes recorrentes legacy (fallback): verifica a cada minuto
-  // Nota: lembretes pontuais são gerenciados pelo BullMQ (worker-reminders.js)
-  cron.schedule('* * * * *', async () => {
-    if (_rodandoVerificacao) {
-      console.log('[LEMBRETE] Tick ignorado — verificação anterior ainda em andamento.');
-      return;
-    }
-    _rodandoVerificacao = true;
-    try {
-      await verificarLembretesRecorrentes(client);
-    } finally {
-      _rodandoVerificacao = false;
-    }
-  }, { timezone: 'America/Sao_Paulo' });
-
   console.log('⏰ Lembretes financeiros: 10:00, 13:00 e 20:00 (horário de Brasília)');
-  console.log('🔔 Lembretes recorrentes (legacy fallback): verificação a cada minuto');
+  console.log('🔔 Lembretes recorrentes/pontuais gerenciados pelo BullMQ (worker-reminders.js)');
 }
 
 module.exports = { iniciarLembretes };
