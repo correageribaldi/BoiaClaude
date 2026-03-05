@@ -1846,6 +1846,13 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleLista(usuarioId, msg);
   }
 
+  // Comando: excluir cartão de crédito (redirecionar para remover cartão)
+  if (/^(?:excluir|remover|deletar|apagar)\s+cart[aã]o/.test(lower)) {
+    const nomeMatch = lower.match(/cart[aã]o(?:\s+de\s+cr[eé]dito)?\s+(.+)/);
+    const cartao_nome = nomeMatch ? nomeMatch[1].trim() : null;
+    return await handleRemoverCartao(usuarioId, { cartao_nome: cartao_nome || null });
+  }
+
   // Comando: excluir
   if (lower.startsWith('excluir ')) {
     return await handleExcluir(usuarioId, msg);
