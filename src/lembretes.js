@@ -156,26 +156,7 @@ async function executarRodada(client, rodada) {
   }
 }
 
-// Verifica e envia lembretes gerais que já venceram (roda a cada minuto)
-async function verificarLembretesGerais(client) {
-  try {
-    const lembretes = await db.buscarLembretesParaDisparar();
-
-    for (const l of lembretes) {
-      try {
-        const msg = `🔔 *Lembrete!*\n\nEi, passando pra te lembrar: *${l.mensagem}*\n\nBora lá! 💪`;
-        await client.sendMessage(l.usuario_id, msg);
-        console.log(`[LEMBRETE GERAL] Enviado para ${l.usuario_id}: "${l.mensagem}"`);
-      } catch (err) {
-        console.error(`[LEMBRETE GERAL] Erro ao enviar para ${l.usuario_id}:`, err.message);
-      }
-    }
-  } catch (err) {
-    console.error('[LEMBRETE GERAL] Erro ao verificar lembretes:', err.message);
-  }
-}
-
-// Verifica e envia lembretes recorrentes (roda a cada minuto)
+// Verifica e envia lembretes recorrentes (roda a cada minuto) — FALLBACK legacy
 async function verificarLembretesRecorrentes(client) {
   try {
     // Desativar expirados primeiro
@@ -220,7 +201,8 @@ function iniciarLembretes(client) {
     await executarRodada(client, 3);
   }, { timezone: 'America/Sao_Paulo' });
 
-  // Lembretes gerais e recorrentes: verifica a cada minuto
+  // Lembretes recorrentes legacy (fallback): verifica a cada minuto
+  // Nota: lembretes pontuais são gerenciados pelo BullMQ (worker-reminders.js)
   cron.schedule('* * * * *', async () => {
     if (_rodandoVerificacao) {
       console.log('[LEMBRETE] Tick ignorado — verificação anterior ainda em andamento.');
@@ -228,7 +210,6 @@ function iniciarLembretes(client) {
     }
     _rodandoVerificacao = true;
     try {
-      await verificarLembretesGerais(client);
       await verificarLembretesRecorrentes(client);
     } finally {
       _rodandoVerificacao = false;
@@ -236,7 +217,7 @@ function iniciarLembretes(client) {
   }, { timezone: 'America/Sao_Paulo' });
 
   console.log('⏰ Lembretes financeiros: 10:00, 13:00 e 20:00 (horário de Brasília)');
-  console.log('🔔 Lembretes gerais e recorrentes: verificação a cada minuto');
+  console.log('🔔 Lembretes recorrentes (legacy fallback): verificação a cada minuto');
 }
 
 module.exports = { iniciarLembretes };

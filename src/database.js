@@ -525,6 +525,24 @@ async function initTables() {
   await pool.query(`
     INSERT INTO categorias (nome) VALUES ('Cartão') ON CONFLICT (nome) DO NOTHING;
   `);
+
+  // Tabela de lembretes pontuais (substituição de lembretes_gerais, com BullMQ)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      mensagem TEXT NOT NULL,
+      run_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','sending','sent','failed','canceled')),
+      attempts INT NOT NULL DEFAULT 0,
+      locked_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_reminders_status_run_at ON reminders(status, run_at);
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -2018,6 +2036,149 @@ async function calcularUsoCartao(cartaoId, diaFechamento) {
   return { total: res.rows[0].total, qtd: res.rows[0].qtd, inicioStr, fimStr: hojeStr };
 }
 
+// ─── Reminders (BullMQ) ──────────────────────────────────────────────────────
+
+async function createReminder(usuarioId, mensagem, runAt) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO reminders (usuario_id, mensagem, run_at)
+     VALUES ($1, $2, $3)
+     RETURNING id`,
+    [uid, mensagem, runAt]
+  );
+  return result.rows[0].id;
+}
+
+// Claim atômico: muda pending→sending e retorna a linha (ou null se já processado)
+async function claimReminder(id) {
+  const result = await pool.query(
+    `UPDATE reminders
+     SET status = 'sending', locked_at = NOW(), attempts = attempts + 1
+     WHERE id = $1 AND status = 'pending'
+     RETURNING id, usuario_id, mensagem`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+async function markReminderSent(id) {
+  await pool.query(
+    `UPDATE reminders SET status = 'sent', sent_at = NOW() WHERE id = $1`,
+    [id]
+  );
+}
+
+async function markReminderFailed(id, errorMsg) {
+  await pool.query(
+    `UPDATE reminders SET status = 'failed', last_error = $2 WHERE id = $1`,
+    [id, errorMsg]
+  );
+}
+
+async function cancelReminder(id, usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `UPDATE reminders SET status = 'canceled'
+     WHERE id = $1 AND usuario_id = $2 AND status = 'pending'
+     RETURNING id, mensagem`,
+    [id, uid]
+  );
+  return result.rows[0] || null;
+}
+
+// Reminders pendentes atrasados (run_at <= NOW() - 30s): para o sweeper re-enfileirar
+async function buscarRemindersPendentesAtrasados() {
+  const result = await pool.query(
+    `SELECT id, usuario_id, mensagem, run_at
+     FROM reminders
+     WHERE status = 'pending' AND run_at <= NOW() - INTERVAL '30 seconds'
+     ORDER BY run_at ASC
+     LIMIT 50`
+  );
+  return result.rows;
+}
+
+// Lembretes futuros pendentes de um usuário (para exibição e re-enqueue no startup)
+async function buscarRemindersAgendados(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, mensagem,
+            TO_CHAR(run_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') as horario
+     FROM reminders
+     WHERE usuario_id = $1 AND status = 'pending' AND run_at > NOW()
+     ORDER BY run_at ASC`,
+    [uid]
+  );
+  return result.rows;
+}
+
+// Todos os lembretes recorrentes ativos (para sweeper + re-enqueue no startup)
+async function listarRecorrentesAtivos() {
+  const result = await pool.query(
+    `SELECT id, usuario_id, mensagem,
+            TO_CHAR(horario, 'HH24:MI') as horario,
+            frequencia, dia_semana, dia_mes,
+            TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim,
+            TO_CHAR(ultimo_envio, 'YYYY-MM-DD') as ultimo_envio
+     FROM lembretes_recorrentes
+     WHERE ativo = TRUE AND (data_fim IS NULL OR data_fim >= CURRENT_DATE)
+     ORDER BY id ASC`
+  );
+  return result.rows;
+}
+
+// Buscar lembrete recorrente por id (para o worker)
+async function buscarLembreteRecorrentePorId(id) {
+  const result = await pool.query(
+    `SELECT id, usuario_id, mensagem,
+            TO_CHAR(horario, 'HH24:MI') as horario,
+            frequencia, dia_semana, dia_mes,
+            TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim,
+            TO_CHAR(ultimo_envio, 'YYYY-MM-DD') as ultimo_envio,
+            ativo
+     FROM lembretes_recorrentes
+     WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+// Calcula a próxima data de disparo de um lembrete recorrente (pura, sem I/O)
+function calcularProximaOcorrenciaRecorrente(regra, aposData) {
+  const d = new Date(aposData);
+  const [h, m] = regra.horario.split(':').map(Number);
+
+  // Começa a buscar a partir do dia seguinte para não re-disparar no mesmo dia
+  d.setDate(d.getDate() + 1);
+  d.setHours(h, m, 0, 0);
+
+  const dataFimObj = regra.data_fim ? new Date(regra.data_fim + 'T23:59:59') : null;
+
+  if (regra.frequencia === 'diario') {
+    if (dataFimObj && d > dataFimObj) return null;
+    return d;
+  }
+  if (regra.frequencia === 'semanal') {
+    for (let i = 0; i < 7; i++) {
+      if (d.getDay() === regra.dia_semana) break;
+      d.setDate(d.getDate() + 1);
+    }
+    if (dataFimObj && d > dataFimObj) return null;
+    return d;
+  }
+  if (regra.frequencia === 'mensal') {
+    // Tenta o dia certo no mês atual; se já passou, vai pro próximo mês
+    d.setDate(regra.dia_mes);
+    if (d <= aposData) {
+      d.setMonth(d.getMonth() + 1);
+      d.setDate(regra.dia_mes);
+    }
+    if (dataFimObj && d > dataFimObj) return null;
+    return d;
+  }
+  return null;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -2112,4 +2273,14 @@ module.exports = {
   calcularUsoCartao,
   calcularCreditoComprometido,
   adicionarTransacoesParcelas,
+  createReminder,
+  claimReminder,
+  markReminderSent,
+  markReminderFailed,
+  cancelReminder,
+  buscarRemindersPendentesAtrasados,
+  buscarRemindersAgendados,
+  listarRecorrentesAtivos,
+  buscarLembreteRecorrentePorId,
+  calcularProximaOcorrenciaRecorrente,
 };

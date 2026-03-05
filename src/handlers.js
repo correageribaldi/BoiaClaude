@@ -3222,7 +3222,20 @@ async function handleLembreteHorario(usuarioId, msg, pendente) {
 }
 
 async function criarEConfirmarLembrete(usuarioId, mensagem, disparaEm, minutos, horario) {
-  const id = await db.criarLembreteGeral(usuarioId, mensagem, disparaEm);
+  // Salvar no Postgres e enfileirar no BullMQ com delay preciso
+  const id = await db.createReminder(usuarioId, mensagem, disparaEm.toISOString());
+  try {
+    const { reminderQueue } = require('./queue');
+    const delay = Math.max(0, disparaEm.getTime() - Date.now());
+    await reminderQueue.add('reminder',
+      { tipo: 'one_time', reminderId: id },
+      { jobId: `one-${id}`, delay, removeOnComplete: true,
+        attempts: 5, backoff: { type: 'exponential', delay: 10000 } }
+    );
+  } catch (err) {
+    console.error('[HANDLER] Erro ao enfileirar lembrete no BullMQ:', err.message);
+    // O sweeper vai re-enfileirar depois se necessário
+  }
 
   // Formatar horário para exibição
   const horaStr = disparaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
@@ -3257,7 +3270,12 @@ async function criarEConfirmarLembrete(usuarioId, mensagem, disparaEm, minutos, 
 }
 
 async function handleListarLembretes(usuarioId) {
-  const lembretes = await db.listarLembretesGerais(usuarioId);
+  // Busca nos dois sistemas: novo (reminders) + legado (lembretes_gerais)
+  const [novos, legados] = await Promise.all([
+    db.buscarRemindersAgendados(usuarioId),
+    db.listarLembretesGerais(usuarioId),
+  ]);
+  const lembretes = [...novos, ...legados];
 
   if (lembretes.length === 0) {
     return '⏰ Nenhum lembrete ativo no momento.';
@@ -3272,10 +3290,12 @@ async function handleListarLembretes(usuarioId) {
 }
 
 async function handleListarTodosLembretes(usuarioId) {
-  const [lembretes, recorrentes] = await Promise.all([
+  const [novos, legados, recorrentes] = await Promise.all([
+    db.buscarRemindersAgendados(usuarioId),
     db.listarLembretesGerais(usuarioId),
     db.listarLembretesRecorrentes(usuarioId),
   ]);
+  const lembretes = [...novos, ...legados];
 
   if (lembretes.length === 0 && recorrentes.length === 0) {
     return '⏰ Você não tem nenhum lembrete ativo no momento.\n\n_Dica: me fala algo como "me lembre daqui 30 min de pegar o Noah" ou "todo dia às 8h me lembra de tomar o remédio"_';
@@ -3318,7 +3338,10 @@ async function handleCancelarLembrete(usuarioId, msg) {
     return '❌ Informe o ID do lembrete.\n\nExemplo: cancelar lembrete #5';
   }
 
-  const resultado = await db.cancelarLembreteGeral(usuarioId, id);
+  // Tentar cancelar primeiro na tabela nova (reminders), depois na legada (lembretes_gerais)
+  const resultado = await db.cancelReminder(id, usuarioId)
+    || await db.cancelarLembreteGeral(usuarioId, id);
+
   if (!resultado) {
     return `❌ Lembrete #${id} não encontrado ou já foi enviado.`;
   }
@@ -3398,12 +3421,38 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
     dataFim = dateParaISO(fim);
   }
 
+  const diaSemanaFinal = frequencia === 'semanal' ? (dia_semana ?? new Date().getDay()) : null;
+  const diaMesFinal = frequencia === 'mensal' ? (dia_mes ?? new Date().getDate()) : null;
+
   const id = await db.criarLembreteRecorrente(
     usuarioId, mensagem, horario, frequencia,
-    frequencia === 'semanal' ? (dia_semana ?? new Date().getDay()) : null,
-    frequencia === 'mensal' ? (dia_mes ?? new Date().getDate()) : null,
+    diaSemanaFinal,
+    diaMesFinal,
     dataFim
   );
+
+  // Agendar a primeira ocorrência na fila BullMQ
+  try {
+    const { reminderQueue } = require('./queue');
+    const regraParaCalculo = {
+      id, horario, frequencia,
+      dia_semana: diaSemanaFinal,
+      dia_mes: diaMesFinal,
+      data_fim: dataFim,
+    };
+    const proxima = db.calcularProximaOcorrenciaRecorrente(regraParaCalculo, new Date());
+    if (proxima) {
+      const delay = Math.max(0, proxima.getTime() - Date.now());
+      const jobId = `rec-${id}-${proxima.toISOString().substring(0, 10)}`;
+      await reminderQueue.add('reminder',
+        { tipo: 'recurrente', lembreteRecorrenteId: id, runAt: proxima.toISOString() },
+        { jobId, delay, removeOnComplete: true, attempts: 3,
+          backoff: { type: 'exponential', delay: 30000 } }
+      );
+    }
+  } catch (err) {
+    console.error('[HANDLER] Erro ao enfileirar recorrente no BullMQ:', err.message);
+  }
 
   let freqTexto;
   if (frequencia === 'diario') {

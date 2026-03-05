@@ -9,6 +9,9 @@ const db = require('./database');
 const pagamento = require('./pagamento');
 const { iniciarLembretes } = require('./lembretes');
 const { iniciarWebServer } = require('./webserver');
+const { connection } = require('./queue');
+const { criarWorkerReminders } = require('./worker-reminders');
+const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
@@ -39,8 +42,20 @@ client.on('ready', () => {
   console.log('📊 Cronos Assistente Pessoal está rodando.');
   console.log('   Envie "ajuda" no WhatsApp para ver os comandos.');
 
-  // Iniciar sistema de lembretes automáticos
+  // Iniciar sistema de lembretes financeiros (cron 10h/13h/20h)
   iniciarLembretes(client);
+
+  // Iniciar worker BullMQ para lembretes pontuais e recorrentes
+  criarWorkerReminders(client, connection);
+
+  // Re-enfileirar reminders pendentes após restart do processo
+  reEnqueueOnStartup().catch(err =>
+    console.error('[STARTUP] Erro no reEnqueueOnStartup:', err.message)
+  );
+
+  // Sweeper fallback: roda a cada 60s para cobrir jobs perdidos
+  setInterval(sweeperReminders, 60_000);
+  console.log('🔁 Sweeper de lembretes iniciado (60s).');
 
   // Iniciar polling de pagamentos pendentes (fallback do webhook)
   pagamento.iniciarPollingPagamentos(client);
