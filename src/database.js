@@ -1593,13 +1593,29 @@ async function garantirSubcategoria(usuarioId, subcategoria, parent) {
     [uid, subcategoria.trim()]
   );
   if (existing.rows.length > 0) return;
-  // Cria com valor_limite 0
+
+  // Calcular saldo livre da categoria principal (limite total - soma das subs existentes)
+  const parentLimit = await pool.query(
+    `SELECT valor_limite::float FROM limites_categoria
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE AND parent IS NULL`,
+    [uid, parent.trim()]
+  );
+  const limiteParent = parentLimit.rows.length > 0 ? parentLimit.rows[0].valor_limite : 0;
+
+  const subsExistentes = await pool.query(
+    `SELECT COALESCE(SUM(valor_limite), 0)::float AS total FROM limites_categoria
+     WHERE usuario_id = $1 AND parent = $2 AND ativo = TRUE`,
+    [uid, parent.trim()]
+  );
+  const totalSubsAlocado = subsExistentes.rows[0].total;
+  const saldoLivre = Math.max(0, limiteParent - totalSubsAlocado);
+
   await pool.query(
     `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
-     VALUES ($1, $2, 0, $3)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (usuario_id, categoria)
-     DO UPDATE SET ativo = TRUE, parent = $3`,
-    [uid, subcategoria.trim(), parent.trim()]
+     DO UPDATE SET ativo = TRUE, parent = $4, valor_limite = $3`,
+    [uid, subcategoria.trim(), saldoLivre, parent.trim()]
   );
 }
 
