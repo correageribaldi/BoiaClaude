@@ -792,66 +792,70 @@ function _populateParentSelect() {
   }
 }
 
-function renderSubcategorias() {
-  const container = document.getElementById('subcategorias-container');
-  const btnSalvar = document.getElementById('subcategorias-salvar');
+// Build internal map: every principal category with its subs
+function _buildSubMap() {
   const { limites, categoriasPrincipais } = _orcamentoData;
-
-  _populateParentSelect();
-
-  if (categoriasPrincipais.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted)">Defina as categorias principais primeiro.</p>';
-    btnSalvar.classList.add('hidden');
-    return;
-  }
-
-  // Build a map: each principal category -> its subs (from limites data)
   const grupoMap = {};
   for (const cat of categoriasPrincipais) {
     grupoMap[cat.nome] = { valor_limite: _getLimitePrincipal(cat.nome), subs: [] };
   }
   for (const g of limites) {
     if (grupoMap[g.categoria]) {
-      grupoMap[g.categoria].subs = g.subs || [];
+      grupoMap[g.categoria].subs = (g.subs || []).slice();
     }
   }
+  return grupoMap;
+}
 
-  const temSubs = Object.values(grupoMap).some(g => g.subs.length > 0);
-  if (!temSubs) {
-    container.innerHTML = '<p style="color:var(--text-muted)">Nenhuma subcategoria definida. Use o botão acima para criar subcategorias dentro de cada categoria principal.</p>';
+function renderSubcategorias() {
+  const container = document.getElementById('subcategorias-container');
+  const btnSalvar = document.getElementById('subcategorias-salvar');
+  const { categoriasPrincipais, salario } = _orcamentoData;
+
+  _populateParentSelect();
+
+  if (categoriasPrincipais.length === 0 || !salario || salario <= 0) {
+    container.innerHTML = '<p style="color:var(--text-muted)">Defina as categorias principais e o salário primeiro.</p>';
     btnSalvar.classList.add('hidden');
     return;
   }
 
-  btnSalvar.classList.remove('hidden');
+  const grupoMap = _buildSubMap();
+  const temSubs = Object.values(grupoMap).some(g => g.subs.length > 0);
+
+  btnSalvar.classList.toggle('hidden', !temSubs);
   let html = '';
 
   for (const [catNome, g] of Object.entries(grupoMap)) {
-    if (g.subs.length === 0) continue;
     const maxVal = g.valor_limite;
 
     html += `<div class="orcamento-card">`;
     html += `<div class="orcamento-card-header">`;
     html += `<span class="orcamento-cat-nome">${esc(catNome)}</span>`;
-    html += `<span class="orcamento-cat-valor" style="color:var(--text-muted)">Limite: ${fmtMoeda(maxVal)}</span>`;
+    html += `<span class="orcamento-cat-valor">${fmtMoeda(maxVal)}</span>`;
     html += `</div>`;
 
-    for (const sub of g.subs) {
-      const pct = maxVal > 0 ? Math.round((sub.valor_limite / maxVal) * 100) : 0;
-      html += `<div class="orcamento-sub-row">`;
-      html += `<span class="orcamento-sub-nome">${esc(sub.categoria)}</span>`;
-      html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxVal}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(catNome)}" oninput="atualizarSliderSub(this)">`;
-      html += `<span class="orcamento-sub-valor" id="sub-val-${esc(sub.categoria)}">${fmtMoeda(sub.valor_limite)} (${pct}%)</span>`;
-      html += `<button class="cat-del" title="Excluir subcategoria" onclick="excluirSubcategoria('${esc(sub.categoria)}', '${esc(catNome)}')">🗑️</button>`;
-      html += `</div>`;
+    if (g.subs.length > 0) {
+      for (const sub of g.subs) {
+        const pct = maxVal > 0 ? Math.round((sub.valor_limite / maxVal) * 100) : 0;
+        html += `<div class="orcamento-sub-row">`;
+        html += `<span class="orcamento-sub-nome">${esc(sub.categoria)}</span>`;
+        html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxVal}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(catNome)}" oninput="atualizarSliderSub(this)">`;
+        html += `<span class="orcamento-sub-valor" id="sub-val-${esc(sub.categoria)}">${fmtMoeda(sub.valor_limite)} (${pct}%)</span>`;
+        html += `<button class="cat-del" title="Excluir" onclick="excluirSubcategoria('${esc(sub.categoria)}', '${esc(catNome)}')">🗑️</button>`;
+        html += `</div>`;
+      }
+      html += `<div class="orcamento-sub-livre" id="livre-${esc(catNome)}"></div>`;
+    } else {
+      html += `<p style="color:var(--text-muted);font-size:12px;margin:4px 0 0">Nenhuma subcategoria</p>`;
     }
-    html += `<div class="orcamento-sub-livre" id="livre-${esc(catNome)}"></div>`;
+
     html += `</div>`;
   }
 
   container.innerHTML = html;
-  for (const catNome of Object.keys(grupoMap)) {
-    if (grupoMap[catNome].subs.length > 0) recalcularLivreSub(catNome);
+  for (const [catNome, g] of Object.entries(grupoMap)) {
+    if (g.subs.length > 0) recalcularLivreSub(catNome);
   }
 }
 
@@ -859,32 +863,42 @@ function atualizarSliderSub(slider) {
   const cat = slider.dataset.cat;
   const parent = slider.dataset.parent;
   const val = parseFloat(slider.value);
+
+  // Update in-memory data
   const g = _orcamentoData.limites.find(l => l.categoria === parent);
   if (g) {
     const sub = g.subs.find(s => s.categoria === cat);
     if (sub) sub.valor_limite = val;
   }
+
   const parentVal = _getLimitePrincipal(parent);
   const pct = parentVal > 0 ? Math.round((val / parentVal) * 100) : 0;
   const valEl = document.getElementById(`sub-val-${cat}`);
   if (valEl) valEl.textContent = `${fmtMoeda(val)} (${pct}%)`;
   recalcularLivreSub(parent);
+
+  document.getElementById('subcategorias-salvar').classList.remove('hidden');
 }
 
 function recalcularLivreSub(parentCat) {
-  const g = _orcamentoData.limites.find(l => l.categoria === parentCat);
+  const grupoMap = _buildSubMap();
+  const g = grupoMap[parentCat];
   if (!g || g.subs.length === 0) return;
-  const somaSubs = g.subs.reduce((s, sub) => s + sub.valor_limite, 0);
-  const livre = _getLimitePrincipal(parentCat) - somaSubs;
+
+  // Use in-memory values (may have been adjusted by sliders)
+  const limG = _orcamentoData.limites.find(l => l.categoria === parentCat);
+  const subs = limG ? limG.subs : g.subs;
+  const somaSubs = subs.reduce((s, sub) => s + sub.valor_limite, 0);
+  const livre = g.valor_limite - somaSubs;
   const el = document.getElementById(`livre-${parentCat}`);
-  if (el) {
-    if (livre >= 0) {
-      el.innerHTML = `💡 Livre: ${fmtMoeda(livre)}`;
-      el.className = 'orcamento-sub-livre';
-    } else {
-      el.innerHTML = `🚨 Excedido em ${fmtMoeda(Math.abs(livre))}`;
-      el.className = 'orcamento-sub-livre orcamento-sub-excedido';
-    }
+  if (!el) return;
+
+  if (livre >= 0) {
+    el.innerHTML = `<span style="color:var(--green)">💡 Livre: ${fmtMoeda(livre)}</span>`;
+    el.className = 'orcamento-sub-livre';
+  } else {
+    el.innerHTML = `<span style="color:var(--red)">🚨 Excedido em ${fmtMoeda(Math.abs(livre))}</span>`;
+    el.className = 'orcamento-sub-livre orcamento-sub-excedido';
   }
 }
 
