@@ -920,6 +920,7 @@ body {
   color: var(--text-muted);
 }
 .accordion-body { padding: 0 18px 18px; }
+.accordion-desc { color: var(--text-muted); font-size: 13px; margin-bottom: 12px; line-height: 1.4; }
 
 /* ── Orçamento Mensal ────────────────────────────────────────────────────── */
 .orcamento-salario-bar {

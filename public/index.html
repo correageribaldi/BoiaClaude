@@ -186,24 +186,31 @@
             <span class="accordion-icon">›</span>
           </button>
           <div class="accordion-body hidden">
-            <div class="create-bar">
-              <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova categoria..." maxlength="50" />
-              <button class="btn btn-primary" id="cat-criar">+ Criar</button>
-            </div>
-            <div class="cat-grid" id="cat-grid"></div>
+            <p class="accordion-desc">Distribua seu salário entre as categorias principais. A soma deve fechar com o salário total.</p>
+            <div id="orcamento-salario" class="orcamento-salario-bar hidden"></div>
+            <div id="orcamento-container"></div>
+            <div id="orcamento-saldo" class="orcamento-saldo hidden"></div>
+            <button class="btn btn-primary hidden" id="orcamento-salvar" onclick="salvarOrcamento()">Salvar Orçamento</button>
           </div>
         </div>
 
         <div class="accordion-item">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span>📊 Orçamento / Subcategorias</span>
+            <span>📊 Subcategorias</span>
             <span class="accordion-icon">›</span>
           </button>
           <div class="accordion-body hidden">
-            <div id="orcamento-salario" class="orcamento-salario-bar hidden"></div>
-            <div id="orcamento-container"></div>
-            <div id="orcamento-saldo" class="orcamento-saldo hidden"></div>
-            <button class="btn btn-primary hidden" id="orcamento-salvar" onclick="salvarOrcamento()">Salvar Orçamento</button>
+            <p class="accordion-desc">Distribua o limite de cada categoria principal entre suas subcategorias.</p>
+            <div id="subcategorias-container"></div>
+            <button class="btn btn-primary hidden" id="subcategorias-salvar" onclick="salvarSubcategorias()">Salvar Subcategorias</button>
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+              <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Criar nova subcategoria</p>
+              <div class="create-bar">
+                <input class="search-input" id="cat-nova" type="text" placeholder="Nome da nova subcategoria..." maxlength="50" />
+                <button class="btn btn-primary" id="cat-criar">+ Criar</button>
+              </div>
+              <div class="cat-grid" id="cat-grid"></div>
+            </div>
           </div>
         </div>
 
