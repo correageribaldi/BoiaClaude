@@ -5412,16 +5412,76 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   const campo = ip.esperandoCampo;
   const lower = texto.toLowerCase().trim();
 
-  // Detectar intenção de editar/remover itens já adicionados
+  // Detectar intenção de editar o PRÓPRIO item parcial em andamento
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
+    // Verificar se quer editar um campo do item parcial atual (valor, nome, dia)
+    const querEditarValor = /\b(valor|preco|preço|quanto|custo)\b/.test(lower);
+    const querEditarNome = /\b(nome|descri[çc][aã]o|chamar?)\b/.test(lower);
+    const querEditarDia = /\b(dia|data|vencimento)\b/.test(lower);
+
+    const nomeItemLower = normalizarTextoBusca(ip.descricao || '');
+    const textoRefereItemAtual = nomeItemLower && lower.includes(nomeItemLower);
+
+    // Se não menciona campo específico nem item específico, assume edição do campo principal do item atual
+    // "alterar para 1500" → edita valor do item atual
+    const nenhumCampoEspecifico = !querEditarValor && !querEditarNome && !querEditarDia;
+    const temValorNoTexto = /\d/.test(texto);
+    const assumirValorAtual = nenhumCampoEspecifico && temValorNoTexto;
+
+    if ((querEditarValor || textoRefereItemAtual || assumirValorAtual) && !querEditarNome && !querEditarDia) {
+      // Editar valor do item parcial
+      const valor = await extrairValorRobusto(texto);
+      if (valor && valor > 0) {
+        ip.valor = valor;
+        salvarPontoZero(usuarioId, estado);
+        const proximoCampo = proximoCampoFaltante(ip, estado.etapa);
+        if (proximoCampo) {
+          ip.esperandoCampo = proximoCampo;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Valor de *${ip.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntarCampoFaltante(proximoCampo, ip.descricao)}`;
+        }
+        // Item completo — não deveria acontecer aqui, mas por segurança
+        return `✅ Valor de *${ip.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!`;
+      }
+      return `Qual o novo valor para *${ip.descricao}*?\n_Ex: "R$ 1.500" ou "1500"_`;
+    }
+
+    if (querEditarNome) {
+      const matchPara = texto.match(/\b(?:para|pra)\s+(.+)$/i);
+      if (matchPara) {
+        const novoNome = matchPara[1].trim().replace(/[.,!?]+$/, '');
+        if (novoNome.length >= 2) {
+          ip.descricao = novoNome;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Renomeado para *${novoNome}*!\n\n${perguntarCampoFaltante(campo, ip.descricao)}`;
+        }
+      }
+      return `Qual o novo nome?\n_Ex: "alterar nome para Financiamento"_`;
+    }
+
+    if (querEditarDia && ip.dia) {
+      const dia = extrairDiaDoTexto(texto);
+      if (dia) {
+        ip.dia = dia;
+        salvarPontoZero(usuarioId, estado);
+        return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(campo, ip.descricao)}`;
+      }
+      return `Qual o novo dia?\n_Ex: "dia 10" ou "10"_`;
+    }
+
+    // Se não é edição do item atual, tenta editar itens já adicionados
+    const resp = await editarItemFluxo(usuarioId, texto, estado);
+    if (!resp.includes('Não encontrei')) {
+      return resp + `\n\n_Continuando..._\n${perguntarCampoFaltante(campo, ip.descricao)}`;
+    }
+    // Fallback: não encontrou nada, tratar como resposta normal
+  }
+
+  // Detectar intenção de remover itens já adicionados
   const matchRemoverSub = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
   if (matchRemoverSub) {
     const campoFaltante = perguntarCampoFaltante(campo, ip.descricao);
     return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando..._\n${campoFaltante}`;
-  }
-  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)) {
-    const campoFaltante = perguntarCampoFaltante(campo, ip.descricao);
-    const resp = await editarItemFluxo(usuarioId, texto, estado);
-    return resp + `\n\n_Continuando..._\n${campoFaltante}`;
   }
 
   if (campo === 'valor') {
