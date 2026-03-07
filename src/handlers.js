@@ -5404,6 +5404,19 @@ function perguntarCampoFaltante(campo, descricao) {
 async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   const ip = estado.itemParcial;
   const campo = ip.esperandoCampo;
+  const lower = texto.toLowerCase().trim();
+
+  // Detectar intenção de editar/remover itens já adicionados
+  const matchRemoverSub = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+  if (matchRemoverSub) {
+    const campoFaltante = perguntarCampoFaltante(campo, ip.descricao);
+    return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando..._\n${campoFaltante}`;
+  }
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)) {
+    const campoFaltante = perguntarCampoFaltante(campo, ip.descricao);
+    const resp = await editarItemFluxo(usuarioId, texto, estado);
+    return resp + `\n\n_Continuando..._\n${campoFaltante}`;
+  }
 
   if (campo === 'valor') {
     const valor = await extrairValorRobusto(texto);
@@ -5521,6 +5534,18 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
       return `✅ Dia de vencimento atualizado para dia *${dia}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
     }
     return `Qual o dia de vencimento? _Ex: "dia 22"_`;
+  }
+
+  // Detectar intenção de editar/remover itens já adicionados (caixinhas, receitas, outros cartões)
+  const matchRemoverSub = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+  if (matchRemoverSub && !/\b(limite|fatura|fechamento|vencimento)\b/.test(lower)) {
+    return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando o cadastro do cartão *${cc.nome}*..._\n${perguntaCartaoCampo(cc)}`;
+  }
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)
+      && !editandoLimite && !editandoFatura && !editandoFecha && !editandoVence) {
+    // Está querendo editar algo que não é campo do cartão atual
+    const resp = await editarItemFluxo(usuarioId, texto, estado);
+    return resp + `\n\n_Continuando o cadastro do cartão *${cc.nome}*..._\n${perguntaCartaoCampo(cc)}`;
   }
 
   // Fluxo normal — cada campo em sequência
@@ -5865,10 +5890,33 @@ function finalizarCadastroCartaoCompleto(estado, cc, usuarioId) {
   return resumo;
 }
 
+function perguntaCaixinhaCampo(inv) {
+  switch (inv.campo) {
+    case 'saldo': return `Quanto você tem guardado na *${inv.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
+    case 'meta': return `Qual a *meta* para *${inv.nome}*? 🎯\n_Ex: "R$ 20.000" — ou "pular"_`;
+    case 'tipo': return `Que *tipo* de investimento é *${inv.nome}*?\n_Ex: "Renda fixa", "Ações"... ou "pular"_`;
+    default: return '';
+  }
+}
+
 async function handleInvestimentoCadastro(usuarioId, texto, estado) {
   const inv = estado.investimentoEmCadastro;
   const lower = texto.toLowerCase().trim();
   const isPular = lower === 'pular' || lower === 'nao' || lower === 'não' || lower === 'n' || lower === '-';
+
+  // Detectar intenção de editar/remover itens já adicionados (sem sair do sub-fluxo)
+  const matchRemoverSub = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+  if (matchRemoverSub) {
+    return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando o cadastro da caixinha *${inv.nome}*..._\n${perguntaCaixinhaCampo(inv)}`;
+  }
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower) && !/\b(saldo|meta|tipo|nome)\s*(da\s+)?caixinha\s+(atual|essa|que|em)\b/.test(lower)) {
+    // Só intercepta se está editando item JÁ ADICIONADO, não campo da caixinha em cadastro
+    const querEditarCaixinhaAtual = /\b(saldo|meta|tipo|nome)\b/.test(lower) && (estado.investimentos || []).length === 0;
+    if (!querEditarCaixinhaAtual) {
+      const resp = await editarItemFluxo(usuarioId, texto, estado);
+      return resp + `\n\n_Continuando o cadastro da caixinha *${inv.nome}*..._\n${perguntaCaixinhaCampo(inv)}`;
+    }
+  }
 
   switch (inv.campo) {
 
