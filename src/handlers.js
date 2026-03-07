@@ -4844,11 +4844,11 @@ async function handleEditarLimite(usuarioId, resultado) {
   return `Qual o novo valor do limite para *${categoria}*?\n\n_Ex: "R$ 800" ou "1500"_`;
 }
 
-async function aplicarEdicaoLimite(usuarioId, categoria, novoValorStr) {
+async function aplicarEdicaoLimite(usuarioId, categoria, novoValorStr, parent) {
   const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
   if (!v || v <= 0) return `❌ Valor inválido: "${novoValorStr}". Ex: _"R$ 800"_`;
 
-  const id = await db.definirLimite(usuarioId, categoria, v);
+  const id = await db.definirLimite(usuarioId, categoria, v, parent || null);
   if (!id) return `❌ Não consegui atualizar o limite.`;
   return `✅ Limite de *${categoria}* atualizado para *${fmt.formatarMoeda(v)}*!`;
 }
