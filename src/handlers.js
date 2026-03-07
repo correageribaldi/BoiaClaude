@@ -250,6 +250,58 @@ function obterEditarRecDiretoPendente(usuarioId) {
 }
 function limparEditarRecDiretoPendente(usuarioId) { editarRecDiretoPendentes.delete(usuarioId); }
 
+// Estado para editar cartão (fluxo multi-turn)
+const editarCartaoPendentes = new Map();
+function salvarEditarCartaoPendente(usuarioId, dados) {
+  editarCartaoPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterEditarCartaoPendente(usuarioId) {
+  const dados = editarCartaoPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarCartaoPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarCartaoPendente(usuarioId) { editarCartaoPendentes.delete(usuarioId); }
+
+// Estado para editar/excluir caixinha (fluxo multi-turn)
+const editarCaixinhaPendentes = new Map();
+function salvarEditarCaixinhaPendente(usuarioId, dados) {
+  editarCaixinhaPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterEditarCaixinhaPendente(usuarioId) {
+  const dados = editarCaixinhaPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarCaixinhaPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarCaixinhaPendente(usuarioId) { editarCaixinhaPendentes.delete(usuarioId); }
+
+// Estado para editar limite (fluxo multi-turn)
+const editarLimitePendentes = new Map();
+function salvarEditarLimitePendente(usuarioId, dados) {
+  editarLimitePendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterEditarLimitePendente(usuarioId) {
+  const dados = editarLimitePendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarLimitePendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarLimitePendente(usuarioId) { editarLimitePendentes.delete(usuarioId); }
+
+// Estado para editar lembrete (fluxo multi-turn)
+const editarLembretePendentes = new Map();
+function salvarEditarLembretePendente(usuarioId, dados) {
+  editarLembretePendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterEditarLembretePendente(usuarioId) {
+  const dados = editarLembretePendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarLembretePendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarLembretePendente(usuarioId) { editarLembretePendentes.delete(usuarioId); }
+
 function salvarTransacaoPendente(usuarioId, dados) {
   transacaoPendente.set(usuarioId, {
     ...dados,
@@ -1674,6 +1726,34 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     if (resposta !== null) return resposta;
   }
 
+  // Verificar se há edição de cartão em andamento
+  const editarCartaoPend = obterEditarCartaoPendente(usuarioId);
+  if (editarCartaoPend) {
+    const resposta = await handleEditarCartaoPendente(usuarioId, msg, editarCartaoPend);
+    if (resposta !== null) return resposta;
+  }
+
+  // Verificar se há edição/exclusão de caixinha em andamento
+  const editarCaixinhaPend = obterEditarCaixinhaPendente(usuarioId);
+  if (editarCaixinhaPend) {
+    const resposta = await handleEditarCaixinhaPendente(usuarioId, msg, editarCaixinhaPend);
+    if (resposta !== null) return resposta;
+  }
+
+  // Verificar se há edição de limite em andamento
+  const editarLimitePend = obterEditarLimitePendente(usuarioId);
+  if (editarLimitePend) {
+    const resposta = await handleEditarLimitePendente(usuarioId, msg, editarLimitePend);
+    if (resposta !== null) return resposta;
+  }
+
+  // Verificar se há edição de lembrete em andamento
+  const editarLembretePend = obterEditarLembretePendente(usuarioId);
+  if (editarLembretePend) {
+    const resposta = await handleEditarLembretePendente(usuarioId, msg, editarLembretePend);
+    if (resposta !== null) return resposta;
+  }
+
   // Verificar se há seleção pendente para remover contato compartilhado
   const remocaoContato = obterRemocaoContatoPendente(usuarioId);
   if (remocaoContato) {
@@ -1884,6 +1964,46 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   // Comando: lista (transações financeiras - despesas/receitas)
   if (lower.startsWith('lista')) {
     return await handleLista(usuarioId, msg);
+  }
+
+  // Comando: editar cartão de crédito
+  if (/^(?:editar|alterar|mudar)\s+cart[aã]o/i.test(lower)) {
+    const resto = lower
+      .replace(/^(?:editar|alterar|mudar)\s+/, '')
+      .replace(/^cart[aã]o\s*(?:de\s+cr[eé]dito)?\s*/, '')
+      .trim();
+    return await handleEditarCartao(usuarioId, { cartao_nome: resto || null, campo: null, novo_valor: null });
+  }
+
+  // Comando: editar/excluir caixinha
+  if (/^(?:editar|alterar|mudar)\s+(?:caixinha|investimento)/i.test(lower)) {
+    const resto = lower
+      .replace(/^(?:editar|alterar|mudar)\s+/, '')
+      .replace(/^(?:caixinha|investimento)\s*/, '')
+      .trim();
+    return await handleEditarCaixinha(usuarioId, { nome: resto || null, campo: null, novo_valor: null });
+  }
+  if (/^(?:excluir|remover|deletar|apagar)\s+(?:caixinha|investimento)/i.test(lower)) {
+    const resto = lower
+      .replace(/^(?:excluir|remover|deletar|apagar)\s+/, '')
+      .replace(/^(?:caixinha|investimento)\s*/, '')
+      .trim();
+    return await handleExcluirCaixinha(usuarioId, { nome: resto || null });
+  }
+
+  // Comando: editar limite
+  if (/^(?:editar|alterar|mudar)\s+limite/i.test(lower)) {
+    const resto = lower
+      .replace(/^(?:editar|alterar|mudar)\s+/, '')
+      .replace(/^limite\s*(?:de\s+(?:gastos?|categoria))?\s*/, '')
+      .trim();
+    return await handleEditarLimite(usuarioId, { categoria: resto || null, novo_valor: null });
+  }
+
+  // Comando: editar lembrete
+  if (/^(?:editar|alterar|mudar)\s+lembrete/i.test(lower)) {
+    const tipoLembrete = lower.includes('recorrente') ? 'recorrente' : null;
+    return await handleEditarLembrete(usuarioId, { tipo_lembrete: tipoLembrete });
   }
 
   // Comando: excluir cartão de crédito (redirecionar para remover cartão)
@@ -2974,6 +3094,31 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Editar recorrência por nome (via IA)
   if (resultado.acao === 'editar_recorrencia') {
     return await handleEditarRecorrenciaPorNome(usuarioId, resultado);
+  }
+
+  // Editar cartão (via IA)
+  if (resultado.acao === 'editar_cartao') {
+    return await handleEditarCartao(usuarioId, resultado);
+  }
+
+  // Editar caixinha (via IA)
+  if (resultado.acao === 'editar_caixinha') {
+    return await handleEditarCaixinha(usuarioId, resultado);
+  }
+
+  // Excluir caixinha (via IA)
+  if (resultado.acao === 'excluir_caixinha') {
+    return await handleExcluirCaixinha(usuarioId, resultado);
+  }
+
+  // Editar limite (via IA)
+  if (resultado.acao === 'editar_limite') {
+    return await handleEditarLimite(usuarioId, resultado);
+  }
+
+  // Editar lembrete (via IA)
+  if (resultado.acao === 'editar_lembrete') {
+    return await handleEditarLembrete(usuarioId, resultado);
   }
 
   // Mensagem fora do escopo - mostra o que o bot sabe fazer
@@ -4400,6 +4545,518 @@ async function handleRemoverLimite(usuarioId, resultado) {
   }
 
   return `✅ Limite de *${categoria}* removido com sucesso!`;
+}
+
+// ─── EDITAR CARTÃO ─────────────────────────────────────────
+async function handleEditarCartao(usuarioId, resultado) {
+  const { cartao_nome, campo, novo_valor } = resultado;
+
+  const cartoes = cartao_nome
+    ? await db.buscarCartoesPorNome(usuarioId, cartao_nome)
+    : await db.listarCartoes(usuarioId);
+
+  if (cartoes.length === 0) {
+    return cartao_nome
+      ? `❌ Não encontrei cartão com o nome *${cartao_nome}*.\n_Use "meus cartões" para ver os cadastrados._`
+      : `❌ Você não tem cartões cadastrados.`;
+  }
+
+  if (cartoes.length > 1 || !cartao_nome) {
+    const lista = cartoes.map((c, i) => `  ${i + 1}. 💳 *${c.nome}* — limite ${fmt.formatarMoeda(c.limite_total || 0)}`).join('\n');
+    salvarEditarCartaoPendente(usuarioId, { fase: 'selecionar', cartoes, campo: campo || null, novo_valor: novo_valor || null });
+    return `Qual cartão quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+  }
+
+  const c = cartoes[0];
+  if (campo && novo_valor) {
+    return aplicarEdicaoCartao(usuarioId, c, campo, novo_valor);
+  }
+  if (campo) {
+    salvarEditarCartaoPendente(usuarioId, { fase: 'aguardando_valor', cartao: c, campo });
+    const labels = { limite_total: 'novo limite (ex: R$ 5.000)', dia_fechamento: 'novo dia de fechamento (ex: 10)', dia_vencimento: 'novo dia de vencimento (ex: 17)', nome: 'novo nome' };
+    return `💳 *${c.nome}*\nLimite: ${fmt.formatarMoeda(c.limite_total || 0)} | Fecha dia ${c.dia_fechamento || '?'} | Vence dia ${c.dia_vencimento || '?'}\n\nQual o ${labels[campo] || campo}?`;
+  }
+
+  salvarEditarCartaoPendente(usuarioId, { fase: 'escolher_campo', cartao: c });
+  return `💳 *${c.nome}*\nLimite: ${fmt.formatarMoeda(c.limite_total || 0)} | Fecha dia ${c.dia_fechamento || '?'} | Vence dia ${c.dia_vencimento || '?'}\n\nO que quer editar?\n\n_Ex: "limite para R$ 5.000", "fechamento dia 10", "vencimento dia 17", "nome para Nubank Gold"_`;
+}
+
+async function aplicarEdicaoCartao(usuarioId, c, campo, novoValorStr) {
+  let valorFinal = novoValorStr;
+  let campoDb = campo;
+
+  if (campo === 'limite' || campo === 'limite_total') {
+    const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
+    if (!v || v <= 0) return `❌ Limite inválido: "${novoValorStr}". Ex: _"R$ 5.000"_`;
+    valorFinal = v;
+    campoDb = 'limite_total';
+  } else if (campo === 'fechamento' || campo === 'dia_fechamento') {
+    const d = parseInt(novoValorStr.toString().replace(/\D/g, ''), 10);
+    if (isNaN(d) || d < 1 || d > 31) return `❌ Dia inválido. Informe um dia de 1 a 31.`;
+    valorFinal = d;
+    campoDb = 'dia_fechamento';
+  } else if (campo === 'vencimento' || campo === 'dia_vencimento') {
+    const d = parseInt(novoValorStr.toString().replace(/\D/g, ''), 10);
+    if (isNaN(d) || d < 1 || d > 31) return `❌ Dia inválido. Informe um dia de 1 a 31.`;
+    valorFinal = d;
+    campoDb = 'dia_vencimento';
+  } else if (campo === 'nome') {
+    valorFinal = novoValorStr.trim();
+    if (!valorFinal) return `❌ Nome inválido.`;
+  } else {
+    return `❌ Campo "${campo}" não pode ser editado. Campos disponíveis: limite, fechamento, vencimento, nome.`;
+  }
+
+  const atualizado = await db.atualizarCartao(usuarioId, c.id, campoDb, valorFinal);
+  if (!atualizado) return `❌ Não consegui atualizar o cartão.`;
+
+  const labelsAntes = { limite_total: fmt.formatarMoeda(c.limite_total || 0), dia_fechamento: `dia ${c.dia_fechamento || '?'}`, dia_vencimento: `dia ${c.dia_vencimento || '?'}`, nome: c.nome };
+  const labelsDepois = { limite_total: fmt.formatarMoeda(atualizado.limite_total || 0), dia_fechamento: `dia ${atualizado.dia_fechamento}`, dia_vencimento: `dia ${atualizado.dia_vencimento}`, nome: atualizado.nome };
+  return `✅ Cartão *${atualizado.nome}* atualizado!\n\n${labelsAntes[campoDb]} → *${labelsDepois[campoDb]}*`;
+}
+
+function detectarCampoCartao(lower) {
+  if (/\b(limite|credito|crédito)\b/.test(lower)) return 'limite_total';
+  if (/\b(fecha|fechamento)\b/.test(lower)) return 'dia_fechamento';
+  if (/\b(vence|vencimento)\b/.test(lower)) return 'dia_vencimento';
+  if (/\b(nome|renomear)\b/.test(lower)) return 'nome';
+  return null;
+}
+
+async function handleEditarCartaoPendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
+    limparEditarCartaoPendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(msg.trim());
+    if (!num || isNaN(num) || num < 1 || num > pendente.cartoes.length) {
+      return `Responda com um número de 1 a ${pendente.cartoes.length}, ou _"cancelar"_.`;
+    }
+    const c = pendente.cartoes[num - 1];
+    if (pendente.campo && pendente.novo_valor) {
+      limparEditarCartaoPendente(usuarioId);
+      return aplicarEdicaoCartao(usuarioId, c, pendente.campo, pendente.novo_valor);
+    }
+    salvarEditarCartaoPendente(usuarioId, { fase: 'escolher_campo', cartao: c });
+    return `💳 *${c.nome}*\nLimite: ${fmt.formatarMoeda(c.limite_total || 0)} | Fecha dia ${c.dia_fechamento || '?'} | Vence dia ${c.dia_vencimento || '?'}\n\nO que quer editar?\n\n_Ex: "limite para R$ 5.000", "fechamento dia 10", "vencimento dia 17", "nome para Nubank Gold"_`;
+  }
+
+  if (pendente.fase === 'escolher_campo') {
+    const c = pendente.cartao;
+    const campo = detectarCampoCartao(lower);
+    if (!campo) {
+      return `Não entendi. O que quer mudar?\n\n_"limite para R$ X", "fechamento dia X", "vencimento dia X", "nome para X"_`;
+    }
+    const match = msg.match(/(?:para|pra|=)\s*(.+)/i);
+    if (match) {
+      limparEditarCartaoPendente(usuarioId);
+      return aplicarEdicaoCartao(usuarioId, c, campo, match[1].trim());
+    }
+    salvarEditarCartaoPendente(usuarioId, { fase: 'aguardando_valor', cartao: c, campo });
+    const labels = { limite_total: 'novo limite (ex: R$ 5.000)', dia_fechamento: 'novo dia de fechamento (1 a 31)', dia_vencimento: 'novo dia de vencimento (1 a 31)', nome: 'novo nome' };
+    return `Qual o ${labels[campo] || campo}?`;
+  }
+
+  if (pendente.fase === 'aguardando_valor') {
+    const c = pendente.cartao;
+    limparEditarCartaoPendente(usuarioId);
+    return aplicarEdicaoCartao(usuarioId, c, pendente.campo, msg.trim());
+  }
+
+  limparEditarCartaoPendente(usuarioId);
+  return null;
+}
+
+// ─── EDITAR / EXCLUIR CAIXINHA ─────────────────────────────
+async function handleEditarCaixinha(usuarioId, resultado) {
+  const { nome, campo, novo_valor } = resultado;
+
+  const caixinhas = nome
+    ? await db.buscarCaixinhasPorNome(usuarioId, nome)
+    : await db.listarCaixinhas(usuarioId);
+
+  if (caixinhas.length === 0) {
+    return nome
+      ? `❌ Não encontrei caixinha com o nome *${nome}*.\n_Use "caixinhas" para ver as cadastradas._`
+      : `❌ Você não tem caixinhas cadastradas.`;
+  }
+
+  if (caixinhas.length > 1 || !nome) {
+    const lista = caixinhas.map((c, i) => `  ${i + 1}. 💰 *${c.nome}* — ${fmt.formatarMoeda(c.saldo)}`).join('\n');
+    salvarEditarCaixinhaPendente(usuarioId, { fase: 'selecionar', caixinhas, campo: campo || null, novo_valor: novo_valor || null, acao: 'editar' });
+    return `Qual caixinha quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+  }
+
+  const c = caixinhas[0];
+  if (campo && novo_valor) {
+    return aplicarEdicaoCaixinha(usuarioId, c, campo, novo_valor);
+  }
+
+  salvarEditarCaixinhaPendente(usuarioId, { fase: 'escolher_campo', caixinha: c });
+  return resumoCaixinhaEdit(c) + `\n\nO que quer editar?\n\n_Ex: "nome para CDB Inter", "meta para R$ 10.000", "rendimento para 1.2", "tipo para CDB"_`;
+}
+
+function resumoCaixinhaEdit(c) {
+  let r = `💰 *${c.nome}*\n   Saldo: ${fmt.formatarMoeda(c.saldo)}`;
+  if (c.meta) r += ` | Meta: ${fmt.formatarMoeda(c.meta)}`;
+  if (c.tipo) r += `\n   Tipo: ${c.tipo}`;
+  if (c.rendimento_mensal) r += ` | Rendimento: ${c.rendimento_mensal}%/mês`;
+  return r;
+}
+
+async function aplicarEdicaoCaixinha(usuarioId, c, campo, novoValorStr) {
+  let valorFinal = novoValorStr;
+  let campoDb = campo;
+
+  if (campo === 'meta' || campo === 'saldo') {
+    const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
+    if (isNaN(v) || v < 0) return `❌ Valor inválido: "${novoValorStr}".`;
+    valorFinal = v;
+  } else if (campo === 'rendimento' || campo === 'rendimento_mensal') {
+    const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
+    if (isNaN(v)) return `❌ Rendimento inválido: "${novoValorStr}". Ex: _"1.2"_ (para 1.2%/mês)`;
+    valorFinal = v;
+    campoDb = 'rendimento_mensal';
+  } else if (campo === 'nome' || campo === 'tipo') {
+    valorFinal = novoValorStr.trim();
+    if (!valorFinal) return `❌ Texto inválido.`;
+  } else {
+    return `❌ Campo "${campo}" não pode ser editado. Campos: nome, saldo, meta, tipo, rendimento.`;
+  }
+
+  const atualizada = await db.atualizarCaixinha(usuarioId, c.id, campoDb, valorFinal);
+  if (!atualizada) return `❌ Não consegui atualizar a caixinha.`;
+
+  const antes = { nome: c.nome, saldo: fmt.formatarMoeda(c.saldo), meta: fmt.formatarMoeda(c.meta || 0), tipo: c.tipo || '—', rendimento_mensal: `${c.rendimento_mensal || 0}%/mês` };
+  const depois = { nome: atualizada.nome, saldo: fmt.formatarMoeda(atualizada.saldo), meta: fmt.formatarMoeda(atualizada.meta || 0), tipo: atualizada.tipo || '—', rendimento_mensal: `${atualizada.rendimento_mensal || 0}%/mês` };
+  return `✅ Caixinha *${atualizada.nome}* atualizada!\n\n${antes[campoDb]} → *${depois[campoDb]}*`;
+}
+
+function detectarCampoCaixinha(lower) {
+  if (/\b(nome|renomear)\b/.test(lower)) return 'nome';
+  if (/\b(saldo|valor)\b/.test(lower)) return 'saldo';
+  if (/\b(meta|objetivo)\b/.test(lower)) return 'meta';
+  if (/\b(tipo|modalidade)\b/.test(lower)) return 'tipo';
+  if (/\b(rendimento|rentabilidade|juros)\b/.test(lower)) return 'rendimento_mensal';
+  return null;
+}
+
+async function handleEditarCaixinhaPendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
+    limparEditarCaixinhaPendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(msg.trim());
+    if (!num || isNaN(num) || num < 1 || num > (pendente.caixinhas || pendente.cartoes || []).length) {
+      const items = pendente.caixinhas || [];
+      return `Responda com um número de 1 a ${items.length}, ou _"cancelar"_.`;
+    }
+    const c = pendente.caixinhas[num - 1];
+    if (pendente.acao === 'excluir') {
+      limparEditarCaixinhaPendente(usuarioId);
+      return executarExclusaoCaixinha(usuarioId, c);
+    }
+    if (pendente.campo && pendente.novo_valor) {
+      limparEditarCaixinhaPendente(usuarioId);
+      return aplicarEdicaoCaixinha(usuarioId, c, pendente.campo, pendente.novo_valor);
+    }
+    salvarEditarCaixinhaPendente(usuarioId, { fase: 'escolher_campo', caixinha: c });
+    return resumoCaixinhaEdit(c) + `\n\nO que quer editar?\n\n_Ex: "nome para CDB Inter", "meta para R$ 10.000", "rendimento para 1.2", "tipo para CDB"_`;
+  }
+
+  if (pendente.fase === 'escolher_campo') {
+    const c = pendente.caixinha;
+    const campo = detectarCampoCaixinha(lower);
+    if (!campo) {
+      return `Não entendi. O que quer mudar?\n\n_"nome para X", "meta para R$ X", "saldo para R$ X", "tipo X", "rendimento X"_`;
+    }
+    const match = msg.match(/(?:para|pra|=)\s*(.+)/i);
+    if (match) {
+      limparEditarCaixinhaPendente(usuarioId);
+      return aplicarEdicaoCaixinha(usuarioId, c, campo, match[1].trim());
+    }
+    salvarEditarCaixinhaPendente(usuarioId, { fase: 'aguardando_valor', caixinha: c, campo });
+    const labels = { nome: 'novo nome', saldo: 'novo saldo (ex: R$ 5.000)', meta: 'nova meta (ex: R$ 10.000)', tipo: 'novo tipo (ex: CDB, Poupança)', rendimento_mensal: 'novo rendimento mensal (ex: 1.2)' };
+    return `Qual o ${labels[campo] || campo}?`;
+  }
+
+  if (pendente.fase === 'aguardando_valor') {
+    const c = pendente.caixinha;
+    limparEditarCaixinhaPendente(usuarioId);
+    return aplicarEdicaoCaixinha(usuarioId, c, pendente.campo, msg.trim());
+  }
+
+  limparEditarCaixinhaPendente(usuarioId);
+  return null;
+}
+
+async function handleExcluirCaixinha(usuarioId, resultado) {
+  const { nome } = resultado;
+
+  const caixinhas = nome
+    ? await db.buscarCaixinhasPorNome(usuarioId, nome)
+    : await db.listarCaixinhas(usuarioId);
+
+  if (caixinhas.length === 0) {
+    return nome
+      ? `❌ Não encontrei caixinha com o nome *${nome}*.\n_Use "caixinhas" para ver as cadastradas._`
+      : `❌ Você não tem caixinhas cadastradas.`;
+  }
+
+  if (caixinhas.length > 1 || !nome) {
+    const lista = caixinhas.map((c, i) => `  ${i + 1}. 💰 *${c.nome}* — ${fmt.formatarMoeda(c.saldo)}`).join('\n');
+    salvarEditarCaixinhaPendente(usuarioId, { fase: 'selecionar', caixinhas, acao: 'excluir' });
+    return `Qual caixinha quer excluir?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+  }
+
+  return executarExclusaoCaixinha(usuarioId, caixinhas[0]);
+}
+
+async function executarExclusaoCaixinha(usuarioId, c) {
+  const removida = await db.excluirCaixinha(usuarioId, c.id);
+  if (!removida) return `❌ Não consegui excluir a caixinha.`;
+  return `✅ Caixinha *${removida.nome}* excluída com sucesso!`;
+}
+
+// ─── EDITAR LIMITE DE GASTOS ─────────────────────────────
+async function handleEditarLimite(usuarioId, resultado) {
+  const { categoria, novo_valor } = resultado;
+
+  if (!categoria) {
+    const limites = await db.listarLimites(usuarioId);
+    if (limites.length === 0) return `❌ Você não tem limites cadastrados.\n_Use "limitar gastos com X em R$ Y" para criar._`;
+    const lista = limites.filter(l => !l.parent).map((l, i) => `  ${i + 1}. *${l.categoria}* — ${fmt.formatarMoeda(l.valor_limite)}`).join('\n');
+    salvarEditarLimitePendente(usuarioId, { fase: 'selecionar', limites: limites.filter(l => !l.parent), novo_valor: novo_valor || null });
+    return `Qual limite quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+  }
+
+  if (novo_valor) {
+    return aplicarEdicaoLimite(usuarioId, categoria, novo_valor);
+  }
+
+  salvarEditarLimitePendente(usuarioId, { fase: 'aguardando_valor', categoria });
+  return `Qual o novo valor do limite para *${categoria}*?\n\n_Ex: "R$ 800" ou "1500"_`;
+}
+
+async function aplicarEdicaoLimite(usuarioId, categoria, novoValorStr) {
+  const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
+  if (!v || v <= 0) return `❌ Valor inválido: "${novoValorStr}". Ex: _"R$ 800"_`;
+
+  const id = await db.definirLimite(usuarioId, categoria, v);
+  if (!id) return `❌ Não consegui atualizar o limite.`;
+  return `✅ Limite de *${categoria}* atualizado para *${fmt.formatarMoeda(v)}*!`;
+}
+
+async function handleEditarLimitePendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
+    limparEditarLimitePendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(msg.trim());
+    if (!num || isNaN(num) || num < 1 || num > pendente.limites.length) {
+      return `Responda com um número de 1 a ${pendente.limites.length}, ou _"cancelar"_.`;
+    }
+    const l = pendente.limites[num - 1];
+    if (pendente.novo_valor) {
+      limparEditarLimitePendente(usuarioId);
+      return aplicarEdicaoLimite(usuarioId, l.categoria, pendente.novo_valor);
+    }
+    salvarEditarLimitePendente(usuarioId, { fase: 'aguardando_valor', categoria: l.categoria });
+    return `Qual o novo valor do limite para *${l.categoria}*? (atual: ${fmt.formatarMoeda(l.valor_limite)})\n\n_Ex: "R$ 800" ou "1500"_`;
+  }
+
+  if (pendente.fase === 'aguardando_valor') {
+    limparEditarLimitePendente(usuarioId);
+    return aplicarEdicaoLimite(usuarioId, pendente.categoria, msg.trim());
+  }
+
+  limparEditarLimitePendente(usuarioId);
+  return null;
+}
+
+// ─── EDITAR LEMBRETE (GERAL E RECORRENTE) ────────────────
+async function handleEditarLembrete(usuarioId, resultado) {
+  const { tipo_lembrete } = resultado; // 'geral' ou 'recorrente'
+
+  if (tipo_lembrete === 'recorrente' || !tipo_lembrete) {
+    const lembretes = await db.listarLembretesRecorrentes(usuarioId);
+    if (lembretes.length === 0) {
+      if (tipo_lembrete === 'recorrente') return `❌ Você não tem lembretes recorrentes ativos.`;
+      // Tenta lembretes gerais
+      const gerais = await db.listarLembretesGerais(usuarioId);
+      if (gerais.length === 0) return `❌ Você não tem lembretes cadastrados.`;
+      return montarListaLembretesGeraisParaEditar(usuarioId, gerais);
+    }
+    if (tipo_lembrete !== 'recorrente') {
+      // Mostrar ambos
+      const gerais = await db.listarLembretesGerais(usuarioId);
+      if (gerais.length > 0) {
+        const listaRec = lembretes.map((l, i) => {
+          const freq = { diario: 'Diário', semanal: 'Semanal', mensal: 'Mensal' }[l.frequencia] || l.frequencia;
+          return `  ${i + 1}. 🔁 *${l.mensagem}* — ${freq} às ${l.horario}`;
+        });
+        const listaGer = gerais.map((l, i) => `  ${listaRec.length + i + 1}. ⏰ *${l.mensagem}* — ${l.horario}`);
+        const todos = [...lembretes.map(l => ({ ...l, _tipo: 'recorrente' })), ...gerais.map(l => ({ ...l, _tipo: 'geral' }))];
+        salvarEditarLembretePendente(usuarioId, { fase: 'selecionar', lembretes: todos });
+        return `Qual lembrete quer editar?\n\n${[...listaRec, ...listaGer].join('\n')}\n\nResponda com o *número* ou _"cancelar"_.`;
+      }
+    }
+    const lista = lembretes.map((l, i) => {
+      const freq = { diario: 'Diário', semanal: 'Semanal', mensal: 'Mensal' }[l.frequencia] || l.frequencia;
+      return `  ${i + 1}. 🔁 *${l.mensagem}* — ${freq} às ${l.horario}`;
+    }).join('\n');
+    salvarEditarLembretePendente(usuarioId, { fase: 'selecionar', lembretes: lembretes.map(l => ({ ...l, _tipo: 'recorrente' })) });
+    return `Qual lembrete recorrente quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+  }
+
+  // tipo_lembrete === 'geral'
+  const gerais = await db.listarLembretesGerais(usuarioId);
+  if (gerais.length === 0) return `❌ Você não tem lembretes únicos pendentes.`;
+  return montarListaLembretesGeraisParaEditar(usuarioId, gerais);
+}
+
+function montarListaLembretesGeraisParaEditar(usuarioId, gerais) {
+  const lista = gerais.map((l, i) => `  ${i + 1}. ⏰ *${l.mensagem}* — ${l.horario}`).join('\n');
+  salvarEditarLembretePendente(usuarioId, { fase: 'selecionar', lembretes: gerais.map(l => ({ ...l, _tipo: 'geral' })) });
+  return `Qual lembrete quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+}
+
+async function handleEditarLembretePendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
+    limparEditarLembretePendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(msg.trim());
+    if (!num || isNaN(num) || num < 1 || num > pendente.lembretes.length) {
+      return `Responda com um número de 1 a ${pendente.lembretes.length}, ou _"cancelar"_.`;
+    }
+    const l = pendente.lembretes[num - 1];
+    salvarEditarLembretePendente(usuarioId, { fase: 'escolher_campo', lembrete: l });
+
+    if (l._tipo === 'recorrente') {
+      const freq = { diario: 'Diário', semanal: 'Semanal', mensal: 'Mensal' }[l.frequencia] || l.frequencia;
+      return `🔁 *${l.mensagem}* — ${freq} às ${l.horario}\n\nO que quer editar?\n\n_Ex: "mensagem para Tomar remédio", "horário para 08:00", "frequência para semanal"_`;
+    }
+    return `⏰ *${l.mensagem}* — ${l.horario}\n\nO que quer editar?\n\n_Ex: "mensagem para Comprar presente", "data para 25/03 14:00"_`;
+  }
+
+  if (pendente.fase === 'escolher_campo') {
+    const l = pendente.lembrete;
+    let campo = null;
+    let valor = null;
+
+    if (/\b(mensagem|texto|nome)\b/.test(lower)) {
+      campo = 'mensagem';
+      const match = msg.match(/(?:para|pra|=)\s*(.+)/i);
+      if (match) valor = match[1].trim();
+    } else if (/\b(hor[aá]rio|hora|horario)\b/.test(lower)) {
+      campo = 'horario';
+      const match = msg.match(/(\d{1,2}[:\s]?\d{2})/);
+      if (match) valor = match[1].replace(/\s/, ':');
+    } else if (/\b(frequ[eê]ncia|frequencia|periodicidade)\b/.test(lower) && l._tipo === 'recorrente') {
+      campo = 'frequencia';
+      if (/di[aá]ri/i.test(lower)) valor = 'diario';
+      else if (/semanal/i.test(lower)) valor = 'semanal';
+      else if (/mensal/i.test(lower)) valor = 'mensal';
+    } else if (/\b(data|dia|quando)\b/.test(lower) && l._tipo === 'geral') {
+      campo = 'dispara_em';
+      const match = msg.match(/(?:para|pra|=)\s*(.+)/i);
+      if (match) valor = match[1].trim();
+    }
+
+    if (!campo) {
+      if (l._tipo === 'recorrente') {
+        return `Não entendi. O que quer mudar?\n\n_"mensagem para X", "horário para HH:MM", "frequência para diário/semanal/mensal"_`;
+      }
+      return `Não entendi. O que quer mudar?\n\n_"mensagem para X", "data para DD/MM HH:MM"_`;
+    }
+
+    if (valor) {
+      limparEditarLembretePendente(usuarioId);
+      return aplicarEdicaoLembrete(usuarioId, l, campo, valor);
+    }
+    salvarEditarLembretePendente(usuarioId, { fase: 'aguardando_valor', lembrete: l, campo });
+    const labels = { mensagem: 'nova mensagem', horario: 'novo horário (ex: 08:00)', frequencia: 'nova frequência (diário, semanal ou mensal)', dispara_em: 'nova data e hora (ex: 25/03 14:00)' };
+    return `Qual o ${labels[campo] || campo}?`;
+  }
+
+  if (pendente.fase === 'aguardando_valor') {
+    const l = pendente.lembrete;
+    limparEditarLembretePendente(usuarioId);
+    return aplicarEdicaoLembrete(usuarioId, l, pendente.campo, msg.trim());
+  }
+
+  limparEditarLembretePendente(usuarioId);
+  return null;
+}
+
+async function aplicarEdicaoLembrete(usuarioId, l, campo, novoValorStr) {
+  if (l._tipo === 'recorrente') {
+    let valorFinal = novoValorStr;
+    let campoDb = campo;
+
+    if (campo === 'horario') {
+      const match = novoValorStr.match(/(\d{1,2})[:\s](\d{2})/);
+      if (!match) return `❌ Horário inválido. Use o formato HH:MM (ex: 08:00).`;
+      valorFinal = `${match[1].padStart(2, '0')}:${match[2]}`;
+    } else if (campo === 'frequencia') {
+      const freqMap = { diario: 'diario', diária: 'diario', diaria: 'diario', semanal: 'semanal', mensal: 'mensal' };
+      valorFinal = freqMap[novoValorStr.toLowerCase()] || null;
+      if (!valorFinal) return `❌ Frequência inválida. Use: _diário_, _semanal_ ou _mensal_.`;
+    } else if (campo === 'mensagem') {
+      valorFinal = novoValorStr.trim();
+      if (!valorFinal) return `❌ Mensagem inválida.`;
+    }
+
+    const atualizado = await db.atualizarLembreteRecorrente(usuarioId, l.id, campoDb, valorFinal);
+    if (!atualizado) return `❌ Não consegui atualizar o lembrete.`;
+
+    const labelAntes = { mensagem: l.mensagem, horario: l.horario, frequencia: l.frequencia };
+    const labelDepois = { mensagem: atualizado.mensagem, horario: atualizado.horario, frequencia: atualizado.frequencia };
+    return `✅ Lembrete recorrente atualizado!\n\n${labelAntes[campoDb]} → *${labelDepois[campoDb]}*`;
+  }
+
+  // Lembrete geral
+  let valorFinal = novoValorStr;
+  let campoDb = campo;
+
+  if (campo === 'mensagem') {
+    valorFinal = novoValorStr.trim();
+    if (!valorFinal) return `❌ Mensagem inválida.`;
+  } else if (campo === 'dispara_em') {
+    // Tenta parsear data no formato DD/MM HH:MM ou DD/MM/YYYY HH:MM
+    const match = novoValorStr.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s+(\d{1,2})[:\s](\d{2})/);
+    if (!match) return `❌ Data inválida. Use o formato DD/MM HH:MM (ex: 25/03 14:00).`;
+    const dia = parseInt(match[1]);
+    const mes = parseInt(match[2]) - 1;
+    const ano = match[3] ? (match[3].length === 2 ? 2000 + parseInt(match[3]) : parseInt(match[3])) : new Date().getFullYear();
+    const hora = parseInt(match[4]);
+    const min = parseInt(match[5]);
+    const data = new Date(ano, mes, dia, hora, min);
+    if (isNaN(data.getTime())) return `❌ Data inválida.`;
+    // Converter para timestamp com timezone de São Paulo
+    valorFinal = data.toISOString();
+  }
+
+  const atualizado = await db.atualizarLembreteGeral(usuarioId, l.id, campoDb, valorFinal);
+  if (!atualizado) return `❌ Não consegui atualizar o lembrete.`;
+
+  if (campoDb === 'mensagem') {
+    return `✅ Lembrete atualizado!\n\n${l.mensagem} → *${atualizado.mensagem}*`;
+  }
+  return `✅ Lembrete atualizado!\n\n*${atualizado.mensagem}* — reagendado para ${atualizado.horario}`;
 }
 
 function calcularPeriodo(periodo) {

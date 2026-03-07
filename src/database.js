@@ -2187,6 +2187,54 @@ async function buscarCaixinhasPorNome(usuarioId, nome) {
   return result.rows;
 }
 
+async function atualizarCaixinha(usuarioId, caixinhaId, campo, novoValor) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const camposPermitidos = ['nome', 'saldo', 'meta', 'tipo', 'rendimento_mensal'];
+  if (!camposPermitidos.includes(campo)) return null;
+  const res = await pool.query(
+    `UPDATE caixinhas SET ${campo} = $1 WHERE id = $2 AND usuario_id = $3 AND ativo = TRUE
+     RETURNING id, nome, saldo::float, meta::float, tipo, rendimento_mensal::float`,
+    [novoValor, caixinhaId, uid]
+  );
+  return res.rows[0] || null;
+}
+
+async function excluirCaixinha(usuarioId, caixinhaId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `UPDATE caixinhas SET ativo = FALSE WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE
+     RETURNING id, nome`,
+    [caixinhaId, uid]
+  );
+  return res.rows[0] || null;
+}
+
+async function atualizarLembreteGeral(usuarioId, lembreteId, campo, novoValor) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const camposPermitidos = ['mensagem', 'dispara_em'];
+  if (!camposPermitidos.includes(campo)) return null;
+  const res = await pool.query(
+    `UPDATE lembretes_gerais SET ${campo} = $1
+     WHERE id = $2 AND usuario_id = $3 AND enviado = FALSE
+     RETURNING id, mensagem, TO_CHAR(dispara_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') as horario`,
+    [novoValor, lembreteId, uid]
+  );
+  return res.rows[0] || null;
+}
+
+async function atualizarLembreteRecorrente(usuarioId, lembreteId, campo, novoValor) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const camposPermitidos = ['mensagem', 'horario', 'frequencia', 'dia_semana', 'dia_mes'];
+  if (!camposPermitidos.includes(campo)) return null;
+  const res = await pool.query(
+    `UPDATE lembretes_recorrentes SET ${campo} = $1
+     WHERE id = $2 AND usuario_id = $3 AND ativo = TRUE
+     RETURNING id, mensagem, TO_CHAR(horario, 'HH24:MI') as horario, frequencia, dia_semana, dia_mes`,
+    [novoValor, lembreteId, uid]
+  );
+  return res.rows[0] || null;
+}
+
 // Adiciona valor ao saldo de uma caixinha pelo ID
 async function adicionarSaldoCaixinha(caixinhaId, valor) {
   const result = await pool.query(
@@ -2385,6 +2433,18 @@ async function buscarCartoesPorNome(usuarioId, nome) {
     [uid, `%${nome}%`]
   );
   return res.rows;
+}
+
+async function atualizarCartao(usuarioId, cartaoId, campo, novoValor) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const camposPermitidos = ['nome', 'limite_total', 'dia_fechamento', 'dia_vencimento'];
+  if (!camposPermitidos.includes(campo)) return null;
+  const res = await pool.query(
+    `UPDATE cartoes SET ${campo} = $1 WHERE id = $2 AND usuario_id = $3
+     RETURNING id, nome, limite_total::float, dia_fechamento, dia_vencimento`,
+    [novoValor, cartaoId, uid]
+  );
+  return res.rows[0] || null;
 }
 
 async function deletarCartao(usuarioId, cartaoId) {
@@ -2732,7 +2792,9 @@ module.exports = {
   buscarLembretesParaDisparar,
   listarLembretesGerais,
   cancelarLembreteGeral,
+  atualizarLembreteGeral,
   criarLembreteRecorrente,
+  atualizarLembreteRecorrente,
   buscarRecorrentesParaDisparar,
   marcarRecorrenteEnviado,
   desativarRecorrentesExpirados,
@@ -2770,6 +2832,8 @@ module.exports = {
   criarCaixinha,
   listarCaixinhas,
   buscarCaixinhasPorNome,
+  atualizarCaixinha,
+  excluirCaixinha,
   adicionarSaldoCaixinha,
   criarRecorrencia,
   listarRecorrencias,
@@ -2799,6 +2863,7 @@ module.exports = {
   criarCartao,
   listarCartoes,
   buscarCartoesPorNome,
+  atualizarCartao,
   deletarCartao,
   deletarCartaoCompleto,
   calcularUsoCartao,
