@@ -74,6 +74,14 @@ Regra: use quando o usuário quer MODIFICAR um lançamento já registrado.
 - "campo": o que quer mudar — "valor", "data", "descricao", "categoria" — ou null se não especificou
 - "novo_valor": o novo conteúdo como string (ex: "1700", "2026-03-15", "Aluguel Centro", "Moradia") — ou null se não disse
 
+2f. EDITAR RECORRÊNCIA (editar/alterar/corrigir/mudar conta fixa, recorrência, despesa recorrente — ex: "editar recorrência salário", "alterar valor do aluguel fixo", "mudar dia do salário recorrente para dia 10"):
+{"acao": "editar_recorrencia", "descricao_busca": "nome ou parte da descrição para buscar", "campo": "valor|descricao|categoria|dia_mes|null", "novo_valor": "novo valor como string ou null se não especificado"}
+Regra: use quando o usuário quer modificar uma REGRA de recorrência (conta fixa que se repete todo mês/semana).
+- Palavras-chave: "recorrência", "recorrente", "conta fixa", "fixo", "todo mês", "regra"
+- "campo": o que quer mudar — "valor", "descricao", "categoria", "dia_mes" — ou null
+- "novo_valor": o novo conteúdo como string — ou null
+NÃO confundir com editar_transacao (lançamento pontual de um mês específico).
+
 3. CONSULTA (quanto gastei, quanto recebi, me mostra, quais foram, etc):
 {"acao": "consulta", "tipo": "despesa|receita|null", "categoria": "nome da categoria ou null", "dataInicio": "YYYY-MM-DD ou null", "dataFim": "YYYY-MM-DD ou null", "descricao": "palavra-chave ou null", "pergunta": "resumo curto da pergunta"}
 
@@ -369,6 +377,18 @@ REGRAS PARA TRANSACAO RECORRENTE (transacao_recorrente):
   - "salário de 4000 todo dia 10" → {"acao": "transacao_recorrente", "tipo": "receita", "valor": 4000, "descricao": "Salário", "categoria": "Salario", "frequencia": "mensal", "dia_mes": 10, "dia_semana": null}
   - "pago academia 100 reais por mês" → {"acao": "transacao_recorrente", "tipo": "despesa", "valor": 100, "descricao": "Academia", "categoria": "Saude", "frequencia": "mensal", "dia_mes": null, "dia_semana": null}
   - "toda semana pago frete de 50" → {"acao": "transacao_recorrente", "tipo": "despesa", "valor": 50, "descricao": "Frete", "categoria": "Transporte", "frequencia": "semanal", "dia_mes": null, "dia_semana": null}
+
+REGRAS PARA EDITAR RECORRÊNCIA (editar_recorrencia):
+- Use quando o usuário quer alterar uma REGRA de recorrência (conta fixa / despesa recorrente / receita recorrente)
+- NÃO confundir com editar_transacao. Se o usuário diz "editar o salário" sem mencionar "recorrência/fixo/todo mês", use editar_transacao
+- Se mencionar "recorrência", "recorrente", "conta fixa", "fixo", "todo mês", "regra", use editar_recorrencia
+- "campo": "valor", "descricao", "categoria", "dia_mes" — ou null
+- "novo_valor": string com o novo valor — ou null
+- Exemplos:
+  - "editar recorrência salário para 5000" → {"acao": "editar_recorrencia", "descricao_busca": "Salário", "campo": "valor", "novo_valor": "5000"}
+  - "mudar dia do aluguel fixo para dia 10" → {"acao": "editar_recorrencia", "descricao_busca": "Aluguel", "campo": "dia_mes", "novo_valor": "10"}
+  - "alterar a recorrência de internet" → {"acao": "editar_recorrencia", "descricao_busca": "Internet", "campo": null, "novo_valor": null}
+  - "editar conta fixa academia" → {"acao": "editar_recorrencia", "descricao_busca": "Academia", "campo": null, "novo_valor": null}
 
 REGRAS PARA LEMBRETE RECORRENTE:
 - Use SOMENTE para lembretes SEM valor financeiro (ex: cortar a grama, tomar remédio, reunião, conferir e-mail)

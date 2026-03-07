@@ -224,6 +224,32 @@ function obterEditarTxPendente(usuarioId) {
 }
 function limparEditarTxPendente(usuarioId) { editarTxPendentes.delete(usuarioId); }
 
+// Estado para confirmar edição de recorrência (após editar transação vinculada)
+const editarRecPendentes = new Map();
+function salvarEditarRecPendente(usuarioId, dados) {
+  editarRecPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 5 * 60 * 1000 });
+}
+function obterEditarRecPendente(usuarioId) {
+  const dados = editarRecPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarRecPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarRecPendente(usuarioId) { editarRecPendentes.delete(usuarioId); }
+
+// Estado para editar recorrência diretamente (fluxo multi-turn)
+const editarRecDiretoPendentes = new Map();
+function salvarEditarRecDiretoPendente(usuarioId, dados) {
+  editarRecDiretoPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterEditarRecDiretoPendente(usuarioId) {
+  const dados = editarRecDiretoPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { editarRecDiretoPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparEditarRecDiretoPendente(usuarioId) { editarRecDiretoPendentes.delete(usuarioId); }
+
 function salvarTransacaoPendente(usuarioId, dados) {
   transacaoPendente.set(usuarioId, {
     ...dados,
@@ -1634,6 +1660,20 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     if (resposta !== null) return resposta;
   }
 
+  // Verificar se há confirmação pendente de edição de recorrência (sim/não)
+  const editarRecPend = obterEditarRecPendente(usuarioId);
+  if (editarRecPend) {
+    const resposta = await handleEditarRecPendente(usuarioId, msg, editarRecPend);
+    if (resposta !== null) return resposta;
+  }
+
+  // Verificar se há edição de recorrência em andamento (fluxo multi-turn)
+  const editarRecDiretoPend = obterEditarRecDiretoPendente(usuarioId);
+  if (editarRecDiretoPend) {
+    const resposta = await handleEditarRecDiretoPendente(usuarioId, msg, editarRecDiretoPend);
+    if (resposta !== null) return resposta;
+  }
+
   // Verificar se há seleção pendente para remover contato compartilhado
   const remocaoContato = obterRemocaoContatoPendente(usuarioId);
   if (remocaoContato) {
@@ -2196,7 +2236,15 @@ async function aplicarEdicaoTx(usuarioId, t, campo, novoValorStr) {
 
   const labelsAntes = { valor: fmt.formatarMoeda(t.valor), data: fmt.formatarData(t.data), descricao: t.descricao, categoria: t.categoria };
   const labelsDepois = { valor: fmt.formatarMoeda(atualizada.valor), data: fmt.formatarData(atualizada.data), descricao: atualizada.descricao, categoria: atualizada.categoria };
-  return `✅ *${atualizada.descricao}* atualizado!\n\n${labelsAntes[campo]} → *${labelsDepois[campo]}*`;
+  let msg = `✅ *${atualizada.descricao}* atualizado!\n\n${labelsAntes[campo]} → *${labelsDepois[campo]}*`;
+
+  // Se a transação está vinculada a uma recorrência e o campo editado também existe na regra, perguntar
+  if (t.recorrencia_id && ['valor', 'descricao', 'categoria'].includes(campo)) {
+    salvarEditarRecPendente(usuarioId, { recorrenciaId: t.recorrencia_id, campo, valorFinal });
+    msg += `\n\n🔄 Esse lançamento faz parte de uma *conta fixa/recorrente*.\nQuer atualizar a regra também (para os próximos meses)?\n\n_Responda *sim* ou *não*._`;
+  }
+
+  return msg;
 }
 
 async function handleEditarTxPendente(usuarioId, msg, pendente) {
@@ -2280,6 +2328,175 @@ function extrairNovoValorEdicao(texto, campo) {
     const m = texto.match(/(?:para|pra|:)\s+(.+)$/i);
     return m ? m[1].trim() : null;
   }
+  return null;
+}
+
+// ── Editar Recorrência ────────────────────────────────────────────────────────
+
+async function handleEditarRecPendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+  limparEditarRecPendente(usuarioId);
+
+  if (/^(sim|s|yes|claro|isso|pode|quero|bora|atualiza)$/i.test(lower)) {
+    const atualizada = await db.atualizarRecorrencia(usuarioId, pendente.recorrenciaId, pendente.campo, pendente.valorFinal);
+    if (!atualizada) return `❌ Não consegui atualizar a regra de recorrência.`;
+    return `✅ Regra de recorrência *${atualizada.descricao}* atualizada!\n\nA partir do próximo mês, o ${pendente.campo} será *${pendente.campo === 'valor' ? fmt.formatarMoeda(atualizada.valor) : pendente.valorFinal}*.`;
+  }
+
+  if (/^(n[aã]o|nao|n|no|deixa|esquece|só esse|so esse)$/i.test(lower)) {
+    return '👍 Beleza, só esse mês foi alterado. A recorrência continua como antes.';
+  }
+
+  return null; // não entendeu, seguir fluxo normal
+}
+
+function resumoRecorrenciaEdit(r) {
+  const emoji = r.tipo === 'receita' ? '💰' : '💸';
+  let quando = r.frequencia === 'semanal'
+    ? (r.dia_semana != null ? `toda ${['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][r.dia_semana]}` : 'toda semana')
+    : (r.dia_mes ? `todo dia ${r.dia_mes}` : 'todo mês');
+  return `${emoji} *${r.descricao}*\n` +
+    `  💵 Valor: ${fmt.formatarMoeda(r.valor)}\n` +
+    `  📅 Frequência: ${quando}\n` +
+    `  📂 Categoria: ${r.categoria}`;
+}
+
+async function handleEditarRecorrenciaPorNome(usuarioId, resultado) {
+  const { descricao_busca, campo, novo_valor } = resultado;
+  if (!descricao_busca) {
+    return `Qual recorrência quer editar? Me diz o nome.\n\n_Ex: "editar recorrência salário"_`;
+  }
+
+  const recorrencias = await db.buscarRecorrenciasPorDescricao(usuarioId, descricao_busca);
+
+  if (recorrencias.length === 0) {
+    return `❌ Nenhuma recorrência ativa encontrada com "${descricao_busca}".\n\nUse _"recorrentes"_ para ver suas contas fixas.`;
+  }
+
+  if (recorrencias.length > 1) {
+    salvarEditarRecDiretoPendente(usuarioId, { fase: 'selecionar', recorrencias, campo: campo || null, novo_valor: novo_valor || null });
+    const lista = recorrencias.map((r, i) => {
+      const emoji = r.tipo === 'receita' ? '💰' : '💸';
+      return `  ${i + 1}. ${emoji} *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (${r.frequencia})`;
+    }).join('\n');
+    return `Encontrei ${recorrencias.length} recorrências com "${descricao_busca}":\n\n${lista}\n\nQual delas quer editar? Responda com o número ou _"cancelar"_.`;
+  }
+
+  const r = recorrencias[0];
+
+  if (campo && novo_valor) {
+    return aplicarEdicaoRec(usuarioId, r, campo, novo_valor);
+  }
+
+  if (campo) {
+    salvarEditarRecDiretoPendente(usuarioId, { fase: 'aguardando_valor', recorrencia: r, campo });
+    const labels = { valor: 'novo valor', descricao: 'nova descrição', categoria: 'nova categoria', dia_mes: 'novo dia do mês' };
+    return `${resumoRecorrenciaEdit(r)}\n\nQual o ${labels[campo] || campo}?`;
+  }
+
+  salvarEditarRecDiretoPendente(usuarioId, { fase: 'escolher_campo', recorrencia: r });
+  return `${resumoRecorrenciaEdit(r)}\n\nO que quer editar?\n\n_Ex: "valor para R$ 1.700", "dia para 15", "descrição para Salário CLT", "categoria Salario"_`;
+}
+
+async function aplicarEdicaoRec(usuarioId, r, campo, novoValorStr) {
+  let valorFinal = novoValorStr;
+  let campoDb = campo;
+
+  if (campo === 'valor') {
+    const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
+    if (!v || v <= 0) return `❌ Valor inválido: "${novoValorStr}". Ex: _"R$ 1.700"_`;
+    valorFinal = v;
+  } else if (campo === 'dia' || campo === 'dia_mes') {
+    const d = parseInt(novoValorStr.toString().replace(/\D/g, ''), 10);
+    if (isNaN(d) || d < 1 || d > 31) return `❌ Dia inválido. Informe um dia de 1 a 31.`;
+    valorFinal = d;
+    campoDb = 'dia_mes';
+  } else if (campo === 'descricao' || campo === 'categoria') {
+    valorFinal = novoValorStr.trim();
+    if (!valorFinal) return `❌ Texto inválido.`;
+  }
+
+  const atualizada = await db.atualizarRecorrencia(usuarioId, r.id, campoDb, valorFinal);
+  if (!atualizada) return `❌ Não consegui atualizar a recorrência.`;
+
+  // Também atualizar transações pendentes futuras vinculadas a essa recorrência
+  if (['valor', 'descricao', 'categoria'].includes(campoDb)) {
+    try {
+      await db.pool.query(
+        `UPDATE transacoes SET ${campoDb} = $1
+         WHERE recorrencia_id = $2 AND usuario_id = (SELECT usuario_id FROM recorrencias WHERE id = $2)
+           AND status = 'pendente'`,
+        [valorFinal, r.id]
+      );
+    } catch (e) { /* best effort */ }
+  }
+
+  const labelsAntes = { valor: fmt.formatarMoeda(r.valor), descricao: r.descricao, categoria: r.categoria, dia_mes: `dia ${r.dia_mes || '?'}` };
+  const labelsDepois = { valor: fmt.formatarMoeda(atualizada.valor), descricao: atualizada.descricao, categoria: atualizada.categoria, dia_mes: `dia ${atualizada.dia_mes}` };
+  return `✅ Recorrência *${atualizada.descricao}* atualizada!\n\n${labelsAntes[campoDb]} → *${labelsDepois[campoDb]}*\n\n_Todos os meses futuros usarão o novo valor._`;
+}
+
+function detectarCampoEdicaoRec(lower) {
+  if (/\b(valor|preco|preço|quanto|r\$|reais)\b/.test(lower)) return 'valor';
+  if (/\b(dia|vencimento|dia.?mes)\b/.test(lower)) return 'dia_mes';
+  if (/\b(descri[cç][aã]o|nome|titulo|título)\b/.test(lower)) return 'descricao';
+  if (/\b(categoria|classifica[cç][aã]o)\b/.test(lower)) return 'categoria';
+  if (/para\s+r?\$?\s*[\d.,]+/i.test(lower)) return 'valor';
+  if (/para\s+dia\s+\d+/i.test(lower)) return 'dia_mes';
+  return null;
+}
+
+async function handleEditarRecDiretoPendente(usuarioId, msg, pendente) {
+  const lower = msg.toLowerCase().trim();
+
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
+    limparEditarRecDiretoPendente(usuarioId);
+    return '❌ Cancelado.';
+  }
+
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(msg.trim());
+    if (!num || isNaN(num) || num < 1 || num > pendente.recorrencias.length) {
+      return `Responda com um número de 1 a ${pendente.recorrencias.length}, ou _"cancelar"_.`;
+    }
+    const r = pendente.recorrencias[num - 1];
+    if (pendente.campo && pendente.novo_valor) {
+      limparEditarRecDiretoPendente(usuarioId);
+      return aplicarEdicaoRec(usuarioId, r, pendente.campo, pendente.novo_valor);
+    }
+    if (pendente.campo) {
+      salvarEditarRecDiretoPendente(usuarioId, { fase: 'aguardando_valor', recorrencia: r, campo: pendente.campo });
+      const labels = { valor: 'novo valor', descricao: 'nova descrição', categoria: 'nova categoria', dia_mes: 'novo dia do mês' };
+      return `${resumoRecorrenciaEdit(r)}\n\nQual o ${labels[pendente.campo] || pendente.campo}?`;
+    }
+    salvarEditarRecDiretoPendente(usuarioId, { fase: 'escolher_campo', recorrencia: r });
+    return `${resumoRecorrenciaEdit(r)}\n\nO que quer editar?\n\n_Ex: "valor para R$ 1.700", "dia para 15", "descrição para Salário CLT", "categoria Salario"_`;
+  }
+
+  if (pendente.fase === 'escolher_campo') {
+    const r = pendente.recorrencia;
+    const campo = detectarCampoEdicaoRec(lower);
+    if (!campo) {
+      return `Não entendi. O que quer mudar?\n\n_"valor para R$ X", "dia para X", "categoria X", "descrição X"_`;
+    }
+    const novoValor = extrairNovoValorEdicao(msg, campo === 'dia_mes' ? 'data' : campo);
+    if (novoValor) {
+      limparEditarRecDiretoPendente(usuarioId);
+      return aplicarEdicaoRec(usuarioId, r, campo, novoValor);
+    }
+    salvarEditarRecDiretoPendente(usuarioId, { fase: 'aguardando_valor', recorrencia: r, campo });
+    const labels = { valor: 'novo valor (ex: R$ 1.700)', dia_mes: 'novo dia do mês (ex: 15)', descricao: 'nova descrição', categoria: 'nova categoria' };
+    return `Qual o ${labels[campo] || campo}?`;
+  }
+
+  if (pendente.fase === 'aguardando_valor') {
+    const r = pendente.recorrencia;
+    const campo = pendente.campo;
+    limparEditarRecDiretoPendente(usuarioId);
+    return aplicarEdicaoRec(usuarioId, r, campo, msg.trim());
+  }
+
+  limparEditarRecDiretoPendente(usuarioId);
   return null;
 }
 
@@ -2694,6 +2911,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Editar transação por nome (via IA)
   if (resultado.acao === 'editar_transacao') {
     return await handleEditarTxPorNome(usuarioId, resultado);
+  }
+
+  // Editar recorrência por nome (via IA)
+  if (resultado.acao === 'editar_recorrencia') {
+    return await handleEditarRecorrenciaPorNome(usuarioId, resultado);
   }
 
   // Mensagem fora do escopo - mostra o que o bot sabe fazer

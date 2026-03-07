@@ -842,7 +842,7 @@ async function buscarTransacoesPorDescricao(usuarioId, query, tipo) {
     params.push(tipo);
   }
   const result = await pool.query(
-    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status
+    `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id
      FROM transacoes
      WHERE usuario_id = $1 AND descricao ILIKE $2${tipoClause}
      ORDER BY data DESC, id DESC
@@ -874,6 +874,49 @@ async function buscarTransacaoPorId(usuarioId, id) {
     [id, uid]
   );
   return result.rows[0] || null;
+}
+
+async function atualizarRecorrencia(usuarioId, recorrenciaId, campo, novoValor) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const camposPermitidos = ['valor', 'descricao', 'categoria', 'dia_mes', 'dia_semana', 'frequencia'];
+  if (!camposPermitidos.includes(campo)) throw new Error(`Campo inválido para recorrência: ${campo}`);
+  const result = await pool.query(
+    `UPDATE recorrencias SET ${campo} = $1
+     WHERE id = $2 AND usuario_id = $3 AND ativo = TRUE
+     RETURNING id, tipo, valor::float, descricao, categoria, frequencia, dia_mes, dia_semana,
+               TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
+               TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim`,
+    [novoValor, recorrenciaId, uid]
+  );
+  return result.rows[0] || null;
+}
+
+async function buscarRecorrenciaPorId(usuarioId, recorrenciaId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, tipo, valor::float, descricao, categoria, frequencia, dia_mes, dia_semana,
+            TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
+            TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim
+     FROM recorrencias
+     WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE`,
+    [recorrenciaId, uid]
+  );
+  return result.rows[0] || null;
+}
+
+async function buscarRecorrenciasPorDescricao(usuarioId, descricao) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, tipo, valor::float, descricao, categoria, frequencia, dia_mes, dia_semana,
+            TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
+            TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim
+     FROM recorrencias
+     WHERE usuario_id = $1 AND ativo = TRUE
+       AND LOWER(descricao) LIKE '%' || LOWER($2) || '%'
+     ORDER BY descricao ASC`,
+    [uid, descricao]
+  );
+  return result.rows;
 }
 
 async function desativarRecorrencia(usuarioId, recorrenciaId) {
@@ -2669,6 +2712,9 @@ module.exports = {
   buscarTransacaoPorId,
   atualizarTransacao,
   excluirTransacao,
+  atualizarRecorrencia,
+  buscarRecorrenciaPorId,
+  buscarRecorrenciasPorDescricao,
   desativarRecorrencia,
   listarCategorias,
   listarCategoriasParaIA,
