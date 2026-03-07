@@ -5609,9 +5609,26 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
   }
   if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)
       && !editandoLimite && !editandoFatura && !editandoFecha && !editandoVence) {
+    // Detectar edição do NOME do cartão em cadastro
+    const querEditarNome = /\b(nome|renomear?|chamar?)\b/.test(lower) || /\b(cartao|cartão)\b/.test(lower);
+    if (querEditarNome) {
+      const matchPara = texto.match(/\b(?:para|pra)\s+(.+)$/i);
+      if (matchPara) {
+        const novoNome = matchPara[1].trim().replace(/[.,!?]+$/, '');
+        if (novoNome.length >= 2) {
+          cc.nome = novoNome;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Cartão renomeado para *${novoNome}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
+        }
+      }
+      return `Qual o novo nome do cartão?\n_Ex: "alterar nome para Itaú"_`;
+    }
     // Está querendo editar algo que não é campo do cartão atual
     const resp = await editarItemFluxo(usuarioId, texto, estado);
-    return resp + `\n\n_Continuando o cadastro do cartão *${cc.nome}*..._\n${perguntaCartaoCampo(cc)}`;
+    if (!resp.includes('Não encontrei')) {
+      return resp + `\n\n_Continuando o cadastro do cartão *${cc.nome}*..._\n${perguntaCartaoCampo(cc)}`;
+    }
+    // Fallback: não encontrou, trata como resposta normal do fluxo
   }
 
   // Fluxo normal — cada campo em sequência
