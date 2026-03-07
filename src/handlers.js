@@ -5459,11 +5459,17 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
       return `Qual o novo nome?\n_Ex: "alterar nome para Financiamento"_`;
     }
 
-    if (querEditarDia && ip.dia) {
+    if (querEditarDia) {
       const dia = extrairDiaDoTexto(texto);
       if (dia) {
         ip.dia = dia;
         salvarPontoZero(usuarioId, estado);
+        const proximoCampo = proximoCampoFaltante(ip, estado.etapa);
+        if (proximoCampo && proximoCampo !== campo) {
+          ip.esperandoCampo = proximoCampo;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(proximoCampo, ip.descricao)}`;
+        }
         return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(campo, ip.descricao)}`;
       }
       return `Qual o novo dia?\n_Ex: "dia 10" ou "10"_`;
@@ -5992,13 +5998,65 @@ async function handleInvestimentoCadastro(usuarioId, texto, estado) {
   if (matchRemoverSub) {
     return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando o cadastro da caixinha *${inv.nome}*..._\n${perguntaCaixinhaCampo(inv)}`;
   }
-  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower) && !/\b(saldo|meta|tipo|nome)\s*(da\s+)?caixinha\s+(atual|essa|que|em)\b/.test(lower)) {
-    // Só intercepta se está editando item JÁ ADICIONADO, não campo da caixinha em cadastro
-    const querEditarCaixinhaAtual = /\b(saldo|meta|tipo|nome)\b/.test(lower) && (estado.investimentos || []).length === 0;
-    if (!querEditarCaixinhaAtual) {
-      const resp = await editarItemFluxo(usuarioId, texto, estado);
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)) {
+    const querEditarNome = /\b(nome|renomear?|chamar?|caixinha)\b/.test(lower);
+    const querEditarSaldo = /\b(saldo|valor|quanto)\b/.test(lower);
+    const querEditarMeta = /\b(meta|objetivo)\b/.test(lower);
+    const querEditarTipo = /\b(tipo|categoria)\b/.test(lower);
+
+    // Editar nome da caixinha em cadastro
+    if (querEditarNome) {
+      const matchPara = texto.match(/\b(?:para|pra)\s+(.+)$/i);
+      if (matchPara) {
+        const novoNome = matchPara[1].trim().replace(/[.,!?]+$/, '');
+        if (novoNome.length >= 2) {
+          inv.nome = novoNome;
+          salvarPontoZero(usuarioId, estado);
+          return `✅ Caixinha renomeada para *${novoNome}*!\n\n${perguntaCaixinhaCampo(inv)}`;
+        }
+      }
+      return `Qual o novo nome da caixinha?\n_Ex: "alterar nome para CDB Nubank"_`;
+    }
+
+    // Editar saldo da caixinha em cadastro
+    if (querEditarSaldo && inv.saldo) {
+      const valor = await extrairValorRobusto(texto);
+      if (valor && valor > 0) {
+        inv.saldo = valor;
+        salvarPontoZero(usuarioId, estado);
+        return `✅ Saldo de *${inv.nome}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaCaixinhaCampo(inv)}`;
+      }
+      return `Qual o novo saldo de *${inv.nome}*?\n_Ex: "R$ 5.000"_`;
+    }
+
+    // Editar meta da caixinha em cadastro
+    if (querEditarMeta && inv.meta !== undefined) {
+      const valor = await extrairValorRobusto(texto);
+      if (valor && valor > 0) {
+        inv.meta = valor;
+        salvarPontoZero(usuarioId, estado);
+        return `✅ Meta de *${inv.nome}* atualizada para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaCaixinhaCampo(inv)}`;
+      }
+      return `Qual a nova meta de *${inv.nome}*?\n_Ex: "R$ 20.000"_`;
+    }
+
+    // Editar tipo da caixinha em cadastro
+    if (querEditarTipo && inv.tipo) {
+      const matchPara2 = texto.match(/\b(?:para|pra)\s+(.+)$/i);
+      if (matchPara2) {
+        inv.tipo = matchPara2[1].trim().replace(/[.,!?]+$/, '');
+        salvarPontoZero(usuarioId, estado);
+        return `✅ Tipo de *${inv.nome}* atualizado para *${inv.tipo}*!\n\n${perguntaCaixinhaCampo(inv)}`;
+      }
+      return `Qual o novo tipo?\n_Ex: "alterar tipo para Renda fixa"_`;
+    }
+
+    // Se não é campo da caixinha atual, tenta editar itens já adicionados
+    const resp = await editarItemFluxo(usuarioId, texto, estado);
+    if (!resp.includes('Não encontrei')) {
       return resp + `\n\n_Continuando o cadastro da caixinha *${inv.nome}*..._\n${perguntaCaixinhaCampo(inv)}`;
     }
+    // Fallback: não encontrou, trata como resposta normal do fluxo
   }
 
   switch (inv.campo) {
