@@ -5370,6 +5370,12 @@ function extrairDiaDoTexto(texto) {
     const d = parseInt(matchDia[1]);
     if (d >= 1 && d <= 31) return d;
   }
+  // "para 7", "pra 10" — número após preposição
+  const matchPara = t.match(/\b(?:para|pra)\s+(\d{1,2})\b/);
+  if (matchPara) {
+    const d = parseInt(matchPara[1]);
+    if (d >= 1 && d <= 31) return d;
+  }
   // Número isolado (ex: resposta "5" ou "10")
   const matchNum = t.match(/^(\d{1,2})$/);
   if (matchNum) {
@@ -6089,7 +6095,11 @@ async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, tex
   const nomeItem = item.descricao || item.nome;
 
   if (campo === 'nome') {
-    if (!novoValor) return `Qual o novo nome? _Ex: "alterar nome da caixinha para Reserva de Emergência"_`;
+    if (!novoValor) {
+      estado.edicaoPendente = { campo: 'nome', novoValor: null, candidatos: [candidato] };
+      salvarPontoZero(usuarioId, estado);
+      return `Qual o novo nome para *${nomeItem}*?\n_Ex: "Reserva de Emergência"_`;
+    }
     if (tipo === 'investimento' || tipo === 'cartão') item.nome = novoValor;
     else item.descricao = novoValor;
     salvarPontoZero(usuarioId, estado);
@@ -6098,7 +6108,11 @@ async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, tex
 
   if (campo === 'dia') {
     const dia = novoValor || extrairDiaDoTexto(textoOriginal);
-    if (!dia) return `Qual dia? _Ex: "dia 10"_`;
+    if (!dia) {
+      estado.edicaoPendente = { campo: 'dia', novoValor: null, candidatos: [candidato] };
+      salvarPontoZero(usuarioId, estado);
+      return `Qual o novo dia para *${nomeItem}*? _Ex: "dia 10" ou "7"_`;
+    }
     if (tipo === 'cartão') item.diaVencimento = dia;
     else item.dia = dia;
     salvarPontoZero(usuarioId, estado);
@@ -6107,7 +6121,11 @@ async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, tex
 
   // campo === 'valor'
   const valor = novoValor || await extrairValorRobusto(textoOriginal);
-  if (!valor || valor <= 0) return `Qual o novo valor? _Ex: "R$ 3.000"_`;
+  if (!valor || valor <= 0) {
+    estado.edicaoPendente = { campo: 'valor', novoValor: null, candidatos: [candidato] };
+    salvarPontoZero(usuarioId, estado);
+    return `Qual o novo valor para *${nomeItem}*? _Ex: "R$ 3.000"_`;
+  }
   if (tipo === 'investimento') item.saldo = valor;
   else if (tipo === 'cartão') item.valorFatura = valor;
   else item.valor = valor;
@@ -6118,6 +6136,41 @@ async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, tex
 async function handleEdicaoPendente(usuarioId, texto, estado) {
   const { campo, novoValor, candidatos } = estado.edicaoPendente;
   const lower = normalizarTextoBusca(texto);
+
+  // Cancelar edição
+  if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(texto.trim())) {
+    delete estado.edicaoPendente;
+    salvarPontoZero(usuarioId, estado);
+    return `Ok, cancelei a edição.\n\n${perguntaAtualEtapa(estado.etapa)}`;
+  }
+
+  // Caso especial: 1 candidato e sem valor → estamos aguardando o valor/dia/nome
+  if (candidatos.length === 1 && novoValor === null) {
+    if (campo === 'dia') {
+      const dia = extrairDiaDoTexto(texto);
+      if (dia) {
+        delete estado.edicaoPendente;
+        return aplicarEdicao(usuarioId, estado, candidatos[0], campo, dia, texto);
+      }
+      return `Não entendi o dia 😅 Me diz um número de 1 a 31.\n_Ex: "dia 7" ou "7"_`;
+    }
+    if (campo === 'valor') {
+      const valor = await extrairValorRobusto(texto);
+      if (valor && valor > 0) {
+        delete estado.edicaoPendente;
+        return aplicarEdicao(usuarioId, estado, candidatos[0], campo, valor, texto);
+      }
+      return `Não entendi o valor 😅\n_Ex: "R$ 3.000" ou "3000"_`;
+    }
+    if (campo === 'nome') {
+      const nome = texto.trim();
+      if (nome.length >= 2) {
+        delete estado.edicaoPendente;
+        return aplicarEdicao(usuarioId, estado, candidatos[0], campo, nome, texto);
+      }
+      return `Me diz o novo nome.`;
+    }
+  }
 
   // Resolve por número (ex: "1", "o primeiro")
   const numMatch = lower.match(/\b([1-9])\b/);
