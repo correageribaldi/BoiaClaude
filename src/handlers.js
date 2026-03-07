@@ -2416,24 +2416,66 @@ async function aplicarEdicaoRec(usuarioId, r, campo, novoValorStr) {
     if (!valorFinal) return `❌ Texto inválido.`;
   }
 
-  const atualizada = await db.atualizarRecorrencia(usuarioId, r.id, campoDb, valorFinal);
-  if (!atualizada) return `❌ Não consegui atualizar a recorrência.`;
+  // Perguntar ao usuário se quer alterar para todos os meses ou só o atual
+  const labelsAntes = { valor: fmt.formatarMoeda(r.valor), descricao: r.descricao, categoria: r.categoria, dia_mes: `dia ${r.dia_mes || '?'}` };
+  const labelsDepoisPreview = { valor: campo === 'valor' ? fmt.formatarMoeda(valorFinal) : novoValorStr, descricao: valorFinal, categoria: valorFinal, dia_mes: `dia ${valorFinal}` };
 
-  // Também atualizar transações pendentes futuras vinculadas a essa recorrência
-  if (['valor', 'descricao', 'categoria'].includes(campoDb)) {
-    try {
-      await db.pool.query(
-        `UPDATE transacoes SET ${campoDb} = $1
-         WHERE recorrencia_id = $2 AND usuario_id = (SELECT usuario_id FROM recorrencias WHERE id = $2)
-           AND status = 'pendente'`,
-        [valorFinal, r.id]
-      );
-    } catch (e) { /* best effort */ }
+  salvarEditarRecDiretoPendente(usuarioId, {
+    fase: 'escolher_escopo',
+    recorrencia: r,
+    campo: campoDb,
+    valorFinal,
+  });
+
+  return `Alterar *${r.descricao}* — ${labelsAntes[campoDb]} → *${labelsDepoisPreview[campoDb]}*\n\nQuer alterar:\n\n  1️⃣ *Todos os meses* (regra + transações futuras)\n  2️⃣ *Somente este mês* (só a transação do mês atual)\n\nResponda *1* ou *2*, ou _"cancelar"_.`;
+}
+
+async function executarEdicaoRecEscopo(usuarioId, r, campoDb, valorFinal, escopo) {
+  if (escopo === 'todos') {
+    const atualizada = await db.atualizarRecorrencia(usuarioId, r.id, campoDb, valorFinal);
+    if (!atualizada) return `❌ Não consegui atualizar a recorrência.`;
+
+    // Também atualizar transações pendentes futuras vinculadas a essa recorrência
+    if (['valor', 'descricao', 'categoria'].includes(campoDb)) {
+      try {
+        await db.pool.query(
+          `UPDATE transacoes SET ${campoDb} = $1
+           WHERE recorrencia_id = $2 AND usuario_id = (SELECT usuario_id FROM recorrencias WHERE id = $2)
+             AND status = 'pendente'`,
+          [valorFinal, r.id]
+        );
+      } catch (e) { /* best effort */ }
+    }
+
+    const labelsAntes = { valor: fmt.formatarMoeda(r.valor), descricao: r.descricao, categoria: r.categoria, dia_mes: `dia ${r.dia_mes || '?'}` };
+    const labelsDepois = { valor: fmt.formatarMoeda(atualizada.valor), descricao: atualizada.descricao, categoria: atualizada.categoria, dia_mes: `dia ${atualizada.dia_mes}` };
+    return `✅ Recorrência *${atualizada.descricao}* atualizada!\n\n${labelsAntes[campoDb]} → *${labelsDepois[campoDb]}*\n\n_Todos os meses futuros usarão o novo valor._`;
   }
 
-  const labelsAntes = { valor: fmt.formatarMoeda(r.valor), descricao: r.descricao, categoria: r.categoria, dia_mes: `dia ${r.dia_mes || '?'}` };
-  const labelsDepois = { valor: fmt.formatarMoeda(atualizada.valor), descricao: atualizada.descricao, categoria: atualizada.categoria, dia_mes: `dia ${atualizada.dia_mes}` };
-  return `✅ Recorrência *${atualizada.descricao}* atualizada!\n\n${labelsAntes[campoDb]} → *${labelsDepois[campoDb]}*\n\n_Todos os meses futuros usarão o novo valor._`;
+  // escopo === 'atual' — só alterar transação pendente do mês atual
+  const agora = new Date();
+  const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString().slice(0, 10);
+  const fimMes = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+  try {
+    const result = await db.pool.query(
+      `UPDATE transacoes SET ${campoDb} = $1
+       WHERE recorrencia_id = $2 AND usuario_id = (SELECT usuario_id FROM recorrencias WHERE id = $2)
+         AND status = 'pendente' AND data >= $3 AND data <= $4
+       RETURNING *`,
+      [valorFinal, r.id, inicioMes, fimMes]
+    );
+
+    if (result.rowCount === 0) {
+      return `❌ Não encontrei transação pendente deste mês para *${r.descricao}*.\n\n_Talvez já tenha sido confirmada. Tente alterar para todos os meses._`;
+    }
+
+    const labelsAntes = { valor: fmt.formatarMoeda(r.valor), descricao: r.descricao, categoria: r.categoria, dia_mes: `dia ${r.dia_mes || '?'}` };
+    const labelsDepoisMap = { valor: fmt.formatarMoeda(valorFinal), descricao: valorFinal, categoria: valorFinal, dia_mes: `dia ${valorFinal}` };
+    return `✅ Transação de *${r.descricao}* deste mês atualizada!\n\n${labelsAntes[campoDb]} → *${labelsDepoisMap[campoDb]}*\n\n_A regra de recorrência não foi alterada — nos próximos meses voltará ao valor original._`;
+  } catch (e) {
+    return `❌ Erro ao atualizar transação do mês atual. Tente novamente.`;
+  }
 }
 
 function detectarCampoEdicaoRec(lower) {
@@ -2492,8 +2534,24 @@ async function handleEditarRecDiretoPendente(usuarioId, msg, pendente) {
   if (pendente.fase === 'aguardando_valor') {
     const r = pendente.recorrencia;
     const campo = pendente.campo;
-    limparEditarRecDiretoPendente(usuarioId);
     return aplicarEdicaoRec(usuarioId, r, campo, msg.trim());
+  }
+
+  if (pendente.fase === 'escolher_escopo') {
+    const r = pendente.recorrencia;
+    const campo = pendente.campo;
+    const valorFinal = pendente.valorFinal;
+
+    if (/^(1|todos|tudo|todas|todos\s+os\s+meses)/i.test(lower)) {
+      limparEditarRecDiretoPendente(usuarioId);
+      return executarEdicaoRecEscopo(usuarioId, r, campo, valorFinal, 'todos');
+    }
+    if (/^(2|atual|s[oó]\s*(este|esse)|este\s+m[eê]s|somente|apenas)/i.test(lower)) {
+      limparEditarRecDiretoPendente(usuarioId);
+      return executarEdicaoRecEscopo(usuarioId, r, campo, valorFinal, 'atual');
+    }
+
+    return `Responda *1* (todos os meses) ou *2* (somente este mês), ou _"cancelar"_.`;
   }
 
   limparEditarRecDiretoPendente(usuarioId);
