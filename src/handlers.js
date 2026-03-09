@@ -7094,68 +7094,41 @@ async function finalizarPontoZero(usuarioId, estado) {
   const totalInvestido = investimentos.reduce((s, i) => s + i.saldo, 0);
 
   let msg = `📊 *FINANÇAS EM DIA — ${mesAtual.toUpperCase()}*\n\n`;
-  msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+  msg += `💰 *Saldo atual:* ${fmt.formatarMoeda(estado.saldoInicial)}\n\n`;
 
-  // Caixinhas (sem repetir no cabeçalho — detalhes aqui já são suficientes)
+  // Caixinhas — resumo compacto
   if (investimentos.length > 0) {
-    msg += `🏦 *Caixinhas e Investimentos:*\n`;
-    for (const inv of investimentos) {
-      let linha = `  💰 ${inv.nome} — ${fmt.formatarMoeda(inv.saldo)}`;
-      if (inv.meta) linha += ` | meta: ${fmt.formatarMoeda(inv.meta)}`;
-      if (inv.tipo) linha += ` | ${inv.tipo}`;
-      if (inv.rendimento) linha += ` | ${inv.rendimento}%/mês`;
-      msg += linha + '\n';
-    }
-    msg += `  _Total investido: ${fmt.formatarMoeda(totalInvestido)}_\n\n`;
+    msg += `🏦 *Investimentos:* ${fmt.formatarMoeda(totalInvestido)}`;
+    msg += ` _(${investimentos.length} ${investimentos.length === 1 ? 'caixinha' : 'caixinhas'})_\n\n`;
   }
 
-  // Receitas fixas
-  if (rfFixasFut.length > 0) {
-    msg += `📈 *Receitas Fixas a receber (+${fmt.formatarMoeda(totalRecFixasFut)}):*\n`;
-    for (const r of rfFixasFut) {
-      msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)}${r.dia ? ` (dia ${r.dia})` : ''}\n`;
-    }
+  // Receitas e despesas — apenas totais
+  const totalReceitasGeral = (estado.receitasFixas || []).reduce((s, r) => s + r.valor, 0);
+  const totalDespesasGeral = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
+
+  if (totalRecFixasFut > 0) {
+    msg += `📈 *Receitas a receber:* +${fmt.formatarMoeda(totalRecFixasFut)}`;
+    msg += rfFixasFut.length > 1 ? ` _(${rfFixasFut.length} itens)_` : '';
     msg += '\n';
   }
 
-  // Despesas fixas
-  if (dfFixasFut.length > 0) {
-    msg += `📉 *Despesas a pagar (-${fmt.formatarMoeda(totalDespFixasFut)}):*\n`;
-    for (const d of dfFixasFut) {
-      msg += `  🔴 ${d.descricao} — ${fmt.formatarMoeda(d.valor)}${d.dia ? ` (dia ${d.dia})` : ''}\n`;
-    }
+  if (totalDespFixasFut > 0) {
+    msg += `📉 *Despesas a pagar:* -${fmt.formatarMoeda(totalDespFixasFut)}`;
+    msg += dfFixasFut.length > 1 ? ` _(${dfFixasFut.length} itens)_` : '';
     msg += '\n';
   }
 
-  // Cartões — faturas futuras
-  if (cartoesFut.length > 0) {
-    msg += `💳 *Faturas de Cartão (-${fmt.formatarMoeda(totalCartoesFut)}):*\n`;
-    for (const c of cartoesFut) {
-      msg += `  🔴 ${c.nome} — ${fmt.formatarMoeda(c.valorFatura)} (venc. dia ${c.diaVencimento})\n`;
-    }
+  if (totalCartoesFut > 0) {
+    msg += `💳 *Faturas de cartão:* -${fmt.formatarMoeda(totalCartoesFut)}`;
+    msg += cartoesFut.length > 1 ? ` _(${cartoesFut.length} cartões)_` : '';
     msg += '\n';
   }
 
-  // Itens já contabilizados no saldo (dia já passou)
-  const passados = [...rfFixasPass, ...dfFixasPass, ...cartoesPass];
-  if (passados.length > 0) {
-    msg += `✅ *Já contabilizado no saldo (dias anteriores):*\n`;
-    for (const r of rfFixasPass) {
-      msg += `  🟢 ${r.descricao} — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia}) ✔️\n`;
-    }
-    for (const d of dfFixasPass) {
-      msg += `  🔴 ${d.descricao} — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia}) ✔️\n`;
-    }
-    for (const c of cartoesPass) {
-      msg += `  🔴 ${c.nome} — ${fmt.formatarMoeda(c.valorFatura)} (venc. dia ${c.diaVencimento}) ✔️\n`;
-    }
-    msg += '\n';
-  }
+  msg += '\n';
 
-  // Orçamento proporcional (dinâmico baseado nas categorias principais do usuário)
-  const totalReceitas = (estado.receitasFixas || []).reduce((s, r) => s + r.valor, 0);
-  const totalFixasReal = (estado.despesasFixas || []).reduce((s, d) => s + d.valor, 0);
+  // Orçamento proporcional
+  const totalReceitas = totalReceitasGeral;
+  const totalFixasReal = totalDespesasGeral;
   let catsPrincipais = await db.listarCategoriasPrincipais(usuarioId);
   if (catsPrincipais.length === 0) catsPrincipais = db.CATEGORIAS_PRINCIPAIS_PADRAO;
   const catFixas = catsPrincipais.find(c => c.nome === 'Despesas Fixas');
@@ -7171,32 +7144,35 @@ async function finalizarPontoZero(usuarioId, estado) {
     check: c.nome === 'Despesas Fixas',
   }));
 
-  msg += `📊 *Orçamento mensal sugerido* _(baseado na sua renda de ${fmt.formatarMoeda(totalReceitas)})_\n\n`;
-  for (const l of linhasOrcamento) {
-    const emojiLinha = l.check && alertaFixas ? '⚠️' : '🟡';
-    msg += `${emojiLinha} *${l.label}* (${l.pct}%) — ${fmt.formatarMoeda(l.valor)}`;
-    if (l.check && alertaFixas) {
-      msg += `\n   _⚠️ Suas fixas atuais (${fmt.formatarMoeda(l.real)}) já ultrapassam esse limite!_`;
+  if (totalReceitas > 0) {
+    msg += `📊 *Orçamento sugerido:*\n`;
+    for (const l of linhasOrcamento) {
+      const barra = l.check && alertaFixas ? '⚠️' : '▸';
+      msg += `${barra} *${l.label}* ${l.pct}% → ${fmt.formatarMoeda(l.valor)}`;
+      if (l.check && alertaFixas) {
+        msg += ` _(atual: ${fmt.formatarMoeda(l.real)})_`;
+      }
+      msg += '\n';
     }
     msg += '\n';
   }
-  msg += '\n';
 
-  msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+  // Previsão final
   const emojiPrev = previsao >= 0 ? '✅' : '🚨';
-  msg += `${emojiPrev} *Previsão até ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}\n`;
-  if (totalInvestido > 0) {
-    msg += `💼 *Patrimônio total:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)} _(saldo + investimentos)_\n`;
+  msg += `${emojiPrev} *Previsão p/ ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}`;
+  if (previsao >= 0) {
+    msg += ` 💪`;
+  } else {
+    msg += `\n_⚠️ Faltam ${fmt.formatarMoeda(Math.abs(previsao))} pra fechar no azul_`;
   }
   msg += '\n';
-  if (previsao >= 0) {
-    msg += `Sobram *${fmt.formatarMoeda(previsao)}* até o fim do mês! 💪\n`;
-  } else {
-    msg += `⚠️ Atenção! Faltam *${fmt.formatarMoeda(Math.abs(previsao))}* pra fechar o mês no azul.\n`;
+
+  if (totalInvestido > 0) {
+    msg += `💼 *Patrimônio:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)} _(saldo + investimentos)_\n`;
   }
 
-  msg += `\n_Tudo registrado! Agora é só ir usando o Cronos no dia a dia._ 🚀\n`;
-  msg += `_Dica: peça *"resumo"* ou *"agenda"* quando quiser acompanhar._`;
+  msg += `\n_Pronto! Agora é só usar o Cronos no dia a dia_ 🚀\n`;
+  msg += `_Peça *"resumo"* ou *"agenda"* quando quiser acompanhar_`;
 
   return msg;
 }
