@@ -2119,8 +2119,7 @@ async function handleTransacao(usuarioId, msg) {
     `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
     `📝 Descrição: ${descricao}\n` +
     `📂 Categoria: ${categoria || 'Outros'}\n` +
-    `📅 Data: ${dataFormatada}\n` +
-    `🆔 ID: #${result.lastInsertRowid}`;
+    `📅 Data: ${dataFormatada}`;
 }
 
 async function handleResumo(usuarioId, msg) {
@@ -2872,7 +2871,7 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
       const result = await db.adicionarTransacao(usuarioId, tipoFinal, itemValor, itemDescricao, itemCategoria, itemData, status);
       const dataExibir = itemData ? fmt.formatarData(itemData) : 'Hoje';
       const emoji = status === 'pendente' ? (tipoFinal === 'receita' ? '⏳💰' : '⏳💸') : (tipoFinal === 'receita' ? '✅💰' : '✅💸');
-      salvos.push(`${emoji} ${itemDescricao} — ${fmt.formatarMoeda(itemValor)} (${dataExibir}) #${result.lastInsertRowid}`);
+      salvos.push(`${emoji} ${itemDescricao} — ${fmt.formatarMoeda(itemValor)} (${dataExibir})`);
     }
 
     let msg = '';
@@ -2921,17 +2920,11 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
     `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
     `📝 Descrição: ${descricao}\n` +
     `📂 Categoria: ${categoria || 'Outros'}\n` +
-    `📅 Data: ${dataExibir}\n` +
-    `🆔 ID: #${result.lastInsertRowid}`;
+    `📅 Data: ${dataExibir}`;
 
   if (status === 'pendente') {
     const quando = tipo === 'receita' ? 'receber' : 'pagar';
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
-  }
-
-  // Verificar limites de gastos (apenas para despesas)
-  if (tipo === 'despesa' && categoria) {
-    msg += await verificarLimitesTransacao(usuarioId, categoria);
   }
 
   return msg;
@@ -3668,20 +3661,6 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
   let msg = `💳 *${descricao}* registrada em *${parcelas}x* no cartão!\n\n` +
     `💵 Total: ${fmt.formatarMoeda(valor)}\n📋 *Parcelas:*\n${listaParcelas}`;
 
-  try {
-    const cartoes = await db.listarCartoes(usuarioId);
-    const cartao = cartoes.find(c => c.id === cartaoId);
-    if (cartao) {
-      const { total: faturaAtual } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
-      const comprometido = await db.calcularCreditoComprometido(cartaoId);
-      msg += `\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(faturaAtual)} na fatura atual`;
-      if (cartao.limite_total) {
-        const disponivel = cartao.limite_total - comprometido;
-        msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
-      }
-    }
-  } catch { /* silencia */ }
-
   return msg;
 }
 
@@ -3708,31 +3687,11 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
     `💵 Valor: ${fmt.formatarMoeda(valor)}\n` +
     `📝 Descrição: ${descricao}\n` +
     `📂 Categoria: ${categoria || 'Outros'}\n` +
-    `📅 Data: ${dataExibir}\n` +
-    `🆔 ID: #${result.lastInsertRowid}`;
+    `📅 Data: ${dataExibir}`;
 
-  if (cartaoId) {
-    try {
-      const cartoes = await db.listarCartoes(usuarioId);
-      const cartao = cartoes.find(c => c.id === cartaoId);
-      if (cartao) {
-        const { total: faturaAtual } = await db.calcularUsoCartao(cartaoId, cartao.dia_fechamento);
-        const comprometido = await db.calcularCreditoComprometido(cartaoId);
-        msg += `\n\n💳 *${cartao.nome}*: ${fmt.formatarMoeda(faturaAtual)} na fatura atual`;
-        if (cartao.limite_total) {
-          const disponivel = cartao.limite_total - comprometido;
-          msg += ` | *${fmt.formatarMoeda(disponivel)} disponível*`;
-        }
-      }
-    } catch { /* silencia erro secundário */ }
-  } else if (statusFinal === 'pendente') {
+  if (statusFinal === 'pendente') {
     const quando = tipo === 'receita' ? 'receber' : 'pagar';
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
-  }
-
-  // Verificar limites de gastos (despesas)
-  if (tipo === 'despesa' && categoria) {
-    msg += await verificarLimitesTransacao(usuarioId, categoria);
   }
 
   return msg;
