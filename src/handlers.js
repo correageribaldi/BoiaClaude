@@ -7159,17 +7159,13 @@ async function finalizarPontoZero(usuarioId, estado) {
 
   // Previsão final
   const emojiPrev = previsao >= 0 ? '✅' : '🚨';
-  msg += `${emojiPrev} *Previsão p/ ${ultimoDia}/${mmAtual}:* ${fmt.formatarMoeda(previsao)}`;
+  msg += `${emojiPrev} *Previsão até o último dia do mês (${ultimoDia}/${mmAtual}):* ${fmt.formatarMoeda(previsao)}`;
   if (previsao >= 0) {
     msg += ` 💪`;
   } else {
     msg += `\n_⚠️ Faltam ${fmt.formatarMoeda(Math.abs(previsao))} pra fechar no azul_`;
   }
   msg += '\n';
-
-  if (totalInvestido > 0) {
-    msg += `💼 *Patrimônio:* ${fmt.formatarMoeda(estado.saldoInicial + totalInvestido)} _(saldo + investimentos)_\n`;
-  }
 
   msg += `\n_Pronto! Agora é só usar o Cronos no dia a dia_ 🚀\n`;
   msg += `_Peça *"resumo"* ou *"agenda"* quando quiser acompanhar_`;
