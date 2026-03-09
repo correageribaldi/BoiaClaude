@@ -93,6 +93,7 @@ NÃO confundir com editar_transacao (lançamento pontual de um mês específico)
 
 4. COMANDO (pedir resumo, lista, excluir, saldo, pendentes):
 {"acao": "comando", "dica": "resumo|lista|excluir|saldo|pendentes"}
+IMPORTANTE: Se o usuário pedir lista MAS com filtro de tipo ou período (ex: "minhas despesas", "despesas de março", "receitas dessa semana", "o que gastei essa semana"), use "consulta" com os filtros preenchidos, NÃO use "comando". Use "comando" com dica "lista" SOMENTE para pedidos genéricos sem filtro (ex: "lista", "meus lançamentos", "últimos lançamentos").
 
 5. LIMITE DE GASTOS (limitar gastos, limite de, controlar gastos com, não quero gastar mais que X com):
 {"acao": "definir_limite", "categoria": "nome da categoria", "valor": 0.00}
@@ -241,7 +242,8 @@ REGRAS GERAIS:
   * "lembretes" = coisas que o usuário pediu para ser lembrado (alarmes, avisos, tarefas)
   * "receitas/despesas" = transações financeiras (dinheiro entrando ou saindo)
   * Se o usuário pedir "meus lembretes" → use listar_lembretes, NÃO use "comando" com dica "lista"
-  * Se o usuário pedir "minhas despesas" ou "meus lançamentos" → use "comando" com dica "lista"
+  * Se o usuário pedir "meus lançamentos" sem filtro → use "comando" com dica "lista"
+  * Se o usuário pedir "minhas despesas", "minhas receitas", "despesas de março" (com tipo ou período) → use "consulta" com tipo/dataInicio/dataFim preenchidos
 
 REGRAS PARA SAUDAÇÃO:
 - Seja caloroso e breve

@@ -1971,6 +1971,14 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleCancelarRecorrente(usuarioId, msg);
   }
 
+  // Comando: despesas / receitas (atalho para lista filtrada)
+  if (lower === 'despesas' || lower === 'minhas despesas') {
+    return await handleLista(usuarioId, 'lista despesas');
+  }
+  if (lower === 'receitas' || lower === 'minhas receitas') {
+    return await handleLista(usuarioId, 'lista receitas');
+  }
+
   // Comando: lista (transações financeiras - despesas/receitas)
   if (lower.startsWith('lista')) {
     return await handleLista(usuarioId, msg);
@@ -3408,8 +3416,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
       return await handleResumo(usuarioId, textoOriginal || 'resumo');
     }
     if (resultado.dica === 'lista') {
-      const transacoes = await db.listarTransacoes(usuarioId, null, 10);
-      return fmt.formatarListaTransacoes(transacoes);
+      return await handleLista(usuarioId, textoOriginal || 'lista');
     }
     return `Parece que você quer usar um comando. Tente digitar: *${resultado.dica || 'ajuda'}*`;
   }
