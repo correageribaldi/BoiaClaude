@@ -105,12 +105,12 @@ NÃO confundir com editar_transacao (lançamento pontual de um mês específico)
 
 8. LEMBRETE ÚNICO (me lembre, lembra de, me avisa, daqui X minutos/horas, às X horas):
 {"acao": "lembrete", "minutos": 0, "horario": "HH:MM ou null", "data": "YYYY-MM-DD ou null", "mensagem": "o que lembrar"}
-ATENÇÃO: Se o "me lembre" envolver PAGAR ou RECEBER DINHEIRO (com valor), NÃO é lembrete! É TRANSAÇÃO com status "pendente". Veja exemplos na seção de transação.
+ATENÇÃO: Se o "me lembre" envolver PAGAR/RECEBER/COBRAR/DEVOLVER (mesmo sem valor), NÃO é lembrete! É TRANSAÇÃO com status "pendente". Veja exemplos na seção de transação.
 
 9. LEMBRETE RECORRENTE (toda semana, todo dia, toda segunda, sempre às X, me lembra de fazer X todo mês):
 {"acao": "lembrete_recorrente", "horario": "HH:MM", "frequencia": "diario|semanal|mensal", "dia_semana": 0-6 ou null, "dia_mes": 1-31 ou null, "duracao_meses": numero ou null, "mensagem": "o que lembrar"}
 Use SOMENTE para lembretes SEM valor financeiro (ex: cortar a grama, tomar remédio, reunião, conferir e-mail).
-ATENÇÃO: Se envolver PAGAR ou RECEBER DINHEIRO (com valor), NÃO é lembrete recorrente! Use TRANSACAO_RECORRENTE.
+ATENÇÃO: Se envolver PAGAR/RECEBER/COBRAR/DEVOLVER (mesmo sem valor), NÃO é lembrete recorrente! Use TRANSACAO_RECORRENTE.
 
 9b. DESPESA OU RECEITA RECORRENTE (pago todo mês, recebo todo mês, cadastrar mensalidade, despesa fixa mensal, salário todo mês, aluguel mensal, conta recorrente, toda semana pago X):
 {"acao": "transacao_recorrente", "tipo": "despesa|receita", "valor": 0.00, "descricao": "...", "categoria": "...", "frequencia": "mensal|semanal", "dia_mes": 1-31 ou null, "dia_semana": 0-6 ou null}
@@ -311,8 +311,8 @@ COMO DETERMINAR O STATUS:
 REGRA DE OURO DO STATUS:
 - Verbos no PASSADO (gastei, paguei, comprei, recebi) → "pago"
 - Verbos no FUTURO ou expressões de obrigação (tenho que, preciso, vou, vai, vence, cai) → "pendente"
-- "me lembre de pagar", "me lembra de pagar", "não esquecer de pagar" → É TRANSAÇÃO com status "pendente", NÃO é lembrete!
-- "me lembre de receber", "não esquecer de cobrar" → É TRANSAÇÃO (receita) com status "pendente"
+- "me lembre de pagar", "me lembra de pagar", "não esquecer de pagar" → É TRANSAÇÃO com status "pendente", NÃO é lembrete! (mesmo sem valor)
+- "me lembre de receber", "não esquecer de cobrar", "receber da fulana" → É TRANSAÇÃO (receita) com status "pendente" (mesmo sem valor)
 - Na DÚVIDA, use "pago"
 
 ATENÇÃO — NÃO USE TRANSAÇÃO QUANDO:
@@ -323,15 +323,21 @@ ATENÇÃO — NÃO USE TRANSAÇÃO QUANDO:
   - "posso fazer uma compra de X reais?" → NÃO é transação → use assessor_compra
 - A presença de data ou valor NÃO transforma um pedido de conselho em transação!
 
-REGRA IMPORTANTE - "ME LEMBRE" COM DINHEIRO:
-- Se o usuário diz "me lembre" + PAGAR/RECEBER/COBRAR + VALOR → use "transacao" com status "pendente"
+REGRA IMPORTANTE - "ME LEMBRE" COM CONTEXTO FINANCEIRO:
+- Se o usuário diz "me lembre" + PAGAR/RECEBER/COBRAR/DEVOLVER → é SEMPRE "transacao" com status "pendente", COM OU SEM valor!
+  - COM valor: use o valor informado
+  - SEM valor: use valor 0 (o sistema vai perguntar o valor depois)
+  Exemplos:
   - "me lembre de pagar a conta de luz dia 20, 150 reais" → {"acao": "transacao", "tipo": "despesa", "valor": 150, "descricao": "Conta de luz", "categoria": "Moradia", "data": "calcule a data do dia 20 conforme regras acima", "status": "pendente"}
   - "me lembra que tenho que pagar 500 do cartão dia 10" → {"acao": "transacao", "tipo": "despesa", "valor": 500, "descricao": "Cartão de crédito", "categoria": "Outros", "data": "calcule a data do dia 10 conforme regras acima", "status": "pendente"}
   - "não esquecer de receber 200 do João dia 25" → {"acao": "transacao", "tipo": "receita", "valor": 200, "descricao": "Receber do João", "categoria": "Outros", "data": "calcule a data do dia 25 conforme regras acima", "status": "pendente"}
+  - "me lembre de pagar o João" → {"acao": "transacao", "tipo": "despesa", "valor": 0, "descricao": "Pagar o João", "categoria": "Outros", "data": null, "status": "pendente"}
+  - "receber da Maria" → {"acao": "transacao", "tipo": "receita", "valor": 0, "descricao": "Receber da Maria", "categoria": "Outros", "data": null, "status": "pendente"}
+  - "me lembra de cobrar o Pedro" → {"acao": "transacao", "tipo": "receita", "valor": 0, "descricao": "Cobrar o Pedro", "categoria": "Outros", "data": null, "status": "pendente"}
   - IMPORTANTE: o campo "data" DEVE ser uma data real no formato YYYY-MM-DD (ex: "2026-02-20"), NUNCA use templates como "YYYY-MM-20"
-- Se o usuário diz "me lembre" SEM valor financeiro → use "lembrete" (ação 8)
-  - "me lembre de ligar pro dentista" → lembrete (não tem valor financeiro)
-  - "me lembra de comprar leite" → lembrete (não tem valor financeiro)
+- Se o usuário diz "me lembre" SEM contexto financeiro (sem pagar/receber/cobrar/devolver) → use "lembrete" (ação 8)
+  - "me lembre de ligar pro dentista" → lembrete (não envolve pagar/receber)
+  - "me lembra de comprar leite" → lembrete (não envolve pagar/receber)
 
 REGRAS PARA CONSULTA:
 - Use CONSULTA para perguntas ESPECÍFICAS com filtros (categoria, período, tipo, etc)
