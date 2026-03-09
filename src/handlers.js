@@ -2047,8 +2047,9 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
 
   // Comando: pendentes
-  if (lower === 'pendentes' || lower === 'a pagar' || lower === 'contas') {
-    const pendentes = await db.listarPendentes(usuarioId);
+  if (lower === 'pendentes' || lower === 'a pagar' || lower === 'contas' || lower === 'a receber') {
+    const tipoPendente = lower === 'a pagar' ? 'despesa' : lower === 'a receber' ? 'receita' : null;
+    const pendentes = await db.listarPendentes(usuarioId, tipoPendente);
     return fmt.formatarPendentes(pendentes);
   }
 

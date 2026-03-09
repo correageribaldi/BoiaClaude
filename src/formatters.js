@@ -133,21 +133,31 @@ function formatarPendentes(transacoes) {
     return '✅ Nenhuma conta pendente! Tudo em dia.';
   }
 
-  let totalDespesas = 0;
-  let totalReceitas = 0;
+  const despesas = transacoes.filter(t => t.tipo === 'despesa');
+  const receitas = transacoes.filter(t => t.tipo === 'receita');
 
-  let msg = '⏳ *Contas pendentes:*\n\n';
-  for (const t of transacoes) {
-    const emoji = t.tipo === 'receita' ? '🟢' : '🔴';
-    msg += `${emoji} #${t.id} | ${formatarData(t.data)} | ${formatarMoeda(t.valor)}\n`;
-    msg += `   _${t.descricao}_ (${t.categoria})\n\n`;
-    if (t.tipo === 'despesa') totalDespesas += t.valor;
-    else totalReceitas += t.valor;
+  let msg = '';
+
+  if (despesas.length > 0) {
+    const totalDespesas = despesas.reduce((s, t) => s + t.valor, 0);
+    msg += '💸 *A pagar:*\n\n';
+    for (const t of despesas) {
+      msg += `🔴 ${formatarData(t.data)} | ${formatarMoeda(t.valor)}\n`;
+      msg += `   _${t.descricao}_ (${t.categoria})\n\n`;
+    }
+    msg += `*Total:* ${formatarMoeda(totalDespesas)}\n`;
   }
 
-  msg += `━━━━━━━━━━━━━━━\n`;
-  if (totalDespesas > 0) msg += `💸 *Total a pagar:* ${formatarMoeda(totalDespesas)}\n`;
-  if (totalReceitas > 0) msg += `💰 *Total a receber:* ${formatarMoeda(totalReceitas)}\n`;
+  if (receitas.length > 0) {
+    const totalReceitas = receitas.reduce((s, t) => s + t.valor, 0);
+    if (msg) msg += `\n━━━━━━━━━━━━━━━\n\n`;
+    msg += '💰 *A receber:*\n\n';
+    for (const t of receitas) {
+      msg += `🟢 ${formatarData(t.data)} | ${formatarMoeda(t.valor)}\n`;
+      msg += `   _${t.descricao}_ (${t.categoria})\n\n`;
+    }
+    msg += `*Total:* ${formatarMoeda(totalReceitas)}\n`;
+  }
 
   return msg;
 }
