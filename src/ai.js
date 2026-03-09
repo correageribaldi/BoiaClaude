@@ -536,7 +536,7 @@ async function interpretarMensagem(texto, usuarioId = null) {
         { role: 'user', content: texto },
       ],
       temperature: 0.4,
-      max_tokens: 800,
+      max_tokens: 1500,
     });
 
     const content = response.choices[0]?.message?.content?.trim();
@@ -780,7 +780,7 @@ Outros exemplos:
         { role: 'user', content: texto },
       ],
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: 2000,
     });
 
     const content = response.choices[0]?.message?.content?.trim();

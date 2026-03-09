@@ -6410,17 +6410,8 @@ async function redireccionarPontoZero(usuarioId, texto, etapa) {
     despesas_fixas: 'despesas fixas', investimentos: 'investimentos/caixinhas',
     cartoes: 'cartões de crédito', despesas_dia_a_dia: 'gastos do mês',
   };
-  const prompt = (
-    `O usuário está no assistente financeiro Cronos, na etapa de cadastro de "${etapaLabel[etapa] || etapa}". ` +
-    `Em vez de responder o que foi pedido, ele mandou: "${texto}". ` +
-    `Faça uma piada curtíssima (1 frase) com toque financeiro se der. ` +
-    `Responda em português brasileiro, sem exagerar nos emojis.`
-  );
-  const piada = await responderAssistente(prompt).catch(() => null);
   const pergunta = perguntaAtualEtapa(etapa);
-  return piada
-    ? `${piada}\n\nMas voltando ao que importa 😄\n\n${pergunta}`
-    : `Não entendi 😅\n\n${pergunta}`;
+  return `Não entendi essa parte 😅 Vamos continuar!\n\n${pergunta}`;
 }
 
 function mostrarResumoFluxo(estado) {
