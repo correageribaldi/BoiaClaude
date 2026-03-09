@@ -132,10 +132,13 @@
     <section id="tab-transactions" class="tab-content hidden">
       <div class="section-header">
         <h2>Transações</h2>
-        <div class="month-nav">
-          <button class="btn-icon" id="tx-prev">‹</button>
-          <span id="tx-mes-label">—</span>
-          <button class="btn-icon" id="tx-next">›</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="btn btn-primary btn-sm" onclick="abrirModalNovaTx()">+ Nova</button>
+          <div class="month-nav">
+            <button class="btn-icon" id="tx-prev">‹</button>
+            <span id="tx-mes-label">—</span>
+            <button class="btn-icon" id="tx-next">›</button>
+          </div>
         </div>
       </div>
 
@@ -225,12 +228,25 @@
 
         <div class="accordion-item">
           <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>🔄 Recorrências</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div id="recorrencias-list"></div>
+            <div id="recorrencias-empty" class="empty-state hidden">Nenhuma recorrência ativa.</div>
+            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaRecorrencia()">+ Nova Recorrência</button>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
             <span>💳 Cartões de Crédito</span>
             <span class="accordion-icon">›</span>
           </button>
           <div class="accordion-body hidden">
             <div id="cartoes-list"></div>
-            <div id="cartoes-empty" class="empty-state hidden">Nenhum cartão cadastrado. Use o WhatsApp para adicionar.</div>
+            <div id="cartoes-empty" class="empty-state hidden">Nenhum cartão cadastrado.</div>
+            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovoCartao()">+ Novo Cartão</button>
           </div>
         </div>
 
@@ -241,7 +257,8 @@
           </button>
           <div class="accordion-body hidden">
             <div id="investimentos-list"></div>
-            <div id="investimentos-empty" class="empty-state">Em breve — gerencie suas caixinhas e investimentos aqui.</div>
+            <div id="investimentos-empty" class="empty-state hidden">Nenhuma caixinha cadastrada.</div>
+            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaCaixinha()">+ Nova Caixinha</button>
           </div>
         </div>
       </div>
@@ -251,10 +268,13 @@
     <section id="tab-agenda" class="tab-content hidden">
       <div class="section-header">
         <h2>Minha Agenda</h2>
-        <div class="month-nav">
-          <button class="btn-icon" id="ag-prev">‹</button>
-          <span id="ag-mes-label">—</span>
-          <button class="btn-icon" id="ag-next">›</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="btn btn-primary btn-sm" onclick="abrirModalNovoLembrete()">+ Lembrete</button>
+          <div class="month-nav">
+            <button class="btn-icon" id="ag-prev">‹</button>
+            <span id="ag-mes-label">—</span>
+            <button class="btn-icon" id="ag-next">›</button>
+          </div>
         </div>
       </div>
 
@@ -467,6 +487,265 @@
     </button>
   </nav>
 
+</div>
+
+<!-- ── Modal de nova transação ──────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-nova-tx">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Nova Transação</h3>
+      <button class="modal-close" onclick="fecharModalNovaTx()">✕</button>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Tipo</label>
+      <div class="toggle-bar" id="nova-tx-tipo-bar">
+        <button class="toggle-btn active" data-val="despesa" onclick="toggleNovaTxTipo(this)">Despesa</button>
+        <button class="toggle-btn" data-val="receita" onclick="toggleNovaTxTipo(this)">Receita</button>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Descrição</label>
+      <input type="text" id="nova-tx-descricao" class="input" placeholder="Ex: Aluguel, Salário...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
+      <input type="number" id="nova-tx-valor" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Categoria</label>
+      <select id="nova-tx-categoria" class="input"></select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Data</label>
+      <input type="date" id="nova-tx-data" class="input">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Status</label>
+      <div class="toggle-bar" id="nova-tx-status-bar">
+        <button class="toggle-btn active" data-val="pendente" onclick="toggleNovaTxStatus(this)">Pendente</button>
+        <button class="toggle-btn" data-val="pago" onclick="toggleNovaTxStatus(this)">Pago</button>
+      </div>
+    </div>
+    <div id="nova-tx-cartao-wrap" class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Cartão (opcional)</label>
+      <select id="nova-tx-cartao" class="input"><option value="">Nenhum</option></select>
+    </div>
+    <div id="nova-tx-parcelas-wrap" class="form-group hidden" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Parcelas</label>
+      <input type="number" id="nova-tx-parcelas" class="input" min="1" max="48" value="1" placeholder="1">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalNovaTx()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarNovaTx()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de novo cartão ────────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-novo-cartao">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3 id="modal-cartao-titulo">Novo Cartão</h3>
+      <button class="modal-close" onclick="fecharModalCartao()">✕</button>
+    </div>
+    <input type="hidden" id="cartao-edit-id">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Nome</label>
+      <input type="text" id="cartao-nome" class="input" placeholder="Ex: Nubank, C6...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Limite Total (R$)</label>
+      <input type="number" id="cartao-limite" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Dia do Fechamento</label>
+      <input type="number" id="cartao-fechamento" class="input" min="1" max="31" placeholder="Ex: 15">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Dia do Vencimento</label>
+      <input type="number" id="cartao-vencimento" class="input" min="1" max="31" placeholder="Ex: 25">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalCartao()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCartao()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de nova caixinha ──────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-nova-caixinha">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3 id="modal-caixinha-titulo">Nova Caixinha</h3>
+      <button class="modal-close" onclick="fecharModalCaixinha()">✕</button>
+    </div>
+    <input type="hidden" id="caixinha-edit-id">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Nome</label>
+      <input type="text" id="caixinha-nome" class="input" placeholder="Ex: Reserva de emergência...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Saldo Inicial (R$)</label>
+      <input type="number" id="caixinha-saldo" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Meta (R$, opcional)</label>
+      <input type="number" id="caixinha-meta" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Tipo (opcional)</label>
+      <input type="text" id="caixinha-tipo" class="input" placeholder="Ex: Renda fixa, Poupança...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Rendimento Mensal % (opcional)</label>
+      <input type="number" id="caixinha-rendimento" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalCaixinha()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCaixinha()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de depósito caixinha ──────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-deposito-caixinha">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Depositar na Caixinha</h3>
+      <button class="modal-close" onclick="fecharModalDeposito()">✕</button>
+    </div>
+    <input type="hidden" id="deposito-caixinha-id">
+    <p id="deposito-caixinha-nome" style="color:var(--text-muted);margin-bottom:16px"></p>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
+      <input type="number" id="deposito-valor" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalDeposito()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarDeposito()">Depositar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de novo lembrete ──────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-novo-lembrete">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Novo Lembrete</h3>
+      <button class="modal-close" onclick="fecharModalLembrete()">✕</button>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Tipo</label>
+      <div class="toggle-bar" id="lembrete-tipo-bar">
+        <button class="toggle-btn active" data-val="avulso" onclick="toggleLembreteTipo(this)">Avulso</button>
+        <button class="toggle-btn" data-val="recorrente" onclick="toggleLembreteTipo(this)">Recorrente</button>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Mensagem</label>
+      <input type="text" id="lembrete-mensagem" class="input" placeholder="Do que lembrar?">
+    </div>
+    <div id="lembrete-avulso-fields">
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Data</label>
+        <input type="date" id="lembrete-data" class="input">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Hora</label>
+        <input type="time" id="lembrete-hora" class="input">
+      </div>
+    </div>
+    <div id="lembrete-recorrente-fields" class="hidden">
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Horário</label>
+        <input type="time" id="lembrete-rec-horario" class="input">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Frequência</label>
+        <select id="lembrete-rec-frequencia" class="input" onchange="toggleLembreteFreqFields()">
+          <option value="diario">Diário</option>
+          <option value="semanal">Semanal</option>
+          <option value="mensal">Mensal</option>
+        </select>
+      </div>
+      <div id="lembrete-dia-semana-wrap" class="form-group hidden" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Dia da Semana</label>
+        <select id="lembrete-rec-dia-semana" class="input">
+          <option value="0">Domingo</option><option value="1">Segunda</option><option value="2">Terça</option>
+          <option value="3">Quarta</option><option value="4">Quinta</option><option value="5">Sexta</option>
+          <option value="6">Sábado</option>
+        </select>
+      </div>
+      <div id="lembrete-dia-mes-wrap" class="form-group hidden" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Dia do Mês</label>
+        <input type="number" id="lembrete-rec-dia-mes" class="input" min="1" max="31" placeholder="1-31">
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalLembrete()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarNovoLembrete()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de nova recorrência ───────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-nova-recorrencia">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Nova Recorrência</h3>
+      <button class="modal-close" onclick="fecharModalRecorrencia()">✕</button>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Tipo</label>
+      <div class="toggle-bar">
+        <button class="toggle-btn active" data-val="despesa" onclick="toggleRecTipo(this)">Despesa</button>
+        <button class="toggle-btn" data-val="receita" onclick="toggleRecTipo(this)">Receita</button>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Descrição</label>
+      <input type="text" id="rec-descricao" class="input" placeholder="Ex: Aluguel, Salário...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
+      <input type="number" id="rec-valor" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Categoria</label>
+      <select id="rec-categoria" class="input"></select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Frequência</label>
+      <select id="rec-frequencia" class="input" onchange="toggleRecFreqFields()">
+        <option value="mensal">Mensal</option>
+        <option value="semanal">Semanal</option>
+      </select>
+    </div>
+    <div id="rec-dia-mes-wrap" class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Dia do Mês</label>
+      <input type="number" id="rec-dia-mes" class="input" min="1" max="31" placeholder="1-31">
+    </div>
+    <div id="rec-dia-semana-wrap" class="form-group hidden" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Dia da Semana</label>
+      <select id="rec-dia-semana" class="input">
+        <option value="0">Domingo</option><option value="1">Segunda</option><option value="2">Terça</option>
+        <option value="3">Quarta</option><option value="4">Quinta</option><option value="5">Sexta</option>
+        <option value="6">Sábado</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Data Início</label>
+      <input type="date" id="rec-data-inicio" class="input">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Data Fim (opcional)</label>
+      <input type="date" id="rec-data-fim" class="input">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalRecorrencia()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarNovaRecorrencia()">Salvar</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── Modal de edição de transação ──────────────────────────────────────── -->

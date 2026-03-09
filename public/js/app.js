@@ -564,8 +564,7 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  await carregarCartoes();
-  await carregarOrcamento();
+  await Promise.all([carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarRecorrencias()]);
 }
 
 async function carregarCartoes() {
@@ -595,7 +594,10 @@ async function carregarCartoes() {
         <span class="cartao-nome">💳 ${esc(c.nome)}</span>
         ${info ? `<span class="cartao-meta">${esc(info)}</span>` : ''}
       </div>
-      <button class="action-btn btn-danger" onclick="excluirCartao(${c.id}, '${esc(c.nome)}')">🗑️ Excluir</button>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="action-btn" title="Editar" onclick='abrirModalEditarCartao(${JSON.stringify({id:c.id,nome:c.nome,limite_total:c.limite_total,dia_fechamento:c.dia_fechamento,dia_vencimento:c.dia_vencimento})})'>✏️</button>
+        <button class="action-btn" title="Excluir" onclick="excluirCartao(${c.id}, '${esc(c.nome)}')">🗑️</button>
+      </div>
     `;
     list.appendChild(row);
   }
@@ -955,6 +957,7 @@ async function carregarAgenda() {
         <div class="ag-data">📅 ${esc(l.horario || l.data_disparo || '—')} ${badge}</div>
         <div class="ag-msg">${esc(l.mensagem)}</div>
       </div>
+      <button class="action-btn" title="Excluir" onclick="excluirLembreteConfirm(${l.id}, ${!!l.recorrente})">🗑️</button>
     `;
     list.appendChild(item);
   }
@@ -1437,6 +1440,12 @@ function inicializar() {
     buscaTimer = setTimeout(() => { estado.tx.busca = e.target.value.trim(); estado.tx.pagina = 1; carregarTransacoes(); }, 350);
   });
 
+  // Close modals on overlay click
+  ['modal-nova-tx','modal-novo-cartao','modal-nova-caixinha','modal-deposito-caixinha','modal-novo-lembrete','modal-nova-recorrencia'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', e => { if (e.target === el) el.classList.add('hidden'); });
+  });
+
   // Criar subcategoria
   document.getElementById('sub-criar').addEventListener('click', criarSubcategoria);
   document.getElementById('sub-nova-nome').addEventListener('keydown', e => {
@@ -1556,6 +1565,486 @@ document.addEventListener('DOMContentLoaded', () => {
 
   verificarAuth();
 });
+
+// ── Nova Transação ───────────────────────────────────────────────────────────
+let _novaTxTipo = 'despesa';
+let _novaTxStatus = 'pendente';
+let _cartoesCache = null;
+
+function toggleNovaTxTipo(btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _novaTxTipo = btn.dataset.val;
+  // Mostrar/esconder cartão wrap quando for despesa
+  const cartaoWrap = document.getElementById('nova-tx-cartao-wrap');
+  if (cartaoWrap) cartaoWrap.classList.toggle('hidden', _novaTxTipo !== 'despesa');
+}
+
+function toggleNovaTxStatus(btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _novaTxStatus = btn.dataset.val;
+}
+
+async function _carregarCartoesSelect() {
+  if (!_cartoesCache) {
+    try { _cartoesCache = await api('/api/cartoes'); } catch { _cartoesCache = []; }
+  }
+  const sel = document.getElementById('nova-tx-cartao');
+  if (sel) {
+    sel.innerHTML = '<option value="">Nenhum</option>' +
+      _cartoesCache.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('');
+  }
+}
+
+async function abrirModalNovaTx() {
+  await carregarCategoriasSelect();
+  // Copy categories to nova-tx select
+  const editSel = document.getElementById('editar-tx-categoria');
+  const novaSel = document.getElementById('nova-tx-categoria');
+  if (editSel && novaSel) novaSel.innerHTML = editSel.innerHTML;
+  await _carregarCartoesSelect();
+
+  // Set defaults
+  _novaTxTipo = 'despesa';
+  _novaTxStatus = 'pendente';
+  document.getElementById('nova-tx-descricao').value = '';
+  document.getElementById('nova-tx-valor').value = '';
+  document.getElementById('nova-tx-data').value = new Date().toISOString().substring(0, 10);
+  document.getElementById('nova-tx-parcelas').value = '1';
+
+  // Reset toggles
+  document.querySelectorAll('#nova-tx-tipo-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'despesa'));
+  document.querySelectorAll('#nova-tx-status-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'pendente'));
+  document.getElementById('nova-tx-cartao-wrap').classList.remove('hidden');
+  document.getElementById('nova-tx-parcelas-wrap').classList.add('hidden');
+
+  // Show parcelas when cartao selected
+  document.getElementById('nova-tx-cartao').onchange = function() {
+    document.getElementById('nova-tx-parcelas-wrap').classList.toggle('hidden', !this.value);
+  };
+
+  document.getElementById('modal-nova-tx').classList.remove('hidden');
+}
+
+function fecharModalNovaTx() {
+  document.getElementById('modal-nova-tx').classList.add('hidden');
+}
+
+async function salvarNovaTx() {
+  const descricao = document.getElementById('nova-tx-descricao').value.trim();
+  const valor = parseFloat(document.getElementById('nova-tx-valor').value);
+  const categoria = document.getElementById('nova-tx-categoria').value;
+  const data = document.getElementById('nova-tx-data').value;
+  const cartao_id = document.getElementById('nova-tx-cartao').value || null;
+  const parcelas = parseInt(document.getElementById('nova-tx-parcelas').value) || 1;
+
+  if (!descricao) { toast('Preencha a descrição', 'error'); return; }
+  if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
+  if (!data) { toast('Selecione uma data', 'error'); return; }
+
+  try {
+    await api('/api/transactions', {
+      method: 'POST',
+      body: JSON.stringify({
+        tipo: _novaTxTipo,
+        valor,
+        descricao,
+        categoria: categoria || null,
+        data,
+        status: _novaTxStatus,
+        cartao_id: cartao_id ? parseInt(cartao_id) : null,
+        parcelas: cartao_id ? parcelas : 1,
+      }),
+    });
+    toast('Transação criada!', 'success');
+    fecharModalNovaTx();
+    _categoriasCache = null; // Invalidate cache
+    carregarTransacoes();
+    if (tabAtual === 'dashboard') carregarDashboard();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Cartões CRUD ─────────────────────────────────────────────────────────────
+let _editandoCartao = false;
+
+function abrirModalNovoCartao() {
+  _editandoCartao = false;
+  document.getElementById('modal-cartao-titulo').textContent = 'Novo Cartão';
+  document.getElementById('cartao-edit-id').value = '';
+  document.getElementById('cartao-nome').value = '';
+  document.getElementById('cartao-limite').value = '';
+  document.getElementById('cartao-fechamento').value = '';
+  document.getElementById('cartao-vencimento').value = '';
+  document.getElementById('modal-novo-cartao').classList.remove('hidden');
+}
+
+function abrirModalEditarCartao(c) {
+  _editandoCartao = true;
+  document.getElementById('modal-cartao-titulo').textContent = 'Editar Cartão';
+  document.getElementById('cartao-edit-id').value = c.id;
+  document.getElementById('cartao-nome').value = c.nome || '';
+  document.getElementById('cartao-limite').value = c.limite_total || '';
+  document.getElementById('cartao-fechamento').value = c.dia_fechamento || '';
+  document.getElementById('cartao-vencimento').value = c.dia_vencimento || '';
+  document.getElementById('modal-novo-cartao').classList.remove('hidden');
+}
+
+function fecharModalCartao() {
+  document.getElementById('modal-novo-cartao').classList.add('hidden');
+}
+
+async function salvarCartao() {
+  const nome = document.getElementById('cartao-nome').value.trim();
+  const limite = parseFloat(document.getElementById('cartao-limite').value) || 0;
+  const fechamento = parseInt(document.getElementById('cartao-fechamento').value) || null;
+  const vencimento = parseInt(document.getElementById('cartao-vencimento').value) || null;
+
+  if (!nome) { toast('Preencha o nome', 'error'); return; }
+
+  try {
+    if (_editandoCartao) {
+      const id = parseInt(document.getElementById('cartao-edit-id').value);
+      await api(`/api/cartoes/${id}`, { method: 'PUT', body: JSON.stringify({ campo: 'nome', novo_valor: nome }) });
+      await api(`/api/cartoes/${id}`, { method: 'PUT', body: JSON.stringify({ campo: 'limite_total', novo_valor: limite }) });
+      await api(`/api/cartoes/${id}`, { method: 'PUT', body: JSON.stringify({ campo: 'dia_fechamento', novo_valor: fechamento }) });
+      await api(`/api/cartoes/${id}`, { method: 'PUT', body: JSON.stringify({ campo: 'dia_vencimento', novo_valor: vencimento }) });
+      toast('Cartão atualizado!', 'success');
+    } else {
+      await api('/api/cartoes', {
+        method: 'POST',
+        body: JSON.stringify({ nome, limite_total: limite, dia_fechamento: fechamento, dia_vencimento: vencimento }),
+      });
+      toast('Cartão criado!', 'success');
+    }
+    fecharModalCartao();
+    _cartoesCache = null;
+    carregarCartoes();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Caixinhas CRUD ───────────────────────────────────────────────────────────
+let _editandoCaixinha = false;
+
+function abrirModalNovaCaixinha() {
+  _editandoCaixinha = false;
+  document.getElementById('modal-caixinha-titulo').textContent = 'Nova Caixinha';
+  document.getElementById('caixinha-edit-id').value = '';
+  document.getElementById('caixinha-nome').value = '';
+  document.getElementById('caixinha-saldo').value = '';
+  document.getElementById('caixinha-meta').value = '';
+  document.getElementById('caixinha-tipo').value = '';
+  document.getElementById('caixinha-rendimento').value = '';
+  document.getElementById('modal-nova-caixinha').classList.remove('hidden');
+}
+
+function abrirModalEditarCaixinha(c) {
+  _editandoCaixinha = true;
+  document.getElementById('modal-caixinha-titulo').textContent = 'Editar Caixinha';
+  document.getElementById('caixinha-edit-id').value = c.id;
+  document.getElementById('caixinha-nome').value = c.nome || '';
+  document.getElementById('caixinha-saldo').value = c.saldo || '';
+  document.getElementById('caixinha-meta').value = c.meta || '';
+  document.getElementById('caixinha-tipo').value = c.tipo || '';
+  document.getElementById('caixinha-rendimento').value = c.rendimento_mensal || '';
+  document.getElementById('modal-nova-caixinha').classList.remove('hidden');
+}
+
+function fecharModalCaixinha() {
+  document.getElementById('modal-nova-caixinha').classList.add('hidden');
+}
+
+async function salvarCaixinha() {
+  const nome = document.getElementById('caixinha-nome').value.trim();
+  if (!nome) { toast('Preencha o nome', 'error'); return; }
+
+  try {
+    if (_editandoCaixinha) {
+      const id = parseInt(document.getElementById('caixinha-edit-id').value);
+      const campos = {
+        nome,
+        saldo: parseFloat(document.getElementById('caixinha-saldo').value) || 0,
+        meta: parseFloat(document.getElementById('caixinha-meta').value) || null,
+        tipo: document.getElementById('caixinha-tipo').value || null,
+        rendimento_mensal: parseFloat(document.getElementById('caixinha-rendimento').value) || null,
+      };
+      for (const [campo, novo_valor] of Object.entries(campos)) {
+        if (novo_valor !== null && novo_valor !== undefined) {
+          await api(`/api/caixinhas/${id}`, { method: 'PUT', body: JSON.stringify({ campo, novo_valor }) });
+        }
+      }
+      toast('Caixinha atualizada!', 'success');
+    } else {
+      await api('/api/caixinhas', {
+        method: 'POST',
+        body: JSON.stringify({
+          nome,
+          saldo: parseFloat(document.getElementById('caixinha-saldo').value) || 0,
+          meta: parseFloat(document.getElementById('caixinha-meta').value) || null,
+          tipo: document.getElementById('caixinha-tipo').value || null,
+          rendimento_mensal: parseFloat(document.getElementById('caixinha-rendimento').value) || null,
+        }),
+      });
+      toast('Caixinha criada!', 'success');
+    }
+    fecharModalCaixinha();
+    carregarCaixinhas();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function abrirModalDeposito(id, nome) {
+  document.getElementById('deposito-caixinha-id').value = id;
+  document.getElementById('deposito-caixinha-nome').textContent = nome;
+  document.getElementById('deposito-valor').value = '';
+  document.getElementById('modal-deposito-caixinha').classList.remove('hidden');
+}
+
+function fecharModalDeposito() {
+  document.getElementById('modal-deposito-caixinha').classList.add('hidden');
+}
+
+async function salvarDeposito() {
+  const id = parseInt(document.getElementById('deposito-caixinha-id').value);
+  const valor = parseFloat(document.getElementById('deposito-valor').value);
+  if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
+  try {
+    await api(`/api/caixinhas/${id}/deposito`, { method: 'POST', body: JSON.stringify({ valor }) });
+    toast('Depósito realizado!', 'success');
+    fecharModalDeposito();
+    carregarCaixinhas();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirCaixinhaConfirm(id, nome) {
+  if (!confirm(`Excluir a caixinha "${nome}"?`)) return;
+  try {
+    await api(`/api/caixinhas/${id}`, { method: 'DELETE' });
+    toast('Caixinha excluída.', 'success');
+    carregarCaixinhas();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function carregarCaixinhas() {
+  let caixinhas;
+  try { caixinhas = await api('/api/caixinhas'); }
+  catch { return; }
+
+  const list = document.getElementById('investimentos-list');
+  const empty = document.getElementById('investimentos-empty');
+  list.innerHTML = '';
+
+  if (!caixinhas.length) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  for (const c of caixinhas) {
+    const row = document.createElement('div');
+    row.className = 'cartao-row';
+    const pct = c.meta && c.meta > 0 ? Math.min(100, Math.round((c.saldo / c.meta) * 100)) : null;
+    const info = [
+      c.tipo ? c.tipo : null,
+      c.meta ? `Meta: ${fmtMoeda(c.meta)}` : null,
+      c.rendimento_mensal ? `Rend: ${c.rendimento_mensal}%/mês` : null,
+    ].filter(Boolean).join(' · ');
+
+    row.innerHTML = `
+      <div class="cartao-info">
+        <span class="cartao-nome">💰 ${esc(c.nome)} — ${fmtMoeda(c.saldo)}</span>
+        ${info ? `<span class="cartao-meta">${esc(info)}</span>` : ''}
+        ${pct !== null ? `<div class="caixinha-progress"><div class="caixinha-progress-fill" style="width:${pct}%"></div></div><span class="cartao-meta">${pct}% da meta</span>` : ''}
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="action-btn" title="Depositar" onclick='abrirModalDeposito(${c.id}, "${esc(c.nome)}")'>💵</button>
+        <button class="action-btn" title="Editar" onclick='abrirModalEditarCaixinha(${JSON.stringify({id:c.id,nome:c.nome,saldo:c.saldo,meta:c.meta,tipo:c.tipo||"",rendimento_mensal:c.rendimento_mensal||""})})'>✏️</button>
+        <button class="action-btn" title="Excluir" onclick="excluirCaixinhaConfirm(${c.id}, '${esc(c.nome)}')">🗑️</button>
+      </div>
+    `;
+    list.appendChild(row);
+  }
+}
+
+// ── Lembretes ────────────────────────────────────────────────────────────────
+let _lembreteTipo = 'avulso';
+
+function toggleLembreteTipo(btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _lembreteTipo = btn.dataset.val;
+  document.getElementById('lembrete-avulso-fields').classList.toggle('hidden', _lembreteTipo !== 'avulso');
+  document.getElementById('lembrete-recorrente-fields').classList.toggle('hidden', _lembreteTipo !== 'recorrente');
+}
+
+function toggleLembreteFreqFields() {
+  const freq = document.getElementById('lembrete-rec-frequencia').value;
+  document.getElementById('lembrete-dia-semana-wrap').classList.toggle('hidden', freq !== 'semanal');
+  document.getElementById('lembrete-dia-mes-wrap').classList.toggle('hidden', freq !== 'mensal');
+}
+
+function abrirModalNovoLembrete() {
+  _lembreteTipo = 'avulso';
+  document.getElementById('lembrete-mensagem').value = '';
+  document.getElementById('lembrete-data').value = new Date().toISOString().substring(0, 10);
+  document.getElementById('lembrete-hora').value = '09:00';
+  document.getElementById('lembrete-rec-horario').value = '09:00';
+  document.getElementById('lembrete-rec-frequencia').value = 'diario';
+  document.getElementById('lembrete-avulso-fields').classList.remove('hidden');
+  document.getElementById('lembrete-recorrente-fields').classList.add('hidden');
+  document.getElementById('lembrete-dia-semana-wrap').classList.add('hidden');
+  document.getElementById('lembrete-dia-mes-wrap').classList.add('hidden');
+  document.querySelectorAll('#lembrete-tipo-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'avulso'));
+  document.getElementById('modal-novo-lembrete').classList.remove('hidden');
+}
+
+function fecharModalLembrete() {
+  document.getElementById('modal-novo-lembrete').classList.add('hidden');
+}
+
+async function salvarNovoLembrete() {
+  const mensagem = document.getElementById('lembrete-mensagem').value.trim();
+  if (!mensagem) { toast('Preencha a mensagem', 'error'); return; }
+
+  try {
+    if (_lembreteTipo === 'avulso') {
+      const data = document.getElementById('lembrete-data').value;
+      const hora = document.getElementById('lembrete-hora').value;
+      if (!data || !hora) { toast('Preencha data e hora', 'error'); return; }
+      await api('/api/lembretes', {
+        method: 'POST',
+        body: JSON.stringify({ mensagem, dispara_em: `${data}T${hora}:00` }),
+      });
+    } else {
+      const horario = document.getElementById('lembrete-rec-horario').value;
+      const frequencia = document.getElementById('lembrete-rec-frequencia').value;
+      if (!horario) { toast('Preencha o horário', 'error'); return; }
+      const body = { mensagem, horario, frequencia };
+      if (frequencia === 'semanal') body.dia_semana = parseInt(document.getElementById('lembrete-rec-dia-semana').value);
+      if (frequencia === 'mensal') body.dia_mes = parseInt(document.getElementById('lembrete-rec-dia-mes').value) || 1;
+      await api('/api/lembretes/recorrente', { method: 'POST', body: JSON.stringify(body) });
+    }
+    toast('Lembrete criado!', 'success');
+    fecharModalLembrete();
+    carregarAgenda();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirLembreteConfirm(id, recorrente) {
+  if (!confirm('Excluir este lembrete?')) return;
+  try {
+    if (recorrente) {
+      await api(`/api/lembretes/recorrente/${id}`, { method: 'DELETE' });
+    } else {
+      await api(`/api/lembretes/${id}`, { method: 'DELETE' });
+    }
+    toast('Lembrete excluído.', 'success');
+    carregarAgenda();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Recorrências CRUD ────────────────────────────────────────────────────────
+let _recTipo = 'despesa';
+
+function toggleRecTipo(btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _recTipo = btn.dataset.val;
+}
+
+function toggleRecFreqFields() {
+  const freq = document.getElementById('rec-frequencia').value;
+  document.getElementById('rec-dia-mes-wrap').classList.toggle('hidden', freq !== 'mensal');
+  document.getElementById('rec-dia-semana-wrap').classList.toggle('hidden', freq !== 'semanal');
+}
+
+async function abrirModalNovaRecorrencia() {
+  await carregarCategoriasSelect();
+  const editSel = document.getElementById('editar-tx-categoria');
+  const recSel = document.getElementById('rec-categoria');
+  if (editSel && recSel) recSel.innerHTML = editSel.innerHTML;
+
+  _recTipo = 'despesa';
+  document.getElementById('rec-descricao').value = '';
+  document.getElementById('rec-valor').value = '';
+  document.getElementById('rec-frequencia').value = 'mensal';
+  document.getElementById('rec-dia-mes').value = '';
+  document.getElementById('rec-data-inicio').value = new Date().toISOString().substring(0, 10);
+  document.getElementById('rec-data-fim').value = '';
+  document.getElementById('rec-dia-mes-wrap').classList.remove('hidden');
+  document.getElementById('rec-dia-semana-wrap').classList.add('hidden');
+  document.getElementById('modal-nova-recorrencia').classList.remove('hidden');
+}
+
+function fecharModalRecorrencia() {
+  document.getElementById('modal-nova-recorrencia').classList.add('hidden');
+}
+
+async function salvarNovaRecorrencia() {
+  const descricao = document.getElementById('rec-descricao').value.trim();
+  const valor = parseFloat(document.getElementById('rec-valor').value);
+  const categoria = document.getElementById('rec-categoria').value || null;
+  const frequencia = document.getElementById('rec-frequencia').value;
+  const data_inicio = document.getElementById('rec-data-inicio').value;
+  const data_fim = document.getElementById('rec-data-fim').value || null;
+
+  if (!descricao) { toast('Preencha a descrição', 'error'); return; }
+  if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
+
+  const body = { tipo: _recTipo, valor, descricao, categoria, frequencia, data_inicio, data_fim };
+  if (frequencia === 'mensal') body.dia_mes = parseInt(document.getElementById('rec-dia-mes').value) || 1;
+  if (frequencia === 'semanal') body.dia_semana = parseInt(document.getElementById('rec-dia-semana').value);
+
+  try {
+    await api('/api/recorrencias', { method: 'POST', body: JSON.stringify(body) });
+    toast('Recorrência criada!', 'success');
+    fecharModalRecorrencia();
+    carregarRecorrencias();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function carregarRecorrencias() {
+  let recs;
+  try { recs = await api('/api/recorrencias'); }
+  catch { return; }
+
+  const list = document.getElementById('recorrencias-list');
+  const empty = document.getElementById('recorrencias-empty');
+  list.innerHTML = '';
+
+  if (!recs.length) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  const DIAS_SEMANA = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  for (const r of recs) {
+    const row = document.createElement('div');
+    row.className = 'rec-row';
+    const isReceita = r.tipo === 'receita';
+    const freq = r.frequencia === 'mensal' ? `Mensal (dia ${r.dia_mes || '—'})` :
+                 r.frequencia === 'semanal' ? `Semanal (${DIAS_SEMANA[r.dia_semana] || '—'})` : r.frequencia;
+    row.innerHTML = `
+      <div class="rec-info">
+        <span class="rec-nome">${isReceita ? '📈' : '📉'} ${esc(r.descricao)}</span>
+        <span class="rec-meta">${esc(freq)} · ${fmtMoeda(r.valor)} · ${esc(r.categoria || '—')}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="action-btn" title="Excluir" onclick="excluirRecorrenciaConfirm(${r.id}, '${esc(r.descricao)}')">🗑️</button>
+      </div>
+    `;
+    list.appendChild(row);
+  }
+}
+
+async function excluirRecorrenciaConfirm(id, desc) {
+  if (!confirm(`Excluir a recorrência "${desc}"?`)) return;
+  try {
+    await api(`/api/recurrences/${id}`, { method: 'DELETE' });
+    toast('Recorrência excluída.', 'success');
+    carregarRecorrencias();
+  } catch (err) { toast(err.message, 'error'); }
+}
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 function esc(s) {

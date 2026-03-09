@@ -473,6 +473,34 @@ app.delete('/api/categories/:nome', autenticar, async (req, res) => {
   }
 });
 
+// ── Criar transação ──────────────────────────────────────────────────────────
+app.post('/api/transactions', autenticar, async (req, res) => {
+  try {
+    const { tipo, valor, descricao, categoria, data, status, cartao_id, parcelas } = req.body;
+    if (!tipo || !valor || !descricao || !data) {
+      return res.status(400).json({ erro: 'tipo, valor, descricao e data são obrigatórios' });
+    }
+    if (!['receita', 'despesa'].includes(tipo)) {
+      return res.status(400).json({ erro: 'tipo deve ser receita ou despesa' });
+    }
+    if (parcelas && parcelas > 1 && cartao_id) {
+      const resultado = await db.adicionarTransacoesParcelas(
+        req.usuarioId, valor, descricao, categoria || null, data, cartao_id, parcelas
+      );
+      res.json(resultado);
+    } else {
+      const resultado = await db.adicionarTransacao(
+        req.usuarioId, tipo, parseFloat(valor), descricao, categoria || null,
+        data, status || 'pendente', cartao_id || null
+      );
+      res.json(resultado);
+    }
+  } catch (err) {
+    console.error('[WEB] POST /api/transactions:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Cartões de crédito ───────────────────────────────────────────────────────
 
 app.get('/api/cartoes', autenticar, async (req, res) => {
@@ -480,6 +508,38 @@ app.get('/api/cartoes', autenticar, async (req, res) => {
     const cartoes = await db.listarCartoes(req.usuarioId);
     res.json(cartoes);
   } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/cartoes', autenticar, async (req, res) => {
+  try {
+    const { nome, limite_total, dia_fechamento, dia_vencimento } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Nome obrigatório' });
+    const resultado = await db.criarCartao(
+      req.usuarioId, nome.trim(),
+      parseFloat(limite_total) || 0,
+      parseInt(dia_fechamento) || null,
+      parseInt(dia_vencimento) || null
+    );
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/cartoes:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/cartoes/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { campo, novo_valor } = req.body;
+    if (!campo || novo_valor === undefined) return res.status(400).json({ erro: 'campo e novo_valor são obrigatórios' });
+    const resultado = await db.atualizarCartao(req.usuarioId, id, campo, novo_valor);
+    if (!resultado) return res.status(404).json({ erro: 'Cartão não encontrado' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] PUT /api/cartoes/:id:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
@@ -493,6 +553,178 @@ app.delete('/api/cartoes/:id', autenticar, async (req, res) => {
     res.json({ ok: true, nome });
   } catch (err) {
     console.error('[WEB] DELETE /api/cartoes/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Caixinhas (Investimentos) ────────────────────────────────────────────────
+app.get('/api/caixinhas', autenticar, async (req, res) => {
+  try {
+    res.json(await db.listarCaixinhas(req.usuarioId));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/caixinhas', autenticar, async (req, res) => {
+  try {
+    const { nome, saldo, meta, tipo, rendimento_mensal } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Nome obrigatório' });
+    const resultado = await db.criarCaixinha(
+      req.usuarioId, nome.trim(),
+      parseFloat(saldo) || 0,
+      parseFloat(meta) || null,
+      tipo || null,
+      parseFloat(rendimento_mensal) || null
+    );
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/caixinhas:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/caixinhas/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { campo, novo_valor } = req.body;
+    if (!campo || novo_valor === undefined) return res.status(400).json({ erro: 'campo e novo_valor são obrigatórios' });
+    const resultado = await db.atualizarCaixinha(req.usuarioId, id, campo, novo_valor);
+    if (!resultado) return res.status(404).json({ erro: 'Caixinha não encontrada' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] PUT /api/caixinhas/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/caixinhas/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const resultado = await db.excluirCaixinha(req.usuarioId, id);
+    if (!resultado) return res.status(404).json({ erro: 'Caixinha não encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/caixinhas/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/caixinhas/:id/deposito', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { valor } = req.body;
+    if (!valor || valor <= 0) return res.status(400).json({ erro: 'Valor deve ser positivo' });
+    const resultado = await db.adicionarSaldoCaixinha(id, parseFloat(valor));
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/caixinhas/:id/deposito:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Lembretes ────────────────────────────────────────────────────────────────
+app.post('/api/lembretes', autenticar, async (req, res) => {
+  try {
+    const { mensagem, dispara_em } = req.body;
+    if (!mensagem || !mensagem.trim()) return res.status(400).json({ erro: 'Mensagem obrigatória' });
+    if (!dispara_em) return res.status(400).json({ erro: 'Data/hora obrigatória' });
+    const resultado = await db.criarLembreteGeral(req.usuarioId, mensagem.trim(), dispara_em);
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/lembretes:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/lembretes/recorrente', autenticar, async (req, res) => {
+  try {
+    const { mensagem, horario, frequencia, dia_semana, dia_mes, data_fim } = req.body;
+    if (!mensagem || !mensagem.trim()) return res.status(400).json({ erro: 'Mensagem obrigatória' });
+    if (!horario) return res.status(400).json({ erro: 'Horário obrigatório' });
+    if (!frequencia) return res.status(400).json({ erro: 'Frequência obrigatória' });
+    const resultado = await db.criarLembreteRecorrente(
+      req.usuarioId, mensagem.trim(), horario, frequencia,
+      dia_semana != null ? parseInt(dia_semana) : null,
+      dia_mes != null ? parseInt(dia_mes) : null,
+      data_fim || null,
+      false
+    );
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/lembretes/recorrente:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/lembretes/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    await db.cancelReminder(id, req.usuarioId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/lembretes/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/lembretes/recorrente/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    await db.cancelarLembreteRecorrente(req.usuarioId, id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/lembretes/recorrente/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Recorrências ─────────────────────────────────────────────────────────────
+app.get('/api/recorrencias', autenticar, async (req, res) => {
+  try {
+    res.json(await db.listarRecorrencias(req.usuarioId));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/recorrencias', autenticar, async (req, res) => {
+  try {
+    const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim } = req.body;
+    if (!tipo || !valor || !descricao || !frequencia) {
+      return res.status(400).json({ erro: 'tipo, valor, descricao e frequencia são obrigatórios' });
+    }
+    const resultado = await db.criarRecorrencia(
+      req.usuarioId, tipo, parseFloat(valor), descricao, categoria || null,
+      frequencia,
+      dia_mes != null ? parseInt(dia_mes) : null,
+      dia_semana != null ? parseInt(dia_semana) : null,
+      data_inicio || new Date().toISOString().substring(0, 10),
+      data_fim || null
+    );
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/recorrencias:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/recorrencias/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { campo, novo_valor } = req.body;
+    if (!campo || novo_valor === undefined) return res.status(400).json({ erro: 'campo e novo_valor são obrigatórios' });
+    const resultado = await db.atualizarRecorrencia(req.usuarioId, id, campo, novo_valor);
+    if (!resultado) return res.status(404).json({ erro: 'Recorrência não encontrada' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] PUT /api/recorrencias/:id:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
