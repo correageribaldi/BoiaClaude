@@ -1218,38 +1218,18 @@ _Recomendo organizar tudo agora pra já ter uma visão clara de como tá teu din
 }
 
 function foraDoEscopoMsg(nome) {
-  const nomeExibir = nome ? `${nome}, ` : '';
-  return `${nomeExibir}desculpa, mas eu não consigo te ajudar com isso agora 😅
+  const nomeExibir = nome || 'amigo(a)';
+  return `${nomeExibir}, todo mundo erra, e dessa vez fui eu 😅
+Não consegui entender o que você me pediu. Tenta assim:
 
-Mas olha tudo que eu posso fazer por você:
+💸 *Cadastrar despesa:* _"gastei 50 no mercado"_
+💰 *Cadastrar receita:* _"recebi 3000 de salário"_
+📊 *Consultar:* _"quanto gastei esse mês?"_
+⏰ *Lembrete:* _"me lembre de pagar o boleto amanhã"_
+🔍 *Pesquisar:* _"restaurantes em Porto Alegre"_
+🧠 *Calcular:* _"quanto é 1500 + 800?"_
 
-💰 *Finanças*
-• Registrar despesas e receitas (texto, áudio ou foto)
-• Organizar por categoria
-• Ver resumo do mês ou do ano
-• Controlar contas pendentes e saldo
-
-⏰ *Lembretes*
-• Criar lembretes únicos (_"me lembre daqui 30 min..."_)
-• Criar lembretes recorrentes (_"todo dia às 8h..."_)
-• Listar e cancelar lembretes
-
-📊 *Consultas*
-• Perguntar quanto gastou em algo (_"quanto gastei com comida?"_)
-• Ver lista de lançamentos
-• Ver saldo e pendentes
-
-🧠 *Assistente rápido*
-• Fazer contas (_"quanto é 8000 + 300?"_)
-• Conversões (_"quantos km são 10 milhas?"_)
-• Dúvidas rápidas do dia a dia
-
-🔍 *Pesquisa na internet*
-• Restaurantes, cafés, lojas (_"restaurantes em Canoas"_)
-• Preços e produtos (_"preço do iPhone 15"_)
-• Serviços e horários (_"academia em Porto Alegre"_)
-
-É só mandar uma mensagem e eu resolvo! 💪`;
+Pode mandar por texto, áudio ou foto! 📸`;
 }
 
 function ajudaMsg() {
