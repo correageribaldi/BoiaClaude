@@ -55,6 +55,12 @@ TIPOS DE AÇÃO:
 - Exemplos: "adicionar receita de 3000 salário" → transacao, tipo: receita, valor: 3000, descricao: Salário
 - Exemplos: "registrar despesa 80 gasolina" → transacao, tipo: despesa, valor: 80, descricao: Gasolina
 
+2a. REGISTRAR MÚLTIPLAS TRANSAÇÕES (quando há 2+ transações distintas na mesma mensagem):
+{"acao": "transacoes_multiplas", "itens": [{"tipo": "despesa|receita", "valor": 0.00, "descricao": "...", "categoria": "...", "data": null, "status": "pago|pendente", "cartao_nome": null, "parcelas": 1}, ...]}
+- Cada item segue TODAS as mesmas regras da transação única acima (tipo, status, data, cartao_nome, parcelas)
+- Se algum item não tem valor ou data explícita, coloque null — o sistema vai perguntar ao usuário
+- IMPORTANTE: Cada item DEVE ter pelo menos "tipo" e "descricao"
+
 2b. CONSULTAR USO DO CARTÃO (quanto usei do cartão, limite, saldo disponível no cartão, uso do Nubank, fatura, ver cartão, meus cartões, etc):
 {"acao": "uso_cartao", "cartao_nome": "nome do cartão ou null se não especificou"}
 Se o usuário pedir para ver um cartão específico (ex: "ver cartão Nubank Renata", "somente o Nubank", "mostra o cartão Renata"), extraia o nome em cartao_nome.
@@ -216,9 +222,15 @@ COMO DIFERENCIAR DE TRANSAÇÃO:
 
 REGRA PARA MÚLTIPLAS TRANSAÇÕES NA MESMA MENSAGEM:
 - Se o usuário mencionar DUAS ou mais transações numa única mensagem (ex: "paguei luz 150 e internet 100", "gastei 50 no mercado e 30 na farmácia"):
-  → Retorne {"acao": "conversa", "resposta": "Percebi que você quer registrar mais de uma transação! 📝\n\nPra eu não errar nenhum valor, me manda uma de cada vez:\n\n1️⃣ Primeiro manda uma (ex: *paguei luz 150*)\n2️⃣ Depois manda a outra (ex: *paguei internet 100*)\n\nAssim registro tudo certinho! ✅"}
+  → Retorne {"acao": "transacoes_multiplas", "itens": [...]} com cada item contendo: tipo, valor, descricao, categoria, data, status, cartao_nome, parcelas
+  → Cada item segue TODAS as mesmas regras de transação única (tipo, status, data, cartao_nome, parcelas)
+  → Se algum item não tem valor ou data mencionada, coloque null — o sistema vai perguntar ao usuário
 - Sinais de múltiplas transações: conjunções "e", "mais", "também", "+" separando itens com valores diferentes ou descrições diferentes
-- Se for UMA transação com múltiplos detalhes (ex: "comprei comida e bebida no mercado por 200") → registre como UMA transação normalmente
+- Se for UMA transação com múltiplos detalhes (ex: "comprei comida e bebida no mercado por 200") → registre como UMA transação normalmente com acao: "transacao"
+- Exemplos:
+  - "paguei luz 150 e internet 100" → transacoes_multiplas com 2 itens
+  - "gastei 50 no mercado, 30 na farmácia e recebi 500 de freelance" → transacoes_multiplas com 3 itens
+  - "nas despesas fixas tenho aluguel, internet e luz" → transacoes_multiplas com 3 itens (valor null em cada)
 
 REGRAS GERAIS:
 - SEMPRE retorne JSON válido, nunca texto puro
@@ -518,7 +530,7 @@ async function interpretarMensagem(texto, usuarioId = null) {
         { role: 'user', content: texto },
       ],
       temperature: 0.4,
-      max_tokens: 400,
+      max_tokens: 800,
     });
 
     const content = response.choices[0]?.message?.content?.trim();
@@ -576,6 +588,13 @@ REGRAS:
 - Para notas/cupons, use a data de emissão
 - "status": para boletos e faturas use "pendente" (conta a pagar). Para cupons e notas fiscais (compra já realizada) use "pago"
 
+Se a imagem contiver MÚLTIPLOS itens (cupom fiscal com vários produtos listados com preços separados), retorne:
+{"acao": "transacoes_multiplas", "itens": [{"tipo": "despesa", "valor": 0.00, "descricao": "...", "categoria": "...", "data": "YYYY-MM-DD ou null", "status": "pago|pendente"}, ...]}
+- Use quando o cupom/nota mostra itens individuais claramente listados com preços separados
+- Cada item deve ter valor individual (não repita o total em cada item)
+- Se os itens não estão claros ou legíveis, retorne o total como transação única
+- A data é a mesma para todos os itens (data do documento)
+
 Se a imagem NÃO for um documento financeiro, retorne OBRIGATORIAMENTE este JSON (sem texto fora dele):
 {"acao": "nenhuma", "resposta": "<sua resposta criativa e engraçada aqui>"}
 
@@ -619,7 +638,7 @@ async function analisarImagem(base64Data, mimetype, usuarioId = null) {
         },
       ],
       temperature: 0.2,
-      max_tokens: 400,
+      max_tokens: 800,
     });
 
     const content = response.choices[0]?.message?.content?.trim();

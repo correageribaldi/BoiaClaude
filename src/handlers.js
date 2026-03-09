@@ -323,6 +323,30 @@ function limparTransacaoPendente(usuarioId) {
   transacaoPendente.delete(usuarioId);
 }
 
+// Estado para múltiplas transações com campos incompletos (expira em 15 min)
+const transacoesMultiplasPendentes = new Map();
+
+function salvarTransacoesMultiplasPendentes(usuarioId, dados) {
+  transacoesMultiplasPendentes.set(usuarioId, {
+    ...dados,
+    expiraEm: Date.now() + 15 * 60 * 1000,
+  });
+}
+
+function obterTransacoesMultiplasPendentes(usuarioId) {
+  const dados = transacoesMultiplasPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) {
+    transacoesMultiplasPendentes.delete(usuarioId);
+    return null;
+  }
+  return dados;
+}
+
+function limparTransacoesMultiplasPendentes(usuarioId) {
+  transacoesMultiplasPendentes.delete(usuarioId);
+}
+
 // Estado do assessor de compra aguardando valor (expira em 15 min)
 const assessorCompraPendenteMap = new Map();
 
@@ -1681,6 +1705,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     if (resposta !== null) return resposta;
   }
 
+  // Verificar se há múltiplas transações com dados incompletos
+  const multiPendente = obterTransacoesMultiplasPendentes(usuarioId);
+  if (multiPendente) {
+    return await handleMultiplasPendentesResposta(usuarioId, msg, multiPendente);
+  }
+
   // Verificar se há transação com dados incompletos
   const txPendente = obterTransacaoPendente(usuarioId);
   if (txPendente) {
@@ -2835,6 +2865,53 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
 
   limparConfirmacao(usuarioId);
 
+  // Múltiplos itens de imagem
+  if (dados.multiplos && dados.itens) {
+    const salvos = [];
+    const incompletos = [];
+
+    for (const item of dados.itens) {
+      const { tipo: itemTipo, valor: itemValor, descricao: itemDescricao, categoria: itemCategoria, data: itemData } = item;
+      if (!itemValor || !itemDescricao) {
+        incompletos.push({ ...item, status });
+        continue;
+      }
+
+      const tipoFinal = itemTipo || 'despesa';
+      if (tipoFinal === 'despesa' && itemCategoria) {
+        await garantirSubcategoriaVinculada(usuarioId, itemCategoria);
+      }
+      const result = await db.adicionarTransacao(usuarioId, tipoFinal, itemValor, itemDescricao, itemCategoria, itemData, status);
+      const dataExibir = itemData ? fmt.formatarData(itemData) : 'Hoje';
+      const emoji = status === 'pendente' ? (tipoFinal === 'receita' ? '⏳💰' : '⏳💸') : (tipoFinal === 'receita' ? '✅💰' : '✅💸');
+      salvos.push(`${emoji} ${itemDescricao} — ${fmt.formatarMoeda(itemValor)} (${dataExibir}) #${result.lastInsertRowid}`);
+    }
+
+    let msg = '';
+    if (salvos.length > 0) {
+      msg = `📋 *${salvos.length} ${salvos.length === 1 ? 'transação registrada' : 'transações registradas'}!*\n\n${salvos.join('\n')}`;
+    }
+
+    // Se tem incompletos, iniciar fluxo de perguntas
+    if (incompletos.length > 0) {
+      const [primeiro, ...restante] = incompletos;
+      const faltaValor = !primeiro.valor;
+      salvarTransacoesMultiplasPendentes(usuarioId, {
+        itemAtual: { ...primeiro, status },
+        filaRestante: restante.map(i => ({ ...i, status })),
+        campoEsperado: faltaValor ? 'valor' : 'data',
+      });
+      const pergunta = faltaValor
+        ? `💰 Qual o valor de *${primeiro.descricao}*?`
+        : `📅 Qual a data de vencimento de *${primeiro.descricao}*?`;
+
+      if (msg) msg += `\n\nMas preciso da sua ajuda 👇\n\n${pergunta}`;
+      else msg = `Preciso de mais informações 👇\n\n${pergunta}`;
+    }
+
+    return msg || '❌ Não consegui registrar os itens da imagem.';
+  }
+
   const { tipo, valor, descricao, categoria, data } = dados;
 
   // Auto-criar subcategoria vinculada se for nova
@@ -2905,6 +2982,213 @@ async function handleLiquidar(usuarioId, msg) {
     `📝 ${transacao.descricao}\n` +
     `💵 ${fmt.formatarMoeda(transacao.valor)}\n` +
     `📂 ${transacao.categoria}${extraMsg}`;
+}
+
+// === MÚLTIPLAS TRANSAÇÕES ===
+
+async function processarTransacoesMultiplas(usuarioId, itens, textoOriginal) {
+  const salvos = [];
+  const incompletos = [];
+
+  for (const item of itens) {
+    const { tipo, descricao, categoria, status, cartao_nome, parcelas } = item;
+    const valor = item.valor && item.valor > 0 ? item.valor : null;
+    const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
+
+    // Resolver data
+    let dataFinal = resolverData(item.data);
+    if (!dataFinal && item.data && typeof item.data === 'string' && item.data.includes('/')) {
+      dataFinal = parseData(item.data);
+    }
+
+    // Item sem descrição: impossível salvar ou perguntar
+    if (!tipo || !descricao) continue;
+
+    // Verificar o que falta
+    const faltaValor = !valor;
+    const faltaData = statusFinal === 'pendente' && !dataFinal;
+
+    if (faltaValor || faltaData) {
+      // Guardar na fila de incompletos para perguntar depois
+      incompletos.push({
+        tipo,
+        valor: valor || null,
+        descricao,
+        categoria: categoria || 'Outros',
+        data: dataFinal || null,
+        status: statusFinal,
+        cartao_nome: cartao_nome || null,
+        parcelas: parcelas || 1,
+      });
+      continue;
+    }
+
+    // Item completo: salvar direto
+    try {
+      let cartaoId = null;
+      if (tipo === 'despesa' && cartao_nome) {
+        const cartoes = await db.buscarCartoesPorNome(usuarioId, cartao_nome);
+        if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+      }
+
+      const numParcelas = parcelas && parcelas > 1 ? Math.round(parcelas) : 1;
+      if (numParcelas > 1 && cartaoId) {
+        const msg = await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, numParcelas);
+        salvos.push({ descricao, valor, msg });
+      } else {
+        const msg = await salvarTransacao(usuarioId, tipo, valor, descricao, categoria || 'Outros', dataFinal, statusFinal, cartaoId);
+        salvos.push({ descricao, valor, msg });
+      }
+    } catch (err) {
+      console.error(`[MULTI-TX] Erro ao salvar item:`, err.message);
+      incompletos.push({ tipo, valor, descricao, categoria: categoria || 'Outros', data: dataFinal, status: statusFinal });
+    }
+  }
+
+  // Montar resposta
+  let resposta = '';
+
+  if (salvos.length > 0) {
+    resposta += `📋 *${salvos.length} ${salvos.length === 1 ? 'transação registrada' : 'transações registradas'}!*\n`;
+    for (const r of salvos) {
+      resposta += `\n${r.msg}\n`;
+    }
+  }
+
+  // Se tem incompletos, iniciar fluxo de perguntas
+  if (incompletos.length > 0) {
+    const [primeiro, ...restante] = incompletos;
+
+    // Determinar o que falta do primeiro item
+    const faltaValor = !primeiro.valor;
+    const faltaData = primeiro.status === 'pendente' && !primeiro.data;
+
+    // Salvar estado: item atual + fila dos restantes
+    salvarTransacoesMultiplasPendentes(usuarioId, {
+      itemAtual: primeiro,
+      filaRestante: restante,
+      campoEsperado: faltaValor ? 'valor' : 'data',
+    });
+
+    // Montar pergunta
+    let pergunta;
+    if (faltaValor) {
+      pergunta = `💰 Qual o valor de *${primeiro.descricao}*?`;
+    } else if (faltaData) {
+      pergunta = `📅 Qual a data de vencimento de *${primeiro.descricao}*?`;
+    }
+
+    if (salvos.length > 0) {
+      resposta += `\nMas preciso da sua ajuda com ${incompletos.length === 1 ? 'um item' : `${incompletos.length} itens`} 👇\n\n${pergunta}`;
+    } else {
+      resposta = `Anotei ${incompletos.length} ${incompletos.length === 1 ? 'item' : 'itens'}! Só preciso de mais algumas informações 👇\n\n${pergunta}`;
+    }
+  }
+
+  if (!resposta) {
+    return '❌ Não consegui registrar nenhuma transação. Tente enviar uma de cada vez.';
+  }
+
+  return resposta;
+}
+
+async function handleMultiplasPendentesResposta(usuarioId, texto, dados) {
+  const lower = texto.toLowerCase().trim();
+
+  // Cancelar
+  if (lower === 'cancelar' || lower === 'pular') {
+    limparTransacoesMultiplasPendentes(usuarioId);
+    return '❌ Itens pendentes cancelados.';
+  }
+
+  const { itemAtual, filaRestante, campoEsperado } = dados;
+
+  // Preencher campo que está faltando
+  if (campoEsperado === 'valor' || !itemAtual.valor) {
+    const valorExtraido = await extrairValorRobusto(texto);
+    if (valorExtraido && valorExtraido > 0) {
+      itemAtual.valor = valorExtraido;
+    }
+
+    // Também tentar extrair data se veio junto
+    if (!itemAtual.data && itemAtual.status === 'pendente') {
+      const dataExtraida = extrairDataDoTexto(texto);
+      if (dataExtraida) itemAtual.data = dataExtraida;
+    }
+
+    // Se ainda falta valor
+    if (!itemAtual.valor) {
+      return `❌ Não entendi o valor de *${itemAtual.descricao}*. Me diz só o número:\n\n_Ex: "150", "R$ 1.200,50", "50 reais"_\n\n_Ou manda "cancelar" pra pular._`;
+    }
+  }
+
+  if (campoEsperado === 'data' || (itemAtual.status === 'pendente' && !itemAtual.data)) {
+    const dataExtraida = extrairDataDoTexto(texto);
+    if (!dataExtraida && campoEsperado === 'data') {
+      return `Não consegui entender a data de *${itemAtual.descricao}* 😅\n\nMe diz de um jeito mais direto:\n_Ex: "sexta-feira", "dia 20", "amanhã", "hoje"_\n\n_Ou manda "cancelar" pra pular._`;
+    }
+    if (dataExtraida) itemAtual.data = dataExtraida;
+  }
+
+  // Verificar se o item atual ainda tem campos faltantes
+  const aindaFaltaValor = !itemAtual.valor;
+  const aindaFaltaData = itemAtual.status === 'pendente' && !itemAtual.data;
+
+  if (aindaFaltaValor || aindaFaltaData) {
+    salvarTransacoesMultiplasPendentes(usuarioId, {
+      itemAtual,
+      filaRestante,
+      campoEsperado: aindaFaltaValor ? 'valor' : 'data',
+    });
+    if (aindaFaltaValor) return `💰 Qual o valor de *${itemAtual.descricao}*?`;
+    return `📅 Qual a data de vencimento de *${itemAtual.descricao}*?`;
+  }
+
+  // Item atual completo! Salvar
+  let msgSalvo;
+  try {
+    let cartaoId = null;
+    if (itemAtual.tipo === 'despesa' && itemAtual.cartao_nome) {
+      const cartoes = await db.buscarCartoesPorNome(usuarioId, itemAtual.cartao_nome);
+      if (cartoes.length >= 1) cartaoId = cartoes[0].id;
+    }
+
+    const numParcelas = itemAtual.parcelas && itemAtual.parcelas > 1 ? Math.round(itemAtual.parcelas) : 1;
+    if (numParcelas > 1 && cartaoId) {
+      msgSalvo = await salvarTransacaoParcelada(usuarioId, itemAtual.valor, itemAtual.descricao, itemAtual.categoria, itemAtual.data, cartaoId, numParcelas);
+    } else {
+      msgSalvo = await salvarTransacao(usuarioId, itemAtual.tipo, itemAtual.valor, itemAtual.descricao, itemAtual.categoria || 'Outros', itemAtual.data, itemAtual.status || 'pago', cartaoId);
+    }
+  } catch (err) {
+    console.error(`[MULTI-TX] Erro ao salvar item:`, err.message);
+    msgSalvo = `❌ Erro ao salvar *${itemAtual.descricao}*`;
+  }
+
+  // Verificar se há mais itens na fila
+  if (filaRestante && filaRestante.length > 0) {
+    const [proximo, ...resto] = filaRestante;
+    const faltaValorProx = !proximo.valor;
+    const faltaDataProx = proximo.status === 'pendente' && !proximo.data;
+
+    salvarTransacoesMultiplasPendentes(usuarioId, {
+      itemAtual: proximo,
+      filaRestante: resto,
+      campoEsperado: faltaValorProx ? 'valor' : 'data',
+    });
+
+    let pergunta;
+    if (faltaValorProx) {
+      pergunta = `💰 Qual o valor de *${proximo.descricao}*?`;
+    } else if (faltaDataProx) {
+      pergunta = `📅 Qual a data de vencimento de *${proximo.descricao}*?`;
+    }
+
+    return `${msgSalvo}\n\nAgora o próximo 👇\n\n${pergunta}`;
+  }
+
+  // Fila vazia, tudo salvo!
+  limparTransacoesMultiplasPendentes(usuarioId);
+  return msgSalvo;
 }
 
 async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOriginal, enviarAck) {
@@ -3251,6 +3535,11 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     }
 
     return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
+  }
+
+  // Múltiplas transações via IA
+  if (resultado.acao === 'transacoes_multiplas' && resultado.itens && resultado.itens.length > 0) {
+    return await processarTransacoesMultiplas(usuarioId, resultado.itens, lower);
   }
 
   if (resultado.acao === 'uso_cartao') {
@@ -3675,8 +3964,26 @@ async function handleImageMessage(usuarioId, base64Data, mimetype) {
   }
 
   // Se não for transação (imagem não financeira), retorna resposta criativa do AI
-  if (resultado.acao !== 'transacao') {
+  if (resultado.acao !== 'transacao' && resultado.acao !== 'transacoes_multiplas') {
     return resultado.resposta || '😄 Não encontrei nenhum documento financeiro aí... Manda um boleto, nota fiscal, cupom ou recibo que eu registro na hora! 🧾';
+  }
+
+  // Múltiplos itens de imagem (cupom fiscal com vários produtos)
+  if (resultado.acao === 'transacoes_multiplas' && resultado.itens && resultado.itens.length > 0) {
+    salvarConfirmacao(usuarioId, {
+      multiplos: true,
+      itens: resultado.itens,
+    });
+
+    let resumo = `📄 *${resultado.itens.length} itens identificados:*\n\n`;
+    for (const item of resultado.itens) {
+      resumo += `• ${item.descricao} — ${fmt.formatarMoeda(item.valor)}\n`;
+    }
+    resumo += `\nEsses lançamentos já foram pagos ou ainda estão pendentes?\n\n`;
+    resumo += `*1* - ✅ Já paguei / Já recebi\n`;
+    resumo += `*2* - ⏳ A pagar / A receber\n`;
+    resumo += `*0* - ❌ Cancelar`;
+    return resumo;
   }
 
   const { tipo, valor, descricao, categoria, data } = resultado;
