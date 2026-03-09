@@ -5970,126 +5970,100 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
         return `Não entendi 😅 Em que dia vence a fatura do *${cc.nome}*? (1 a 31)\n_Ex: "dia 22" ou só "22"_`;
       }
       cc.diaVencimento = dia;
-      cc.campo = 'escolhaMetodo';
-      cc.assinaturas = cc.assinaturas || [];
-      cc.parcelas = cc.parcelas || [];
-      salvarPontoZero(usuarioId, estado);
-
-      const faturaStr = cc.valorFatura > 0 ? fmt.formatarMoeda(cc.valorFatura) : 'R$ 0';
-      return `📋 *${cc.nome}* — dados básicos prontos!\n` +
-        `  Limite: ${fmt.formatarMoeda(cc.limiteTotal)}\n` +
-        `  Fatura atual: ${faturaStr}\n` +
-        `  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}\n\n` +
-        `Agora, como quer registrar os gastos desse cartão?\n\n` +
-        `1️⃣ *Completo* — cadastrar assinaturas, parcelas e gastos (projeção precisa)\n` +
-        `2️⃣ *Simples* — manter só o valor total da fatura\n\n` +
-        `_Manda 1 ou 2_`;
+      // Finaliza direto com método simples (método completo desativado)
+      return finalizarCadastroCartao(estado, cc, usuarioId);
     }
 
-    case 'escolhaMetodo': {
-      const ehCompleto = /^(1|completo|detalhar|detalhado|sim)$/.test(lower);
-      const ehSimples = /^(2|simples|so o total|só o total|total|nao|não|rapido|rápido)$/.test(lower);
+    // ── Método completo desativado — mantendo apenas cadastro simples ──────
+    // case 'escolhaMetodo': {
+    //   const ehCompleto = /^(1|completo|detalhar|detalhado|sim)$/.test(lower);
+    //   const ehSimples = /^(2|simples|so o total|só o total|total|nao|não|rapido|rápido)$/.test(lower);
+    //   if (!ehCompleto && !ehSimples) {
+    //     return `Manda *1* pra detalhar os gastos ou *2* pra manter só o total da fatura.`;
+    //   }
+    //   if (ehSimples) {
+    //     return finalizarCadastroCartao(estado, cc, usuarioId);
+    //   }
+    //   cc.metodoCompleto = true;
+    //   cc.campo = 'gastosAssinaturas';
+    //   salvarPontoZero(usuarioId, estado);
+    //   return `Quais *assinaturas mensais* estão nesse cartão? 🔄\n\n` +
+    //     `_Manda uma por vez ou várias separadas por vírgula:_\n` +
+    //     `Ex: "Netflix 45,90" ou "Netflix 45,90, Spotify 21,90, iCloud 3,50"\n\n` +
+    //     `_Manda "pular" se não tem assinatura nesse cartão._`;
+    // }
 
-      if (!ehCompleto && !ehSimples) {
-        return `Manda *1* pra detalhar os gastos ou *2* pra manter só o total da fatura.`;
-      }
+    // case 'gastosAssinaturas': {
+    //   if (/^(pular|pronto|proximo|próximo|nao|não|n|0|nenhum|nenhuma)$/.test(lower)) {
+    //     cc.campo = 'gastosParcelados';
+    //     salvarPontoZero(usuarioId, estado);
+    //     return montarPerguntaParcelas(cc);
+    //   }
+    //   const itens = texto.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+    //   let adicionadas = 0;
+    //   for (const item of itens) {
+    //     const parsed = parsearGastoSimples(item);
+    //     if (parsed) {
+    //       cc.assinaturas.push({ descricao: parsed.descricao, valor: parsed.valor });
+    //       adicionadas++;
+    //     }
+    //   }
+    //   if (adicionadas === 0) {
+    //     return `Não entendi 😅 Manda no formato: *nome valor*\n_Ex: "Netflix 45,90"_\n\n_Ou "pular" se não tem._`;
+    //   }
+    //   salvarPontoZero(usuarioId, estado);
+    //   const totalAss = cc.assinaturas.reduce((s, a) => s + a.valor, 0);
+    //   const listaAss = cc.assinaturas.map(a => `  • ${a.descricao}: ${fmt.formatarMoeda(a.valor)}`).join('\n');
+    //   return `✅ ${adicionadas > 1 ? `${adicionadas} assinaturas adicionadas` : 'Assinatura adicionada'}!\n\n` +
+    //     `📋 *Assinaturas do ${cc.nome}:*\n${listaAss}\n` +
+    //     `💰 Total mensal: ${fmt.formatarMoeda(totalAss)}\n\n` +
+    //     `Tem mais alguma assinatura?\n_Manda mais ou "pronto" pra continuar._`;
+    // }
 
-      if (ehSimples) {
-        return finalizarCadastroCartao(estado, cc, usuarioId);
-      }
+    // case 'gastosParcelados': {
+    //   if (/^(pular|pronto|proximo|próximo|nao|não|n|0|nenhum|nenhuma)$/.test(lower)) {
+    //     cc.campo = 'gastosAvulsos';
+    //     salvarPontoZero(usuarioId, estado);
+    //     return montarPerguntaAvulsos(cc);
+    //   }
+    //   const parsed = parsearParcelaEmAndamento(texto);
+    //   if (!parsed) {
+    //     return `Não entendi 😅 Manda no formato:\n` +
+    //       `*nome (valor da parcela) faltam (X parcelas)*\n` +
+    //       `_Ex: "Notebook 500 faltam 4" ou "TV 300 restam 3"_\n\n` +
+    //       `_Ou "pular" se não tem parcela._`;
+    //   }
+    //   cc.parcelas.push(parsed);
+    //   salvarPontoZero(usuarioId, estado);
+    //   const listaPar = cc.parcelas.map(p => `  • ${p.descricao}: ${fmt.formatarMoeda(p.valorParcela)}/mês (${p.restantes}x restantes)`).join('\n');
+    //   return `✅ Parcela adicionada!\n\n` +
+    //     `📋 *Parcelas em andamento no ${cc.nome}:*\n${listaPar}\n\n` +
+    //     `Tem mais alguma parcela?\n_Manda mais ou "pronto" pra continuar._`;
+    // }
 
-      // Método completo
-      cc.metodoCompleto = true;
-      cc.campo = 'gastosAssinaturas';
-      salvarPontoZero(usuarioId, estado);
-      return `Quais *assinaturas mensais* estão nesse cartão? 🔄\n\n` +
-        `_Manda uma por vez ou várias separadas por vírgula:_\n` +
-        `Ex: "Netflix 45,90" ou "Netflix 45,90, Spotify 21,90, iCloud 3,50"\n\n` +
-        `_Manda "pular" se não tem assinatura nesse cartão._`;
-    }
-
-    case 'gastosAssinaturas': {
-      if (/^(pular|pronto|proximo|próximo|nao|não|n|0|nenhum|nenhuma)$/.test(lower)) {
-        cc.campo = 'gastosParcelados';
-        salvarPontoZero(usuarioId, estado);
-        return montarPerguntaParcelas(cc);
-      }
-
-      // Parsear assinaturas (uma ou múltiplas separadas por vírgula/quebra)
-      const itens = texto.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
-      let adicionadas = 0;
-      for (const item of itens) {
-        const parsed = parsearGastoSimples(item);
-        if (parsed) {
-          cc.assinaturas.push({ descricao: parsed.descricao, valor: parsed.valor });
-          adicionadas++;
-        }
-      }
-
-      if (adicionadas === 0) {
-        return `Não entendi 😅 Manda no formato: *nome valor*\n_Ex: "Netflix 45,90" ou "Spotify 21,90, Disney 33"_\n\n_Ou "pular" se não tem._`;
-      }
-
-      salvarPontoZero(usuarioId, estado);
-      const totalAss = cc.assinaturas.reduce((s, a) => s + a.valor, 0);
-      const listaAss = cc.assinaturas.map(a => `  • ${a.descricao}: ${fmt.formatarMoeda(a.valor)}`).join('\n');
-      return `✅ ${adicionadas > 1 ? `${adicionadas} assinaturas adicionadas` : 'Assinatura adicionada'}!\n\n` +
-        `📋 *Assinaturas do ${cc.nome}:*\n${listaAss}\n` +
-        `💰 Total mensal: ${fmt.formatarMoeda(totalAss)}\n\n` +
-        `Tem mais alguma assinatura?\n_Manda mais ou "pronto" pra continuar._`;
-    }
-
-    case 'gastosParcelados': {
-      if (/^(pular|pronto|proximo|próximo|nao|não|n|0|nenhum|nenhuma)$/.test(lower)) {
-        cc.campo = 'gastosAvulsos';
-        salvarPontoZero(usuarioId, estado);
-        return montarPerguntaAvulsos(cc);
-      }
-
-      // Parsear parcela: "Notebook 500 faltam 4" ou "Notebook 500 4x" ou "Notebook 6x 500 faltam 4"
-      const parsed = parsearParcelaEmAndamento(texto);
-      if (!parsed) {
-        return `Não entendi 😅 Manda no formato:\n` +
-          `*nome (valor da parcela) faltam (X parcelas)*\n` +
-          `_Ex: "Notebook 500 faltam 4" ou "TV 300 restam 3"_\n\n` +
-          `_Ou "pular" se não tem parcela._`;
-      }
-
-      cc.parcelas.push(parsed);
-      salvarPontoZero(usuarioId, estado);
-
-      const listaPar = cc.parcelas.map(p => `  • ${p.descricao}: ${fmt.formatarMoeda(p.valorParcela)}/mês (${p.restantes}x restantes)`).join('\n');
-      return `✅ Parcela adicionada!\n\n` +
-        `📋 *Parcelas em andamento no ${cc.nome}:*\n${listaPar}\n\n` +
-        `Tem mais alguma parcela?\n_Manda mais ou "pronto" pra continuar._`;
-    }
-
-    case 'gastosAvulsos': {
-      if (/^(pular|pronto|proximo|próximo|nao|não|n|0|nenhum|nenhuma)$/.test(lower)) {
-        return finalizarCadastroCartaoCompleto(estado, cc, usuarioId);
-      }
-
-      // Parsear gastos avulsos (igual assinaturas mas sem recorrência)
-      const itens = texto.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
-      let adicionados = 0;
-      if (!cc.avulsos) cc.avulsos = [];
-      for (const item of itens) {
-        const parsed = parsearGastoSimples(item);
-        if (parsed) {
-          cc.avulsos.push({ descricao: parsed.descricao, valor: parsed.valor });
-          adicionados++;
-        }
-      }
-
-      if (adicionados === 0) {
-        return `Não entendi 😅 Manda no formato: *nome valor*\n_Ex: "Mercado 350" ou "Restaurante 120, Uber 45"_\n\n_Ou "pronto" pra finalizar._`;
-      }
-
-      salvarPontoZero(usuarioId, estado);
-      const totalAv = cc.avulsos.reduce((s, a) => s + a.valor, 0);
-      return `✅ ${adicionados > 1 ? `${adicionados} gastos adicionados` : 'Gasto adicionado'}! (total avulsos: ${fmt.formatarMoeda(totalAv)})\n\n` +
-        `Tem mais algum gasto dessa fatura?\n_Manda mais ou "pronto" pra finalizar o ${cc.nome}._`;
-    }
+    // case 'gastosAvulsos': {
+    //   if (/^(pular|pronto|proximo|próximo|nao|não|n|0|nenhum|nenhuma)$/.test(lower)) {
+    //     return finalizarCadastroCartaoCompleto(estado, cc, usuarioId);
+    //   }
+    //   const itens = texto.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+    //   let adicionados = 0;
+    //   if (!cc.avulsos) cc.avulsos = [];
+    //   for (const item of itens) {
+    //     const parsed = parsearGastoSimples(item);
+    //     if (parsed) {
+    //       cc.avulsos.push({ descricao: parsed.descricao, valor: parsed.valor });
+    //       adicionados++;
+    //     }
+    //   }
+    //   if (adicionados === 0) {
+    //     return `Não entendi 😅 Manda no formato: *nome valor*\n_Ex: "Mercado 350"_\n\n_Ou "pronto" pra finalizar._`;
+    //   }
+    //   salvarPontoZero(usuarioId, estado);
+    //   const totalAv = cc.avulsos.reduce((s, a) => s + a.valor, 0);
+    //   return `✅ ${adicionados > 1 ? `${adicionados} gastos adicionados` : 'Gasto adicionado'}! (total avulsos: ${fmt.formatarMoeda(totalAv)})\n\n` +
+    //     `Tem mais algum gasto dessa fatura?\n_Manda mais ou "pronto" pra finalizar o ${cc.nome}._`;
+    // }
+    // ── Fim do método completo desativado ────────────────────────────────────
 
     default:
       delete estado.cartaoEmCadastro;
@@ -6105,95 +6079,89 @@ function perguntaCartaoCampo(cc) {
     case 'valorFatura':  return `Qual o *valor da fatura em aberto* até hoje?\n_Ex: "R$ 1.200" ou "0"_`;
     case 'diaFechamento': return `Qual o *dia de fechamento* da fatura?\n_Ex: "dia 15"_`;
     case 'diaVencimento': return `Qual o *dia de vencimento* da fatura?\n_Ex: "dia 22"_`;
-    case 'escolhaMetodo': return `Manda *1* pra detalhar os gastos ou *2* pra manter só o total.`;
-    case 'gastosAssinaturas': return `Manda as assinaturas no formato: *nome valor*\n_Ex: "Netflix 45,90"_ ou "pular"`;
-    case 'gastosParcelados': return `Manda as parcelas: *nome valor faltam X*\n_Ex: "Notebook 500 faltam 4"_ ou "pular"`;
-    case 'gastosAvulsos': return `Manda os gastos avulsos: *nome valor*\n_Ex: "Mercado 350"_ ou "pronto"`;
+    // Método completo desativado:
+    // case 'escolhaMetodo': return `Manda *1* pra detalhar os gastos ou *2* pra manter só o total.`;
+    // case 'gastosAssinaturas': return `Manda as assinaturas no formato: *nome valor*\n_Ex: "Netflix 45,90"_ ou "pular"`;
+    // case 'gastosParcelados': return `Manda as parcelas: *nome valor faltam X*\n_Ex: "Notebook 500 faltam 4"_ ou "pular"`;
+    // case 'gastosAvulsos': return `Manda os gastos avulsos: *nome valor*\n_Ex: "Mercado 350"_ ou "pronto"`;
     default: return '';
   }
 }
 
-// ─── Helpers para cadastro completo de cartão ─────────────────────────────────
-
-// Parseia "Netflix 45,90" ou "Netflix R$ 45,90" → { descricao, valor }
-function parsearGastoSimples(texto) {
-  const t = texto.trim();
-  if (!t) return null;
-  // Tenta extrair valor no final: "Netflix 45,90" ou "Netflix R$45,90" ou "Netflix 45.90"
-  const match = t.match(/^(.+?)\s+(?:R\$\s*)?(\d[\d.,]*\d|\d)$/i);
-  if (match) {
-    const descricao = match[1].trim();
-    const valorStr = match[2].replace(/\./g, '').replace(',', '.');
-    const valor = parseFloat(valorStr);
-    if (descricao && valor > 0) return { descricao, valor };
-  }
-  // Tenta valor no início: "45,90 Netflix"
-  const match2 = t.match(/^(?:R\$\s*)?(\d[\d.,]*\d|\d)\s+(.+)$/i);
-  if (match2) {
-    const valorStr = match2[1].replace(/\./g, '').replace(',', '.');
-    const valor = parseFloat(valorStr);
-    const descricao = match2[2].trim();
-    if (descricao && valor > 0) return { descricao, valor };
-  }
-  return null;
-}
-
-// Parseia parcela em andamento: "Notebook 500 faltam 4" ou "TV 300 restam 3 parcelas"
-function parsearParcelaEmAndamento(texto) {
-  const t = texto.trim();
-  if (!t) return null;
-  // "Notebook 500 faltam 4" / "Notebook 500 restam 4" / "Notebook 500 4 restantes"
-  const match = t.match(/^(.+?)\s+(?:R\$\s*)?(\d[\d.,]*\d|\d)\s+(?:faltam?|restam?|restantes?)\s*(\d+)/i);
-  if (match) {
-    const descricao = match[1].trim();
-    const valorStr = match[2].replace(/\./g, '').replace(',', '.');
-    const valorParcela = parseFloat(valorStr);
-    const restantes = parseInt(match[3]);
-    if (descricao && valorParcela > 0 && restantes > 0) return { descricao, valorParcela, restantes };
-  }
-  // "Notebook 500 faltam 4" mas com "faltam" antes do valor
-  const match2 = t.match(/^(.+?)\s+(?:faltam?|restam?)\s*(\d+)\s*(?:parcelas?|x|vezes?)?\s*(?:de\s+)?(?:R\$\s*)?(\d[\d.,]*\d|\d)/i);
-  if (match2) {
-    const descricao = match2[1].trim();
-    const restantes = parseInt(match2[2]);
-    const valorStr = match2[3].replace(/\./g, '').replace(',', '.');
-    const valorParcela = parseFloat(valorStr);
-    if (descricao && valorParcela > 0 && restantes > 0) return { descricao, valorParcela, restantes };
-  }
-  // "Notebook 4x 500" ou "Notebook 4x de 500"
-  const match3 = t.match(/^(.+?)\s+(\d+)\s*[xX]\s*(?:de\s+)?(?:R\$\s*)?(\d[\d.,]*\d|\d)/i);
-  if (match3) {
-    const descricao = match3[1].trim();
-    const restantes = parseInt(match3[2]);
-    const valorStr = match3[3].replace(/\./g, '').replace(',', '.');
-    const valorParcela = parseFloat(valorStr);
-    if (descricao && valorParcela > 0 && restantes > 0) return { descricao, valorParcela, restantes };
-  }
-  return null;
-}
-
-function montarPerguntaParcelas(cc) {
-  return `Tem alguma *compra parcelada* em andamento nesse cartão? 🔢\n\n` +
-    `_Manda no formato: nome (valor da parcela) faltam (quantas):_\n` +
-    `Ex: "Notebook 500 faltam 4" ou "TV 300 restam 3"\n\n` +
-    `_Manda "pular" se não tem parcela._`;
-}
-
-function montarPerguntaAvulsos(cc) {
-  const totalAss = (cc.assinaturas || []).reduce((s, a) => s + a.valor, 0);
-  const totalPar = (cc.parcelas || []).reduce((s, p) => s + p.valorParcela, 0);
-  const totalDetalhado = totalAss + totalPar;
-  const diferenca = cc.valorFatura > 0 ? cc.valorFatura - totalDetalhado : 0;
-
-  let msg = `Agora, tem algum *gasto avulso* dessa fatura? (mercado, restaurante, etc.) 🛒\n\n`;
-  if (diferenca > 0) {
-    msg += `📊 Até agora você detalhou ${fmt.formatarMoeda(totalDetalhado)} de ${fmt.formatarMoeda(cc.valorFatura)}\n`;
-    msg += `   Faltam ${fmt.formatarMoeda(diferenca)} pra bater com a fatura.\n\n`;
-  }
-  msg += `_Manda: "Mercado 350" ou "Restaurante 120, Uber 45"_\n`;
-  msg += `_Ou "pronto" pra finalizar o ${cc.nome}._`;
-  return msg;
-}
+// ─── Helpers para cadastro completo de cartão (DESATIVADO) ────────────────────
+// Método completo comentado — mantendo apenas cadastro simples de cartão.
+//
+// function parsearGastoSimples(texto) {
+//   const t = texto.trim();
+//   if (!t) return null;
+//   const match = t.match(/^(.+?)\s+(?:R\$\s*)?(\d[\d.,]*\d|\d)$/i);
+//   if (match) {
+//     const descricao = match[1].trim();
+//     const valorStr = match[2].replace(/\./g, '').replace(',', '.');
+//     const valor = parseFloat(valorStr);
+//     if (descricao && valor > 0) return { descricao, valor };
+//   }
+//   const match2 = t.match(/^(?:R\$\s*)?(\d[\d.,]*\d|\d)\s+(.+)$/i);
+//   if (match2) {
+//     const valorStr = match2[1].replace(/\./g, '').replace(',', '.');
+//     const valor = parseFloat(valorStr);
+//     const descricao = match2[2].trim();
+//     if (descricao && valor > 0) return { descricao, valor };
+//   }
+//   return null;
+// }
+//
+// function parsearParcelaEmAndamento(texto) {
+//   const t = texto.trim();
+//   if (!t) return null;
+//   const match = t.match(/^(.+?)\s+(?:R\$\s*)?(\d[\d.,]*\d|\d)\s+(?:faltam?|restam?|restantes?)\s*(\d+)/i);
+//   if (match) {
+//     const descricao = match[1].trim();
+//     const valorStr = match[2].replace(/\./g, '').replace(',', '.');
+//     const valorParcela = parseFloat(valorStr);
+//     const restantes = parseInt(match[3]);
+//     if (descricao && valorParcela > 0 && restantes > 0) return { descricao, valorParcela, restantes };
+//   }
+//   const match2 = t.match(/^(.+?)\s+(?:faltam?|restam?)\s*(\d+)\s*(?:parcelas?|x|vezes?)?\s*(?:de\s+)?(?:R\$\s*)?(\d[\d.,]*\d|\d)/i);
+//   if (match2) {
+//     const descricao = match2[1].trim();
+//     const restantes = parseInt(match2[2]);
+//     const valorStr = match2[3].replace(/\./g, '').replace(',', '.');
+//     const valorParcela = parseFloat(valorStr);
+//     if (descricao && valorParcela > 0 && restantes > 0) return { descricao, valorParcela, restantes };
+//   }
+//   const match3 = t.match(/^(.+?)\s+(\d+)\s*[xX]\s*(?:de\s+)?(?:R\$\s*)?(\d[\d.,]*\d|\d)/i);
+//   if (match3) {
+//     const descricao = match3[1].trim();
+//     const restantes = parseInt(match3[2]);
+//     const valorStr = match3[3].replace(/\./g, '').replace(',', '.');
+//     const valorParcela = parseFloat(valorStr);
+//     if (descricao && valorParcela > 0 && restantes > 0) return { descricao, valorParcela, restantes };
+//   }
+//   return null;
+// }
+//
+// function montarPerguntaParcelas(cc) {
+//   return `Tem alguma *compra parcelada* em andamento nesse cartão? 🔢\n\n` +
+//     `_Manda no formato: nome (valor da parcela) faltam (quantas):_\n` +
+//     `Ex: "Notebook 500 faltam 4" ou "TV 300 restam 3"\n\n` +
+//     `_Manda "pular" se não tem parcela._`;
+// }
+//
+// function montarPerguntaAvulsos(cc) {
+//   const totalAss = (cc.assinaturas || []).reduce((s, a) => s + a.valor, 0);
+//   const totalPar = (cc.parcelas || []).reduce((s, p) => s + p.valorParcela, 0);
+//   const totalDetalhado = totalAss + totalPar;
+//   const diferenca = cc.valorFatura > 0 ? cc.valorFatura - totalDetalhado : 0;
+//   let msg = `Agora, tem algum *gasto avulso* dessa fatura? (mercado, restaurante, etc.) 🛒\n\n`;
+//   if (diferenca > 0) {
+//     msg += `📊 Até agora você detalhou ${fmt.formatarMoeda(totalDetalhado)} de ${fmt.formatarMoeda(cc.valorFatura)}\n`;
+//     msg += `   Faltam ${fmt.formatarMoeda(diferenca)} pra bater com a fatura.\n\n`;
+//   }
+//   msg += `_Manda: "Mercado 350" ou "Restaurante 120, Uber 45"_\n`;
+//   msg += `_Ou "pronto" pra finalizar o ${cc.nome}._`;
+//   return msg;
+// }
 
 function finalizarCadastroCartao(estado, cc, usuarioId) {
   estado.cartoes.push({
@@ -6217,54 +6185,51 @@ function finalizarCadastroCartao(estado, cc, usuarioId) {
     `Tem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
 }
 
-function finalizarCadastroCartaoCompleto(estado, cc, usuarioId) {
-  const totalAss = (cc.assinaturas || []).reduce((s, a) => s + a.valor, 0);
-  const totalPar = (cc.parcelas || []).reduce((s, p) => s + p.valorParcela, 0);
-  const totalAv  = (cc.avulsos || []).reduce((s, a) => s + a.valor, 0);
-  const totalDetalhado = totalAss + totalPar + totalAv;
-
-  estado.cartoes.push({
-    nome: cc.nome,
-    limiteTotal: cc.limiteTotal,
-    diaFechamento: cc.diaFechamento,
-    diaVencimento: cc.diaVencimento,
-    valorFatura: cc.valorFatura,
-    metodoCompleto: true,
-    assinaturas: cc.assinaturas || [],
-    parcelas: cc.parcelas || [],
-    avulsos: cc.avulsos || [],
-  });
-  delete estado.cartaoEmCadastro;
-  salvarPontoZero(usuarioId, estado);
-
-  let resumo = `✅ *${cc.nome}* cadastrado com detalhamento completo!\n\n`;
-  if (cc.assinaturas.length > 0) {
-    resumo += `🔄 *Assinaturas:* ${fmt.formatarMoeda(totalAss)}/mês\n`;
-    resumo += cc.assinaturas.map(a => `  • ${a.descricao}: ${fmt.formatarMoeda(a.valor)}`).join('\n') + '\n';
-  }
-  if (cc.parcelas.length > 0) {
-    resumo += `🔢 *Parcelas:* ${fmt.formatarMoeda(totalPar)}/mês\n`;
-    resumo += cc.parcelas.map(p => `  • ${p.descricao}: ${fmt.formatarMoeda(p.valorParcela)} (${p.restantes}x restantes)`).join('\n') + '\n';
-  }
-  if ((cc.avulsos || []).length > 0) {
-    resumo += `🛒 *Avulsos:* ${fmt.formatarMoeda(totalAv)}\n`;
-  }
-  resumo += `\n📊 Total detalhado: ${fmt.formatarMoeda(totalDetalhado)}`;
-  if (cc.valorFatura > 0) {
-    const diff = cc.valorFatura - totalDetalhado;
-    if (Math.abs(diff) > 1) {
-      resumo += ` | Fatura informada: ${fmt.formatarMoeda(cc.valorFatura)}`;
-      if (diff > 0) resumo += `\n_Diferença de ${fmt.formatarMoeda(diff)} será registrada como gasto não detalhado._`;
-    }
-  }
-  resumo += `\n  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}`;
-
-  const listaAtual = estado.cartoes.length > 1
-    ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}\n_Para remover um, manda "remover [nome]"._`
-    : '';
-  resumo += `${listaAtual}\n\nTem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
-  return resumo;
-}
+// function finalizarCadastroCartaoCompleto(estado, cc, usuarioId) {
+//   const totalAss = (cc.assinaturas || []).reduce((s, a) => s + a.valor, 0);
+//   const totalPar = (cc.parcelas || []).reduce((s, p) => s + p.valorParcela, 0);
+//   const totalAv  = (cc.avulsos || []).reduce((s, a) => s + a.valor, 0);
+//   const totalDetalhado = totalAss + totalPar + totalAv;
+//   estado.cartoes.push({
+//     nome: cc.nome,
+//     limiteTotal: cc.limiteTotal,
+//     diaFechamento: cc.diaFechamento,
+//     diaVencimento: cc.diaVencimento,
+//     valorFatura: cc.valorFatura,
+//     metodoCompleto: true,
+//     assinaturas: cc.assinaturas || [],
+//     parcelas: cc.parcelas || [],
+//     avulsos: cc.avulsos || [],
+//   });
+//   delete estado.cartaoEmCadastro;
+//   salvarPontoZero(usuarioId, estado);
+//   let resumo = `✅ *${cc.nome}* cadastrado com detalhamento completo!\n\n`;
+//   if (cc.assinaturas.length > 0) {
+//     resumo += `🔄 *Assinaturas:* ${fmt.formatarMoeda(totalAss)}/mês\n`;
+//     resumo += cc.assinaturas.map(a => `  • ${a.descricao}: ${fmt.formatarMoeda(a.valor)}`).join('\n') + '\n';
+//   }
+//   if (cc.parcelas.length > 0) {
+//     resumo += `🔢 *Parcelas:* ${fmt.formatarMoeda(totalPar)}/mês\n`;
+//     resumo += cc.parcelas.map(p => `  • ${p.descricao}: ${fmt.formatarMoeda(p.valorParcela)} (${p.restantes}x restantes)`).join('\n') + '\n';
+//   }
+//   if ((cc.avulsos || []).length > 0) {
+//     resumo += `🛒 *Avulsos:* ${fmt.formatarMoeda(totalAv)}\n`;
+//   }
+//   resumo += `\n📊 Total detalhado: ${fmt.formatarMoeda(totalDetalhado)}`;
+//   if (cc.valorFatura > 0) {
+//     const diff = cc.valorFatura - totalDetalhado;
+//     if (Math.abs(diff) > 1) {
+//       resumo += ` | Fatura informada: ${fmt.formatarMoeda(cc.valorFatura)}`;
+//       if (diff > 0) resumo += `\n_Diferença de ${fmt.formatarMoeda(diff)} será registrada como gasto não detalhado._`;
+//     }
+//   }
+//   resumo += `\n  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}`;
+//   const listaAtual = estado.cartoes.length > 1
+//     ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}\n_Para remover um, manda "remover [nome]"._`
+//     : '';
+//   resumo += `${listaAtual}\n\nTem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
+//   return resumo;
+// }
 
 function perguntaCaixinhaCampo(inv) {
   switch (inv.campo) {
