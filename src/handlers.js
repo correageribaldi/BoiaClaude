@@ -3014,7 +3014,7 @@ async function processarTransacoesMultiplas(usuarioId, itens, textoOriginal) {
       }
 
       const numParcelas = parcelas && parcelas > 1 ? Math.round(parcelas) : 1;
-      if (numParcelas > 1 && cartaoId) {
+      if (numParcelas > 1) {
         const msg = await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, numParcelas);
         salvos.push({ descricao, valor, msg });
       } else {
@@ -3136,7 +3136,7 @@ async function handleMultiplasPendentesResposta(usuarioId, texto, dados) {
     }
 
     const numParcelas = itemAtual.parcelas && itemAtual.parcelas > 1 ? Math.round(itemAtual.parcelas) : 1;
-    if (numParcelas > 1 && cartaoId) {
+    if (numParcelas > 1) {
       msgSalvo = await salvarTransacaoParcelada(usuarioId, itemAtual.valor, itemAtual.descricao, itemAtual.categoria, itemAtual.data, cartaoId, numParcelas);
     } else {
       msgSalvo = await salvarTransacao(usuarioId, itemAtual.tipo, itemAtual.valor, itemAtual.descricao, itemAtual.categoria || 'Outros', itemAtual.data, itemAtual.status || 'pago', cartaoId);
@@ -3489,6 +3489,22 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
         return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas);
       }
 
+      // Parcelado sem cartão e sem cartões cadastrados → salvar direto em conta corrente
+      if (parcelas > 1 && !cartaoId) {
+        const cartoesUsuario = await db.listarCartoes(usuarioId);
+        if (cartoesUsuario.length > 0) {
+          // Tem cartões, perguntar em qual (ou conta corrente)
+          const pendente = { tipo, valor, descricao, categoria: categoria || 'Outros', data: dataFinal, status: statusFinal, aguardandoCartao: true, cartoesDisponiveis: cartoesUsuario, parcelas };
+          salvarTransacaoPendente(usuarioId, pendente);
+          let pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* em *${parcelas}x* 👍\n\nFoi no cartão ou conta corrente?\n\n`;
+          pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+          pergunta += `\n  ${cartoesUsuario.length + 1}. Conta corrente`;
+          return pergunta;
+        }
+        // Sem cartões cadastrados → salvar parcelado direto em conta corrente
+        return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, null, parcelas);
+      }
+
       // Se não identificou cartão e a despesa já tem valor, perguntar se foi no cartão
       if (!cartaoId && valor && statusFinal === 'pago') {
         const cartoesUsuario = await db.listarCartoes(usuarioId);
@@ -3497,18 +3513,12 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
           const pendente = { tipo, valor, descricao, categoria: categoria || 'Outros', data: dataFinal, status: statusFinal, aguardandoCartao: true, cartoesDisponiveis: cartoesUsuario, parcelas };
           salvarTransacaoPendente(usuarioId, pendente);
 
-          let pergunta;
-          if (parcelas > 1) {
-            pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* em *${parcelas}x* 👍\n\nEm qual cartão foi?\n\n`;
-            pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+          let pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* 👍\n\nFoi no cartão ou conta corrente?\n\n`;
+          if (cartoesUsuario.length === 1) {
+            pergunta += `  1. ${cartoesUsuario[0].nome}\n  2. Conta corrente`;
           } else {
-            pergunta = `Anotei *${descricao}* de *${fmt.formatarMoeda(valor)}* 👍\n\nFoi no cartão ou conta corrente?\n\n`;
-            if (cartoesUsuario.length === 1) {
-              pergunta += `  1. ${cartoesUsuario[0].nome}\n  2. Conta corrente`;
-            } else {
-              pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
-              pergunta += `\n  ${cartoesUsuario.length + 1}. Conta corrente`;
-            }
+            pergunta += cartoesUsuario.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+            pergunta += `\n  ${cartoesUsuario.length + 1}. Conta corrente`;
           }
           return pergunta;
         }
@@ -3659,7 +3669,9 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
     listaParcelas += `  ${i + 1}/${parcelas} — ${fmt.formatarMoeda(vAtual)} (${mesAno}) ${icone}\n`;
   }
 
-  let msg = `💳 *${descricao}* registrada em *${parcelas}x* no cartão!\n\n` +
+  const iconeHeader = cartaoId ? '💳' : '📋';
+  const sufixo = cartaoId ? ' no cartão' : '';
+  let msg = `${iconeHeader} *${descricao}* registrada em *${parcelas}x*${sufixo}!\n\n` +
     `💵 Total: ${fmt.formatarMoeda(valor)}\n📋 *Parcelas:*\n${listaParcelas}`;
 
   return msg;
@@ -3837,7 +3849,7 @@ async function handleTransacaoPendenteResposta(usuarioId, texto, pendente) {
     delete pendente.aguardandoCartao;
     delete pendente.cartoesDisponiveis;
     limparTransacaoPendente(usuarioId);
-    if (cartaoId && pendente.parcelas && pendente.parcelas > 1) {
+    if (pendente.parcelas && pendente.parcelas > 1) {
       return await salvarTransacaoParcelada(usuarioId, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, cartaoId, pendente.parcelas);
     }
     return await salvarTransacao(usuarioId, pendente.tipo, pendente.valor, pendente.descricao, pendente.categoria, pendente.data, pendente.status || 'pago', cartaoId);

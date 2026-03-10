@@ -483,9 +483,9 @@ app.post('/api/transactions', autenticar, async (req, res) => {
     if (!['receita', 'despesa'].includes(tipo)) {
       return res.status(400).json({ erro: 'tipo deve ser receita ou despesa' });
     }
-    if (parcelas && parcelas > 1 && cartao_id) {
+    if (parcelas && parcelas > 1) {
       const resultado = await db.adicionarTransacoesParcelas(
-        req.usuarioId, valor, descricao, categoria || null, data, cartao_id, parcelas
+        req.usuarioId, valor, descricao, categoria || null, data, cartao_id || null, parcelas
       );
       res.json(resultado);
     } else {

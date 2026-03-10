@@ -526,13 +526,13 @@
         <button class="toggle-btn" data-val="pago" onclick="toggleNovaTxStatus(this)">Pago</button>
       </div>
     </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Parcelas (1 = à vista)</label>
+      <input type="number" id="nova-tx-parcelas" class="input" min="1" max="48" value="1" placeholder="1">
+    </div>
     <div id="nova-tx-cartao-wrap" class="form-group" style="margin-bottom:16px">
       <label style="color:var(--text-muted);font-size:13px">Cartão (opcional)</label>
       <select id="nova-tx-cartao" class="input"><option value="">Nenhum</option></select>
-    </div>
-    <div id="nova-tx-parcelas-wrap" class="form-group hidden" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Parcelas</label>
-      <input type="number" id="nova-tx-parcelas" class="input" min="1" max="48" value="1" placeholder="1">
     </div>
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="fecharModalNovaTx()">Cancelar</button>

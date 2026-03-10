@@ -48,8 +48,12 @@ TIPOS DE AÇÃO:
 - Se o usuário mencionar cartão de crédito (ex: "no Nubank", "no cartão Inter", "no crédito Bradesco"), inclua "cartao_nome" com o nome exato do cartão (ex: "Nubank"). Caso contrário, cartao_nome = null.
 - Compras "no crédito" sem nome específico → cartao_nome = "crédito".
 - Para compras parceladas (ex: "3x", "parcelado em 3 vezes", "em 3 parcelas"), inclua "parcelas" com o número inteiro. Caso não seja parcelado, parcelas = 1.
+- IMPORTANTE: "valor" deve ser SEMPRE o valor TOTAL da compra/despesa. Se o usuário disser "8 parcelas de 208", o valor total é 208 × 8 = 1664. Se disser "celular 1200 em 6x", o total é 1200. O sistema divide automaticamente o total pelo número de parcelas.
+- Parcelas SEM cartão também são válidas (ex: IPVA, IPTU, boletos parcelados). Não exija cartão para parcelar.
 - "comprei roupa 500 parcelado em 3x no nubank" → tipo: despesa, valor: 500, cartao_nome: "Nubank", parcelas: 3
 - "comprei celular 1200 em 6 vezes no inter" → tipo: despesa, valor: 1200, cartao_nome: "Inter", parcelas: 6
+- "IPVA em 8 parcelas de 208 vence dia 15" → tipo: despesa, valor: 1664, descricao: "IPVA", parcelas: 8, data: dia 15 do mês corrente, status: pendente, cartao_nome: null
+- "IPTU 1200 em 4x" → tipo: despesa, valor: 1200, descricao: "IPTU", parcelas: 4, status: pendente, cartao_nome: null
 - Exemplos: "adicionar despesa de 200 reais de mercado" → transacao, tipo: despesa, valor: 200, descricao: Mercado
 - Exemplos: "nova despesa 150 almoço" → transacao, tipo: despesa, valor: 150, descricao: Almoço
 - Exemplos: "adicionar receita de 3000 salário" → transacao, tipo: receita, valor: 3000, descricao: Salário

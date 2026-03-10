@@ -1617,12 +1617,6 @@ async function abrirModalNovaTx() {
   document.querySelectorAll('#nova-tx-tipo-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'despesa'));
   document.querySelectorAll('#nova-tx-status-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'pendente'));
   document.getElementById('nova-tx-cartao-wrap').classList.remove('hidden');
-  document.getElementById('nova-tx-parcelas-wrap').classList.add('hidden');
-
-  // Show parcelas when cartao selected
-  document.getElementById('nova-tx-cartao').onchange = function() {
-    document.getElementById('nova-tx-parcelas-wrap').classList.toggle('hidden', !this.value);
-  };
 
   document.getElementById('modal-nova-tx').classList.remove('hidden');
 }
@@ -1654,7 +1648,7 @@ async function salvarNovaTx() {
         data,
         status: _novaTxStatus,
         cartao_id: cartao_id ? parseInt(cartao_id) : null,
-        parcelas: cartao_id ? parcelas : 1,
+        parcelas,
       }),
     });
     toast('Transação criada!', 'success');
