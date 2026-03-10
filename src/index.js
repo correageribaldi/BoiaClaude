@@ -37,7 +37,112 @@ client.on('qr', (qr) => {
   qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', () => {
+// Recuperar mensagens recebidas enquanto o bot estava offline
+async function processarMensagensPerdidas(client) {
+  const MAX_MSG_AGE_MS = 10 * 60 * 1000; // Ignorar mensagens com mais de 10 minutos
+  const agora = Date.now();
+
+  console.log('[RECOVERY] Verificando mensagens perdidas durante o restart...');
+
+  let chats;
+  try {
+    chats = await client.getChats();
+  } catch (err) {
+    console.error('[RECOVERY] Erro ao buscar chats:', err.message);
+    return;
+  }
+
+  const chatsComNaoLidas = chats.filter(
+    (chat) => chat.unreadCount > 0 && !chat.isGroup
+  );
+
+  if (chatsComNaoLidas.length === 0) {
+    console.log('[RECOVERY] Nenhuma mensagem perdida encontrada.');
+    return;
+  }
+
+  console.log(`[RECOVERY] Encontrados ${chatsComNaoLidas.length} chat(s) com mensagens não lidas.`);
+
+  let processadas = 0;
+  let ignoradas = 0;
+
+  for (const chat of chatsComNaoLidas) {
+    try {
+      // Buscar as mensagens não lidas do chat
+      const mensagens = await chat.fetchMessages({ limit: chat.unreadCount });
+
+      for (const msg of mensagens) {
+        // Filtrar: apenas mensagens recebidas (não enviadas pelo bot)
+        if (msg.fromMe) continue;
+
+        // Filtrar: ignorar mensagens muito antigas (mais de 10 min)
+        const msgTimestamp = msg.timestamp * 1000;
+        if (agora - msgTimestamp > MAX_MSG_AGE_MS) {
+          ignoradas++;
+          continue;
+        }
+
+        // Filtrar: ignorar mensagens de grupo e status
+        if (msg.from.includes('@g.us')) continue;
+        if (msg.from === 'status@broadcast') continue;
+
+        console.log(`[RECOVERY] Processando mensagem perdida de ${msg.from} (${new Date(msgTimestamp).toLocaleTimeString('pt-BR')})`);
+
+        // Resolver ID canônico do usuário
+        let usuarioId = msg.from;
+        try {
+          const contato = await msg.getContact();
+          const numeroContato = (contato?.number || '').replace(/\D/g, '');
+          if (numeroContato) {
+            usuarioId = `${numeroContato}@c.us`;
+          }
+        } catch (_) {}
+
+        // Processar apenas mensagens de texto simples para evitar complexidade
+        // Áudios, imagens, documentos e vCards recebidos offline são ignorados
+        if (msg.hasMedia || msg.type === 'vcard' || msg.type === 'multi_vcard' || msg.type === 'location') {
+          console.log(`[RECOVERY] Ignorando mídia/vcard/location de ${usuarioId} (tipo: ${msg.type})`);
+          ignoradas++;
+          continue;
+        }
+
+        const texto = msg.body;
+        if (!texto || texto.trim().length === 0) {
+          ignoradas++;
+          continue;
+        }
+
+        try {
+          // Verificar acesso antes de processar
+          const acesso = await pagamento.verificarAcesso(usuarioId);
+          if (!acesso.permitido) {
+            ignoradas++;
+            continue;
+          }
+
+          const resposta = await handleMessage(usuarioId, texto);
+          if (resposta) {
+            await responderMensagem(msg, usuarioId, resposta);
+          }
+          processadas++;
+        } catch (err) {
+          console.error(`[RECOVERY] Erro ao processar mensagem de ${usuarioId}:`, err.message);
+        }
+      }
+
+      // Marcar chat como lido após processar
+      try {
+        await chat.sendSeen();
+      } catch (_) {}
+    } catch (err) {
+      console.error(`[RECOVERY] Erro ao processar chat ${chat.id._serialized}:`, err.message);
+    }
+  }
+
+  console.log(`[RECOVERY] Concluído: ${processadas} mensagem(ns) processada(s), ${ignoradas} ignorada(s).`);
+}
+
+client.on('ready', async () => {
   console.log('✅ Bot conectado ao WhatsApp com sucesso!');
   console.log('📊 Cronos Assistente Pessoal está rodando.');
   console.log('   Envie "ajuda" no WhatsApp para ver os comandos.');
@@ -59,6 +164,11 @@ client.on('ready', () => {
 
   // Iniciar polling de pagamentos pendentes (fallback do webhook)
   pagamento.iniciarPollingPagamentos(client);
+
+  // Recuperar mensagens perdidas durante o restart
+  processarMensagensPerdidas(client).catch(err =>
+    console.error('[STARTUP] Erro ao processar mensagens perdidas:', err.message)
+  );
 });
 
 client.on('authenticated', () => {
