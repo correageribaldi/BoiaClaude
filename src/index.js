@@ -98,16 +98,14 @@ async function processarMensagensPerdidas(client) {
           }
         } catch (_) {}
 
-        // Processar apenas mensagens de texto simples para evitar complexidade
-        // Áudios, imagens, documentos e vCards recebidos offline são ignorados
-        if (msg.hasMedia || msg.type === 'vcard' || msg.type === 'multi_vcard' || msg.type === 'location') {
-          console.log(`[RECOVERY] Ignorando mídia/vcard/location de ${usuarioId} (tipo: ${msg.type})`);
+        // Ignorar tipos não suportados (vCard, location, documentos, vídeos, stickers)
+        if (msg.type === 'vcard' || msg.type === 'multi_vcard' || msg.type === 'location') {
+          console.log(`[RECOVERY] Ignorando vcard/location de ${usuarioId} (tipo: ${msg.type})`);
           ignoradas++;
           continue;
         }
-
-        const texto = msg.body;
-        if (!texto || texto.trim().length === 0) {
+        if (msg.hasMedia && !['ptt', 'audio', 'image'].includes(msg.type)) {
+          console.log(`[RECOVERY] Ignorando mídia não suportada de ${usuarioId} (tipo: ${msg.type})`);
           ignoradas++;
           continue;
         }
@@ -116,6 +114,53 @@ async function processarMensagensPerdidas(client) {
           // Verificar acesso antes de processar
           const acesso = await pagamento.verificarAcesso(usuarioId);
           if (!acesso.permitido) {
+            ignoradas++;
+            continue;
+          }
+
+          // Processar áudio/voz
+          if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
+            try {
+              const media = await msg.downloadMedia();
+              if (media && media.data) {
+                console.log(`[RECOVERY] Transcrevendo áudio de ${usuarioId}...`);
+                const textoAudio = await transcreverAudio(media.data);
+                if (textoAudio) {
+                  const resposta = await handleMessage(usuarioId, textoAudio);
+                  if (resposta) {
+                    await responderMensagem(msg, usuarioId, resposta);
+                  }
+                  processadas++;
+                } else {
+                  await msg.reply('❌ Não consegui entender o áudio. Tente novamente ou envie por texto.');
+                  ignoradas++;
+                }
+              }
+            } catch (err) {
+              console.error(`[RECOVERY] Erro ao processar áudio de ${usuarioId}:`, err.message);
+            }
+            continue;
+          }
+
+          // Processar imagem (boleto, nota fiscal, cupom)
+          if (msg.hasMedia && msg.type === 'image') {
+            try {
+              const media = await msg.downloadMedia();
+              if (media && media.data) {
+                console.log(`[RECOVERY] Analisando imagem de ${usuarioId}...`);
+                const resposta = await handleImageMessage(usuarioId, media.data, media.mimetype);
+                await msg.reply(resposta);
+                processadas++;
+              }
+            } catch (err) {
+              console.error(`[RECOVERY] Erro ao processar imagem de ${usuarioId}:`, err.message);
+            }
+            continue;
+          }
+
+          // Processar texto
+          const texto = msg.body;
+          if (!texto || texto.trim().length === 0) {
             ignoradas++;
             continue;
           }
