@@ -1081,6 +1081,24 @@ function extrairPeriodoNaturalNoTexto(texto) {
     }
   }
 
+  // Nome de mês por extenso ("março", "abril 2026", etc.)
+  const MESES_NOME = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+  const nomeMes = Object.keys(MESES_NOME).find(n => t.includes(n));
+  if (nomeMes) {
+    const mesNum = MESES_NOME[nomeMes];
+    const anoMatch = t.match(/\b(20\d{2})\b/);
+    const hoje = new Date();
+    let anoNum;
+    if (anoMatch) {
+      anoNum = parseInt(anoMatch[1]);
+    } else {
+      anoNum = mesNum < (hoje.getMonth() + 1) ? hoje.getFullYear() + 1 : hoje.getFullYear();
+    }
+    const mesStr = String(mesNum).padStart(2, '0');
+    const ultimoDia = new Date(anoNum, mesNum, 0).getDate();
+    return { dataInicio: `${anoNum}-${mesStr}-01`, dataFim: `${anoNum}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`, rotulo: `${nomeMes} ${anoNum}`, dataUnica: false, mes: mesNum, ano: anoNum };
+  }
+
   return null;
 }
 
@@ -2133,44 +2151,91 @@ async function handleResumo(usuarioId, msg) {
     return fmt.formatarResumoAnual(resumo);
   }
 
-  const norm = normalizarTextoBusca(lower);
-  const hoje = new Date();
-  let mes, ano;
+  // Usar o mesmo extrator de período que funciona corretamente no fluxo de lista/consulta
+  let periodo = extrairPeriodoNaturalNoTexto(lower);
 
-  // "mês que vem" / "próximo mês" / "proximo mes"
-  if (norm.includes('mes que vem') || norm.includes('proximo mes')) {
-    const proximo = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
-    mes = proximo.getMonth() + 1;
-    ano = proximo.getFullYear();
-  } else {
-    // Nome de mês por extenso ("março", "abril", etc.)
-    const MESES_NOME_R = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
-    const nomeMesEncontrado = Object.keys(MESES_NOME_R).find(n => norm.includes(n));
-    if (nomeMesEncontrado) {
-      mes = MESES_NOME_R[nomeMesEncontrado];
-      // Ano explícito no texto (ex: "2027") ou inferir
-      const anoMatch = norm.match(/\b(20\d{2})\b/);
-      if (anoMatch) {
-        ano = parseInt(anoMatch[1]);
-      } else {
-        // Se o mês já passou este ano, assume próximo ano
-        ano = mes < (hoje.getMonth() + 1) ? hoje.getFullYear() + 1 : hoje.getFullYear();
-      }
-    } else {
-      // Fallback: formato numérico "resumo 3" ou "resumo 3/2026"
-      const partes = lower.split(/\s+/);
-      if (partes[1]) {
-        const subPartes = partes[1].split('/');
-        const mesNum = parseInt(subPartes[0]);
-        if (!isNaN(mesNum)) {
-          mes = mesNum;
-          if (subPartes[1]) ano = parseInt(subPartes[1]);
-        }
+  // Fallback: formato numérico "resumo 3" ou "resumo 3/2026"
+  if (!periodo) {
+    const partes = lower.split(/\s+/);
+    if (partes[1]) {
+      const subPartes = partes[1].split('/');
+      const mesNum = parseInt(subPartes[0]);
+      if (!isNaN(mesNum) && mesNum >= 1 && mesNum <= 12) {
+        const anoNum = subPartes[1] ? parseInt(subPartes[1]) : new Date().getFullYear();
+        const mesStr = String(mesNum).padStart(2, '0');
+        const ultimoDia = new Date(anoNum, mesNum, 0).getDate();
+        periodo = {
+          dataInicio: `${anoNum}-${mesStr}-01`,
+          dataFim: `${anoNum}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`,
+          rotulo: `${mesNum}/${anoNum}`,
+          mes: mesNum, ano: anoNum,
+        };
       }
     }
   }
 
-  const resumo = await db.resumoMensal(usuarioId, mes, ano);
+  // Sem período detectado → mês atual
+  if (!periodo) {
+    const p = intervaloMes(0);
+    const hoje = new Date();
+    periodo = { ...p, mes: hoje.getMonth() + 1, ano: hoje.getFullYear() };
+  }
+
+  // Extrair mes/ano do período para o título (se não veio do parser)
+  let mes = periodo.mes;
+  let ano = periodo.ano;
+  if (!mes || !ano) {
+    const d = new Date(periodo.dataInicio + 'T12:00:00');
+    mes = d.getMonth() + 1;
+    ano = d.getFullYear();
+  }
+
+  // Buscar transações usando consultarTransacoes (mesmo filtro que lista/consulta)
+  const transacoes = await db.consultarTransacoes(usuarioId, {
+    dataInicio: periodo.dataInicio,
+    dataFim: periodo.dataFim,
+    limite: 500,
+  });
+
+  // Construir dados de resumo a partir das transações (mesmo formato que resumoMensal retorna)
+  const totaisMap = {};
+  const catMap = {};
+  const atrasadasMap = {};
+  const hojeISO = dateParaISO(new Date());
+
+  for (const t of transacoes) {
+    // Totais por tipo + status
+    const chave = `${t.tipo}_${t.status}`;
+    if (!totaisMap[chave]) {
+      totaisMap[chave] = { tipo: t.tipo, status: t.status, total: 0, quantidade: 0 };
+    }
+    totaisMap[chave].total += parseFloat(t.valor);
+    totaisMap[chave].quantidade += 1;
+
+    // Por categoria
+    const cat = t.categoria || 'Outros';
+    const chaveCat = `${t.tipo}_${cat}`;
+    if (!catMap[chaveCat]) {
+      catMap[chaveCat] = { tipo: t.tipo, categoria: cat, total: 0, quantidade: 0 };
+    }
+    catMap[chaveCat].total += parseFloat(t.valor);
+    catMap[chaveCat].quantidade += 1;
+
+    // Atrasadas (pendentes com data passada)
+    if (t.status === 'pendente' && t.data < hojeISO) {
+      if (!atrasadasMap[t.tipo]) {
+        atrasadasMap[t.tipo] = { tipo: t.tipo, quantidade: 0, total: 0 };
+      }
+      atrasadasMap[t.tipo].total += parseFloat(t.valor);
+      atrasadasMap[t.tipo].quantidade += 1;
+    }
+  }
+
+  const totais = Object.values(totaisMap);
+  const porCategoria = Object.values(catMap).sort((a, b) => b.total - a.total);
+  const atrasadas = Object.values(atrasadasMap);
+
+  const resumo = { mes, ano, totais, porCategoria, atrasadas };
   const textoResumo = fmt.formatarResumoMensal(resumo);
 
   // Gerar gráfico de categorias se houver despesas
