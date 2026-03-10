@@ -3674,6 +3674,8 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
   let msg = `${iconeHeader} *${descricao}* registrada em *${parcelas}x*${sufixo}!\n\n` +
     `💵 Total: ${fmt.formatarMoeda(valor)}\n📋 *Parcelas:*\n${listaParcelas}`;
 
+  msg += '\n💡 _Para ver suas despesas, tente:_\n_"minhas despesas", "despesas desse mês" ou "resumo"_';
+
   return msg;
 }
 
@@ -3705,6 +3707,12 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
   if (statusFinal === 'pendente') {
     const quando = tipo === 'receita' ? 'receber' : 'pagar';
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
+  }
+
+  if (tipo === 'despesa') {
+    msg += '\n\n💡 _Para ver suas despesas, tente:_\n_"minhas despesas", "despesas desse mês" ou "resumo"_';
+  } else {
+    msg += '\n\n💡 _Para ver suas receitas, tente:_\n_"minhas receitas", "receitas desse mês" ou "resumo"_';
   }
 
   return msg;
