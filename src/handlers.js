@@ -2151,7 +2151,7 @@ async function handleResumo(usuarioId, msg) {
     return fmt.formatarResumoAnual(resumo);
   }
 
-  // Usar o mesmo extrator de período que funciona corretamente no fluxo de lista/consulta
+  // Usar o mesmo extrator de período que funciona no fluxo de lista/consulta
   let periodo = extrairPeriodoNaturalNoTexto(lower);
 
   // Fallback: formato numérico "resumo 3" ou "resumo 3/2026"
@@ -2168,7 +2168,6 @@ async function handleResumo(usuarioId, msg) {
           dataInicio: `${anoNum}-${mesStr}-01`,
           dataFim: `${anoNum}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`,
           rotulo: `${mesNum}/${anoNum}`,
-          mes: mesNum, ano: anoNum,
         };
       }
     }
@@ -2177,76 +2176,51 @@ async function handleResumo(usuarioId, msg) {
   // Sem período detectado → mês atual
   if (!periodo) {
     const p = intervaloMes(0);
+    const MESES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
     const hoje = new Date();
-    periodo = { ...p, mes: hoje.getMonth() + 1, ano: hoje.getFullYear() };
+    periodo = { ...p, rotulo: `${MESES[hoje.getMonth() + 1]}/${hoje.getFullYear()}` };
   }
 
-  // Extrair mes/ano do período para o título (se não veio do parser)
-  let mes = periodo.mes;
-  let ano = periodo.ano;
-  if (!mes || !ano) {
-    const d = new Date(periodo.dataInicio + 'T12:00:00');
-    mes = d.getMonth() + 1;
-    ano = d.getFullYear();
-  }
-
-  // Buscar transações usando consultarTransacoes (mesmo filtro que lista/consulta)
-  const transacoes = await db.consultarTransacoes(usuarioId, {
+  // Buscar usando os mesmos métodos que lista/consulta
+  const filtros = {
     dataInicio: periodo.dataInicio,
     dataFim: periodo.dataFim,
-    limite: 500,
-  });
+  };
 
-  // Construir dados de resumo a partir das transações (mesmo formato que resumoMensal retorna)
-  const totaisMap = {};
-  const catMap = {};
-  const atrasadasMap = {};
-  const hojeISO = dateParaISO(new Date());
+  const [transacoes, totaisReceita, totaisDespesa] = await Promise.all([
+    db.consultarTransacoes(usuarioId, { ...filtros, limite: 50 }),
+    db.consultarTotalTransacoes(usuarioId, { ...filtros, tipo: 'receita' }),
+    db.consultarTotalTransacoes(usuarioId, { ...filtros, tipo: 'despesa' }),
+  ]);
 
-  for (const t of transacoes) {
-    // Totais por tipo + status
-    const chave = `${t.tipo}_${t.status}`;
-    if (!totaisMap[chave]) {
-      totaisMap[chave] = { tipo: t.tipo, status: t.status, total: 0, quantidade: 0 };
+  const totalReceitas = totaisReceita.total || 0;
+  const totalDespesas = totaisDespesa.total || 0;
+  const saldo = totalReceitas - totalDespesas;
+
+  if (totaisReceita.quantidade === 0 && totaisDespesa.quantidade === 0) {
+    return `📊 *Resumo — ${periodo.rotulo}*\n\nNenhum lançamento encontrado neste período.`;
+  }
+
+  let msgTexto = `📊 *Resumo — ${periodo.rotulo}*\n\n`;
+  msgTexto += `💰 *Receitas:* ${fmt.formatarMoeda(totalReceitas)} (${totaisReceita.quantidade} lanç.)\n`;
+  msgTexto += `💸 *Despesas:* ${fmt.formatarMoeda(totalDespesas)} (${totaisDespesa.quantidade} lanç.)\n`;
+  msgTexto += `━━━━━━━━━━━━━━━\n`;
+  msgTexto += `${saldo >= 0 ? '✅' : '🔴'} *Saldo:* ${fmt.formatarMoeda(saldo)}\n`;
+
+  if (transacoes.length > 0) {
+    msgTexto += `\n📋 *Detalhes:*\n`;
+    for (const t of transacoes.slice(0, 15)) {
+      const emoji = t.tipo === 'receita' ? '🟢' : '🔴';
+      const statusIcon = t.status === 'pendente' ? ' ⏳' : '';
+      msgTexto += `${emoji} ${fmt.formatarData(t.data)} | ${fmt.formatarMoeda(t.valor)} | _${t.descricao}_ (${t.categoria})${statusIcon}\n`;
     }
-    totaisMap[chave].total += parseFloat(t.valor);
-    totaisMap[chave].quantidade += 1;
 
-    // Por categoria
-    const cat = t.categoria || 'Outros';
-    const chaveCat = `${t.tipo}_${cat}`;
-    if (!catMap[chaveCat]) {
-      catMap[chaveCat] = { tipo: t.tipo, categoria: cat, total: 0, quantidade: 0 };
-    }
-    catMap[chaveCat].total += parseFloat(t.valor);
-    catMap[chaveCat].quantidade += 1;
-
-    // Atrasadas (pendentes com data passada)
-    if (t.status === 'pendente' && t.data < hojeISO) {
-      if (!atrasadasMap[t.tipo]) {
-        atrasadasMap[t.tipo] = { tipo: t.tipo, quantidade: 0, total: 0 };
-      }
-      atrasadasMap[t.tipo].total += parseFloat(t.valor);
-      atrasadasMap[t.tipo].quantidade += 1;
+    if (transacoes.length > 15) {
+      msgTexto += `\n_... e mais ${transacoes.length - 15} lançamentos_`;
     }
   }
 
-  const totais = Object.values(totaisMap);
-  const porCategoria = Object.values(catMap).sort((a, b) => b.total - a.total);
-  const atrasadas = Object.values(atrasadasMap);
-
-  const resumo = { mes, ano, totais, porCategoria, atrasadas };
-  const textoResumo = fmt.formatarResumoMensal(resumo);
-
-  // Gerar gráfico de categorias se houver despesas
-  const grafico = await charts.gerarGraficoCategorias(resumo);
-
-  // Retornar objeto com texto e gráfico (se houver)
-  if (grafico) {
-    return { texto: textoResumo, grafico };
-  }
-
-  return textoResumo;
+  return msgTexto;
 }
 
 async function handleLista(usuarioId, msg) {
