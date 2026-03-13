@@ -384,6 +384,22 @@ function obterRecorrenciaDiaPendente(usuarioId) {
 
 function limparRecorrenciaDiaPendente(usuarioId) { recorrenciaDiaPendente.delete(usuarioId); }
 
+// Estado para recorrência aguardando valor (expira em 15 min)
+const recorrenciaValorPendente = new Map();
+
+function salvarRecorrenciaValorPendente(usuarioId, dados) {
+  recorrenciaValorPendente.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+
+function obterRecorrenciaValorPendente(usuarioId) {
+  const dados = recorrenciaValorPendente.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { recorrenciaValorPendente.delete(usuarioId); return null; }
+  return dados;
+}
+
+function limparRecorrenciaValorPendente(usuarioId) { recorrenciaValorPendente.delete(usuarioId); }
+
 // Verifica o que falta e pergunta o próximo campo
 function perguntarProximoCampo(pendente) {
   const { descricao, tipo } = pendente;
@@ -1805,6 +1821,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const lembretePend = obterLembretePendente(usuarioId);
   if (lembretePend) {
     return await handleLembreteHorario(usuarioId, msg, lembretePend);
+  }
+
+  // Verificar se há recorrência aguardando valor
+  const recValorPend = obterRecorrenciaValorPendente(usuarioId);
+  if (recValorPend) {
+    return await handleRecorrenciaValorResposta(usuarioId, msg, recValorPend);
   }
 
   // Verificar se há recorrência aguardando dia do mês
@@ -4235,7 +4257,10 @@ async function handleTransacaoRecorrente(usuarioId, resultado) {
   const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana } = resultado;
 
   if (!valor || valor <= 0) {
-    return `❌ Preciso do valor para cadastrar a recorrência. Quanto é por ${frequencia === 'semanal' ? 'semana' : 'mês'}?`;
+    salvarRecorrenciaValorPendente(usuarioId, { tipo, descricao, categoria, frequencia, dia_mes, dia_semana });
+    const periodo = frequencia === 'semanal' ? 'semana' : 'mês';
+    const nome = descricao ? ` de *${descricao}*` : '';
+    return `💰 Preciso do valor para cadastrar a recorrência${nome}. Quanto é por ${periodo}?`;
   }
   if (!descricao) {
     return '❌ Preciso saber o nome dessa despesa/receita recorrente.';
@@ -4307,6 +4332,23 @@ async function handleRecorrenciaDiaResposta(usuarioId, msg, pendente) {
 
   limparRecorrenciaDiaPendente(usuarioId);
   return await handleTransacaoRecorrente(usuarioId, { ...pendente, dia_mes: dia });
+}
+
+async function handleRecorrenciaValorResposta(usuarioId, msg, pendente) {
+  const lower = msg.trim().toLowerCase();
+
+  if (lower === 'cancelar' || lower === '0') {
+    limparRecorrenciaValorPendente(usuarioId);
+    return '❌ Cadastro de recorrência cancelado.';
+  }
+
+  const valor = extrairValorDoTexto(msg);
+  if (!valor || valor <= 0) {
+    return '❌ Não entendi o valor. Informe um número válido.\n\n_Ex: "500", "1200,50", "R$ 3.000"_';
+  }
+
+  limparRecorrenciaValorPendente(usuarioId);
+  return await handleTransacaoRecorrente(usuarioId, { ...pendente, valor });
 }
 
 async function handleLembreteRecorrente(usuarioId, resultado) {
