@@ -564,6 +564,37 @@ async function initTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_reminders_status_run_at ON reminders(status, run_at);
   `);
+
+  // Tabela de campanhas de feedback
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feedback_campanhas (
+      id SERIAL PRIMARY KEY,
+      mensagem TEXT NOT NULL,
+      filtro_dias_apos_acesso INTEGER,
+      total_destinatarios INTEGER NOT NULL DEFAULT 0,
+      enviados INTEGER NOT NULL DEFAULT 0,
+      erros INTEGER NOT NULL DEFAULT 0,
+      finalizado BOOLEAN NOT NULL DEFAULT FALSE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  // Tabela de respostas de feedback
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feedback_respostas (
+      id SERIAL PRIMARY KEY,
+      campanha_id INTEGER NOT NULL REFERENCES feedback_campanhas(id) ON DELETE CASCADE,
+      usuario_id TEXT NOT NULL,
+      nome_usuario TEXT,
+      enviado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      respondido BOOLEAN NOT NULL DEFAULT FALSE,
+      resposta TEXT,
+      respondido_em TIMESTAMP,
+      UNIQUE(campanha_id, usuario_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_respostas_campanha ON feedback_respostas(campanha_id);
+    CREATE INDEX IF NOT EXISTS idx_feedback_respostas_usuario ON feedback_respostas(usuario_id);
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -2761,6 +2792,98 @@ function calcularProximaOcorrenciaRecorrente(regra, aposData) {
   return null;
 }
 
+// ─── Feedback ────────────────────────────────────────────────────────────────
+
+async function listarUsuariosFeedback(diasAposAcesso = 0) {
+  const result = await pool.query(`
+    SELECT DISTINCT ON (u.usuario_id)
+      u.usuario_id, u.nome, u.primeiro_contato,
+      a.status AS status_assinatura
+    FROM usuarios u
+    LEFT JOIN assinaturas a ON a.usuario_id = u.usuario_id
+    WHERE u.usuario_id NOT LIKE '%@lid'
+      AND u.primeiro_contato <= NOW() - INTERVAL '1 day' * $1
+    ORDER BY u.usuario_id, u.primeiro_contato DESC
+  `, [diasAposAcesso]);
+  return result.rows;
+}
+
+async function criarFeedbackCampanha(mensagem, filtroDiasAposAcesso, totalDestinatarios) {
+  const result = await pool.query(
+    `INSERT INTO feedback_campanhas (mensagem, filtro_dias_apos_acesso, total_destinatarios)
+     VALUES ($1, $2, $3) RETURNING id`,
+    [mensagem, filtroDiasAposAcesso || null, totalDestinatarios]
+  );
+  return result.rows[0].id;
+}
+
+async function registrarDestinatarioFeedback(campanhaId, usuarioId, nomeUsuario) {
+  await pool.query(
+    `INSERT INTO feedback_respostas (campanha_id, usuario_id, nome_usuario)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (campanha_id, usuario_id) DO NOTHING`,
+    [campanhaId, usuarioId, nomeUsuario || null]
+  );
+}
+
+async function atualizarProgressoFeedbackCampanha(campanhaId, enviados, erros, finalizado) {
+  await pool.query(
+    `UPDATE feedback_campanhas SET enviados = $1, erros = $2, finalizado = $3 WHERE id = $4`,
+    [enviados, erros, finalizado, campanhaId]
+  );
+}
+
+async function registrarRespostaFeedback(usuarioId, resposta) {
+  const result = await pool.query(
+    `UPDATE feedback_respostas
+     SET respondido = TRUE, resposta = $1, respondido_em = NOW()
+     WHERE usuario_id = $2 AND respondido = FALSE
+       AND campanha_id = (
+         SELECT campanha_id FROM feedback_respostas
+         WHERE usuario_id = $2 AND respondido = FALSE
+         ORDER BY enviado_em DESC LIMIT 1
+       )
+     RETURNING campanha_id`,
+    [resposta, usuarioId]
+  );
+  return result.rows[0]?.campanha_id || null;
+}
+
+async function listarFeedbackCampanhas() {
+  const result = await pool.query(`
+    SELECT fc.*,
+      (SELECT COUNT(*) FROM feedback_respostas fr
+       WHERE fr.campanha_id = fc.id AND fr.respondido = TRUE) AS total_respostas
+    FROM feedback_campanhas fc
+    ORDER BY fc.criado_em DESC
+  `);
+  return result.rows;
+}
+
+async function buscarFeedbackCampanha(campanhaId) {
+  const campanha = await pool.query(
+    `SELECT * FROM feedback_campanhas WHERE id = $1`, [campanhaId]
+  );
+  const respostas = await pool.query(
+    `SELECT * FROM feedback_respostas WHERE campanha_id = $1
+     ORDER BY respondido DESC, enviado_em ASC`,
+    [campanhaId]
+  );
+  return { campanha: campanha.rows[0] || null, respostas: respostas.rows };
+}
+
+async function buscarFeedbackPendente(usuarioId) {
+  const result = await pool.query(
+    `SELECT fr.campanha_id, fc.mensagem
+     FROM feedback_respostas fr
+     JOIN feedback_campanhas fc ON fc.id = fr.campanha_id
+     WHERE fr.usuario_id = $1 AND fr.respondido = FALSE
+     ORDER BY fr.enviado_em DESC LIMIT 1`,
+    [usuarioId]
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -2891,4 +3014,12 @@ module.exports = {
   excluirCategoriaPrincipal,
   salvarCategoriasPrincipaisBatch,
   CATEGORIAS_PRINCIPAIS_PADRAO,
+  listarUsuariosFeedback,
+  criarFeedbackCampanha,
+  registrarDestinatarioFeedback,
+  atualizarProgressoFeedbackCampanha,
+  registrarRespostaFeedback,
+  listarFeedbackCampanhas,
+  buscarFeedbackCampanha,
+  buscarFeedbackPendente,
 };

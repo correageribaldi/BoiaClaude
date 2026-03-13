@@ -1069,6 +1069,109 @@ app.get('/api/admin/campanhas/:id', autenticarAdmin, (req, res) => {
   res.json(estado);
 });
 
+// ── Feedback ────────────────────────────────────────────────────────────────
+
+// Lista usuários elegíveis para feedback com filtro por dias após primeiro acesso
+app.get('/api/admin/feedback/destinatarios', autenticarAdmin, async (req, res) => {
+  try {
+    const diasAposAcesso = parseInt(req.query.dias_apos_acesso) || 0;
+    const usuarios = await db.listarUsuariosFeedback(diasAposAcesso);
+    res.json({ total: usuarios.length, usuarios });
+  } catch (err) {
+    console.error('[FEEDBACK] /destinatarios:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Cria campanha de feedback e envia mensagens via WhatsApp
+app.post('/api/admin/feedback/enviar', autenticarAdmin, async (req, res) => {
+  try {
+    const { mensagem, dias_apos_acesso, usuario_ids } = req.body || {};
+    if (!mensagem?.trim()) return res.status(400).json({ erro: 'Mensagem obrigatória' });
+
+    let usuarios;
+    if (usuario_ids && Array.isArray(usuario_ids) && usuario_ids.length > 0) {
+      const todos = await db.listarUsuariosFeedback(0);
+      usuarios = todos.filter(u => usuario_ids.includes(u.usuario_id));
+    } else {
+      usuarios = await db.listarUsuariosFeedback(dias_apos_acesso || 0);
+    }
+
+    if (usuarios.length === 0) {
+      return res.json({ ok: true, total: 0, campanhaId: null, aviso: 'Nenhum usuário encontrado.' });
+    }
+
+    // Deduplicar
+    const vistos = new Set();
+    const usuariosUnicos = usuarios.filter(u => {
+      if (vistos.has(u.usuario_id)) return false;
+      vistos.add(u.usuario_id);
+      return true;
+    });
+
+    const campanhaId = await db.criarFeedbackCampanha(mensagem.trim(), dias_apos_acesso || null, usuariosUnicos.length);
+    res.json({ ok: true, total: usuariosUnicos.length, campanhaId });
+
+    const whatsappClient = app.get('whatsappClient');
+    if (!whatsappClient) {
+      await db.atualizarProgressoFeedbackCampanha(campanhaId, 0, 0, true);
+      return;
+    }
+
+    // Envio assíncrono com delay aleatório 5-15s
+    (async () => {
+      let enviados = 0, erros = 0;
+      console.log(`[FEEDBACK] Campanha ${campanhaId} iniciada — ${usuariosUnicos.length} destinatários`);
+
+      for (let i = 0; i < usuariosUnicos.length; i++) {
+        const usuario = usuariosUnicos[i];
+        try {
+          const primeiroNome = (usuario.nome || '').split(' ')[0] || 'amigo(a)';
+          const msg = mensagem.trim().replace(/\{nome\}/gi, primeiroNome);
+          await whatsappClient.sendMessage(usuario.usuario_id, msg);
+          enviados++;
+          await db.registrarDestinatarioFeedback(campanhaId, usuario.usuario_id, usuario.nome);
+        } catch (err) {
+          erros++;
+          console.error(`[FEEDBACK] Erro ao enviar para ${usuario.usuario_id}:`, err.message);
+        }
+        if (i < usuariosUnicos.length - 1) {
+          const delay = Math.floor(5000 + Math.random() * 10000);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      await db.atualizarProgressoFeedbackCampanha(campanhaId, enviados, erros, true);
+      console.log(`[FEEDBACK] Campanha ${campanhaId} finalizada — enviados: ${enviados}, erros: ${erros}`);
+    })();
+  } catch (err) {
+    console.error('[FEEDBACK] /enviar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Lista campanhas de feedback com totais
+app.get('/api/admin/feedback/campanhas', autenticarAdmin, async (req, res) => {
+  try {
+    const campanhas = await db.listarFeedbackCampanhas();
+    res.json({ campanhas });
+  } catch (err) {
+    console.error('[FEEDBACK] /campanhas:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Detalhe de uma campanha com todas as respostas
+app.get('/api/admin/feedback/campanhas/:id', autenticarAdmin, async (req, res) => {
+  try {
+    const { campanha, respostas } = await db.buscarFeedbackCampanha(req.params.id);
+    if (!campanha) return res.status(404).json({ erro: 'Campanha não encontrada' });
+    res.json({ campanha, respostas });
+  } catch (err) {
+    console.error('[FEEDBACK] /campanhas/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Envia mensagem individual para um usuário específico
 app.post('/api/admin/enviar-individual', autenticarAdmin, async (req, res) => {
   try {
