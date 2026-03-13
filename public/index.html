@@ -331,6 +331,69 @@
         </div>
       </div>
 
+      <!-- Feedback -->
+      <div class="admin-card">
+        <h3>📋 Coleta de Feedback</h3>
+
+        <div class="admin-row" style="margin-bottom:10px">
+          <div class="input-group" style="flex:1;min-width:160px">
+            <label>Dias após primeiro acesso</label>
+            <input type="number" id="adm-fb-dias" min="0" value="7" placeholder="Ex: 7" style="width:100px" />
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <button class="btn btn-sm" id="adm-fb-preview" style="background:#f0f2f5;color:var(--text)">🔍 Ver destinatários</button>
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <span id="adm-fb-count" style="font-size:13px;color:var(--text-muted);padding:6px 0"></span>
+          </div>
+        </div>
+
+        <div id="adm-fb-usuarios" class="hidden" style="margin-bottom:12px;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <label style="font-size:12px;color:var(--text-muted)">Selecione os destinatários:</label>
+            <label style="font-size:12px;cursor:pointer"><input type="checkbox" id="adm-fb-todos" checked /> Todos</label>
+          </div>
+          <div id="adm-fb-lista"></div>
+        </div>
+
+        <div class="input-group">
+          <label>Mensagem <span style="color:var(--text-muted);font-weight:400">— use {nome} para personalizar</span></label>
+          <textarea id="adm-fb-msg" rows="4" placeholder="Olá {nome}! Estamos melhorando o Cronos e sua opinião é muito importante. O que você acha do app até agora? Alguma sugestão?" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;resize:vertical;font-family:inherit"></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-primary" id="adm-fb-enviar">📤 Enviar Feedback</button>
+          <button class="btn btn-sm" id="adm-fb-historico-btn" style="background:#f0f2f5;color:var(--text)">📊 Histórico</button>
+          <span id="adm-fb-status" style="font-size:13px;color:var(--text-muted)"></span>
+        </div>
+
+        <!-- Progresso -->
+        <div id="adm-fb-progresso" class="hidden" style="margin-top:16px">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+            <span id="adm-fb-prog-label">Enviando...</span>
+            <span id="adm-fb-prog-nums"></span>
+          </div>
+          <div class="camp-barra-bg">
+            <div class="camp-barra-fill" id="adm-fb-barra"></div>
+          </div>
+        </div>
+
+        <!-- Histórico de campanhas -->
+        <div id="adm-fb-historico" class="hidden" style="margin-top:16px">
+          <h4 style="font-size:14px;margin-bottom:8px">Campanhas anteriores</h4>
+          <div id="adm-fb-campanhas-lista"></div>
+        </div>
+
+        <!-- Detalhe de campanha -->
+        <div id="adm-fb-detalhe" class="hidden" style="margin-top:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <h4 id="adm-fb-detalhe-titulo" style="font-size:14px"></h4>
+            <button class="btn btn-sm" onclick="document.getElementById('adm-fb-detalhe').classList.add('hidden')" style="background:#f0f2f5;color:var(--text)">✕ Fechar</button>
+          </div>
+          <div id="adm-fb-detalhe-respostas"></div>
+        </div>
+      </div>
+
       <!-- Envio Individual -->
       <div class="admin-card" style="margin-bottom:16px">
         <h3>✉️ Envio Individual</h3>

@@ -1062,6 +1062,212 @@ function campStartPolling(campanhaId, total) {
   }, 3000);
 }
 
+// ── Admin — Feedback ─────────────────────────────────────────────────────────
+
+let fbPollTimer = null;
+let fbUsuariosCache = [];
+
+async function fbPreview() {
+  const dias = parseInt(document.getElementById('adm-fb-dias').value) || 0;
+  const countEl = document.getElementById('adm-fb-count');
+  const listaEl = document.getElementById('adm-fb-lista');
+  const wrapEl = document.getElementById('adm-fb-usuarios');
+  countEl.textContent = '…';
+
+  try {
+    const r = await api('/api/admin/feedback/destinatarios?dias_apos_acesso=' + dias);
+    fbUsuariosCache = r.usuarios || [];
+    countEl.textContent = `${r.total} destinatário(s)`;
+
+    listaEl.innerHTML = '';
+    for (const u of fbUsuariosCache) {
+      const nome = u.nome || u.usuario_id;
+      const dias_desde = Math.floor((Date.now() - new Date(u.primeiro_contato).getTime()) / 86400000);
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px';
+      div.innerHTML = `<input type="checkbox" class="adm-fb-check" value="${u.usuario_id}" checked />
+        <span>${nome}</span>
+        <span style="color:var(--text-muted);font-size:11px">${dias_desde}d · ${u.status_assinatura || 'sem plano'}</span>`;
+      listaEl.appendChild(div);
+    }
+    wrapEl.classList.remove('hidden');
+  } catch (err) {
+    countEl.textContent = err.message;
+  }
+}
+
+function fbToggleTodos(checked) {
+  document.querySelectorAll('.adm-fb-check').forEach(cb => { cb.checked = checked; });
+}
+
+async function fbEnviar() {
+  const mensagem = document.getElementById('adm-fb-msg').value.trim();
+  const dias = parseInt(document.getElementById('adm-fb-dias').value) || 0;
+  const statusEl = document.getElementById('adm-fb-status');
+  const progressoEl = document.getElementById('adm-fb-progresso');
+  const btn = document.getElementById('adm-fb-enviar');
+
+  if (!mensagem) { toast('Digite a mensagem de feedback', 'error'); return; }
+
+  // Pegar usuários selecionados
+  const checks = document.querySelectorAll('.adm-fb-check:checked');
+  const usuario_ids = Array.from(checks).map(cb => cb.value);
+
+  if (usuario_ids.length === 0 && fbUsuariosCache.length > 0) {
+    toast('Selecione ao menos um destinatário', 'error');
+    return;
+  }
+
+  const total = usuario_ids.length || 'todos os';
+  if (!confirm(`Enviar feedback para ${total} destinatário(s)?\n\nA primeira resposta de cada usuário será capturada automaticamente.`)) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Iniciando...';
+  statusEl.textContent = '';
+  progressoEl.classList.add('hidden');
+
+  try {
+    const body = { mensagem, dias_apos_acesso: dias };
+    if (usuario_ids.length > 0) body.usuario_ids = usuario_ids;
+
+    const r = await api('/api/admin/feedback/enviar', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    if (r.total === 0) {
+      statusEl.textContent = r.aviso || 'Nenhum destinatário encontrado.';
+      btn.disabled = false;
+      btn.textContent = '📤 Enviar Feedback';
+      return;
+    }
+
+    progressoEl.classList.remove('hidden');
+    document.getElementById('adm-fb-prog-label').textContent = 'Enviando...';
+    document.getElementById('adm-fb-prog-nums').textContent = `0 / ${r.total}`;
+    document.getElementById('adm-fb-barra').style.width = '0%';
+    btn.textContent = '⏳ Enviando...';
+
+    fbStartPolling(r.campanhaId, r.total);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '📤 Enviar Feedback';
+  }
+}
+
+function fbStartPolling(campanhaId, total) {
+  if (fbPollTimer) clearInterval(fbPollTimer);
+
+  fbPollTimer = setInterval(async () => {
+    try {
+      const s = await api('/api/admin/feedback/campanhas/' + campanhaId);
+      const camp = s.campanha;
+      if (!camp) return;
+      const feitos = camp.enviados + camp.erros;
+      const pct = total > 0 ? Math.round((feitos / total) * 100) : 0;
+
+      document.getElementById('adm-fb-prog-nums').textContent = `${feitos} / ${total}`;
+      document.getElementById('adm-fb-barra').style.width = pct + '%';
+
+      if (camp.finalizado) {
+        clearInterval(fbPollTimer);
+        fbPollTimer = null;
+        document.getElementById('adm-fb-prog-label').textContent =
+          `Concluído! ${camp.enviados} enviados, ${camp.erros} erros.`;
+        document.getElementById('adm-fb-barra').style.width = '100%';
+        const btnFim = document.getElementById('adm-fb-enviar');
+        btnFim.disabled = false;
+        btnFim.textContent = '📤 Enviar Feedback';
+        toast(`Feedback enviado para ${camp.enviados} usuários!`, 'success');
+      }
+    } catch (_) {}
+  }, 3000);
+}
+
+async function fbCarregarHistorico() {
+  const wrapEl = document.getElementById('adm-fb-historico');
+  const listaEl = document.getElementById('adm-fb-campanhas-lista');
+  const isHidden = wrapEl.classList.contains('hidden');
+
+  if (isHidden) {
+    wrapEl.classList.remove('hidden');
+    listaEl.innerHTML = '<span style="font-size:13px;color:var(--text-muted)">Carregando...</span>';
+
+    try {
+      const r = await api('/api/admin/feedback/campanhas');
+      const campanhas = r.campanhas || [];
+
+      if (campanhas.length === 0) {
+        listaEl.innerHTML = '<span style="font-size:13px;color:var(--text-muted)">Nenhuma campanha de feedback ainda.</span>';
+        return;
+      }
+
+      listaEl.innerHTML = '';
+      for (const c of campanhas) {
+        const data = new Date(c.criado_em).toLocaleDateString('pt-BR');
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer';
+        div.innerHTML = `
+          <div>
+            <strong>${data}</strong> — ${c.mensagem.substring(0, 50)}${c.mensagem.length > 50 ? '...' : ''}
+            <br><span style="color:var(--text-muted);font-size:11px">Filtro: ${c.filtro_dias_apos_acesso != null ? c.filtro_dias_apos_acesso + ' dias' : 'manual'} · Enviados: ${c.enviados} · Respostas: ${c.total_respostas || 0}</span>
+          </div>
+          <span style="font-size:11px;color:var(--primary)">Ver ▸</span>`;
+        div.addEventListener('click', () => fbVerDetalhe(c.id));
+        listaEl.appendChild(div);
+      }
+    } catch (err) {
+      listaEl.innerHTML = `<span style="font-size:13px;color:red">${err.message}</span>`;
+    }
+  } else {
+    wrapEl.classList.add('hidden');
+  }
+}
+
+async function fbVerDetalhe(campanhaId) {
+  const detalheEl = document.getElementById('adm-fb-detalhe');
+  const tituloEl = document.getElementById('adm-fb-detalhe-titulo');
+  const respostasEl = document.getElementById('adm-fb-detalhe-respostas');
+
+  detalheEl.classList.remove('hidden');
+  tituloEl.textContent = 'Carregando...';
+  respostasEl.innerHTML = '';
+
+  try {
+    const r = await api('/api/admin/feedback/campanhas/' + campanhaId);
+    const camp = r.campanha;
+    const respostas = r.respostas || [];
+
+    const data = new Date(camp.criado_em).toLocaleDateString('pt-BR');
+    const respondidas = respostas.filter(r => r.respondido).length;
+    tituloEl.textContent = `Campanha ${data} — ${respondidas}/${respostas.length} respostas`;
+
+    respostasEl.innerHTML = '';
+    if (respostas.length === 0) {
+      respostasEl.innerHTML = '<span style="font-size:13px;color:var(--text-muted)">Nenhum destinatário registrado.</span>';
+      return;
+    }
+
+    for (const resp of respostas) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px';
+      const nome = resp.nome_usuario || resp.usuario_id;
+      if (resp.respondido) {
+        const dataResp = new Date(resp.respondido_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        div.innerHTML = `<div style="display:flex;justify-content:space-between"><strong>✅ ${nome}</strong><span style="color:var(--text-muted);font-size:11px">${dataResp}</span></div>
+          <div style="margin-top:4px;padding:6px 8px;background:var(--bg-secondary);border-radius:6px;font-size:13px">${resp.resposta}</div>`;
+      } else {
+        div.innerHTML = `<div style="display:flex;justify-content:space-between"><strong>⏳ ${nome}</strong><span style="color:var(--text-muted);font-size:11px">Aguardando resposta</span></div>`;
+      }
+      respostasEl.appendChild(div);
+    }
+  } catch (err) {
+    tituloEl.textContent = 'Erro';
+    respostasEl.innerHTML = `<span style="color:red">${err.message}</span>`;
+  }
+}
+
 // ── Admin — Envio Individual ──────────────────────────────────────────────────
 
 const admInd = { pagina: 1, ppp: 10, busca: '' };
@@ -1494,6 +1700,12 @@ function inicializar() {
     // Admin: campanhas
     document.getElementById('adm-camp-preview').addEventListener('click', campPreview);
     document.getElementById('adm-camp-enviar').addEventListener('click', campEnviar);
+
+    // Admin: feedback
+    document.getElementById('adm-fb-preview').addEventListener('click', fbPreview);
+    document.getElementById('adm-fb-enviar').addEventListener('click', fbEnviar);
+    document.getElementById('adm-fb-historico-btn').addEventListener('click', fbCarregarHistorico);
+    document.getElementById('adm-fb-todos').addEventListener('change', (e) => fbToggleTodos(e.target.checked));
 
     // Admin: busca de usuários
     document.getElementById('adm-busca').addEventListener('input', e => {
