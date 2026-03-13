@@ -58,6 +58,12 @@ TIPOS DE AÇÃO:
 - Exemplos: "nova despesa 150 almoço" → transacao, tipo: despesa, valor: 150, descricao: Almoço
 - Exemplos: "adicionar receita de 3000 salário" → transacao, tipo: receita, valor: 3000, descricao: Salário
 - Exemplos: "registrar despesa 80 gasolina" → transacao, tipo: despesa, valor: 80, descricao: Gasolina
+- IMPORTANTE PARA DESCRIÇÃO: NÃO inclua verbos de ação (receber, pagar, gastar, comprar, recebi, paguei, gastei, comprei) na descrição. A descrição deve conter APENAS o nome/origem/destino da transação. Exemplos:
+  - "recebi 200 da rua neide" → descricao: "Rua Neide" (NÃO "Receber da Rua Neide")
+  - "recebi 300 da tia nastacia" → descricao: "Tia Nastacia" (NÃO "Receber da tia Nastacia")
+  - "paguei 150 pro marcelo" → descricao: "Marcelo" (NÃO "Pagar pro Marcelo")
+  - "gastei 80 no mercado" → descricao: "Mercado" (NÃO "Gastar no mercado")
+  - "recebi 80 freela" → descricao: "Freela" (NÃO "Receber freela")
 
 2a. REGISTRAR MÚLTIPLAS TRANSAÇÕES (quando há 2+ transações distintas na mesma mensagem):
 {"acao": "transacoes_multiplas", "itens": [{"tipo": "despesa|receita", "valor": 0.00, "descricao": "...", "categoria": "...", "data": null, "status": "pago|pendente", "cartao_nome": null, "parcelas": 1}, ...]}
