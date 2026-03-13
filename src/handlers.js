@@ -3492,7 +3492,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     if (diaDetectadoTx) {
       resultado.data = diaDetectadoTx;
     }
-    const { tipo, descricao, categoria, status } = resultado;
+    const { tipo, descricao, status } = resultado;
+    const categoria = (!resultado.categoria || resultado.categoria === 'null' || resultado.categoria === 'undefined') ? 'Outros' : resultado.categoria;
     const valor = resultado.valor && resultado.valor > 0 ? resultado.valor : null;
     const statusFinal = status === 'pendente' ? 'pendente' : 'pago';
 
@@ -3750,6 +3751,8 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
 }
 
 async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null) {
+  // Sanitizar categoria: tratar string "null"/"undefined"/vazia como null real
+  if (!categoria || categoria === 'null' || categoria === 'undefined') categoria = 'Outros';
   // Auto-criar subcategoria vinculada se for nova
   if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
 
@@ -4254,7 +4257,8 @@ async function handleCancelarLembrete(usuarioId, msg) {
 const NOMES_DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
 async function handleTransacaoRecorrente(usuarioId, resultado) {
-  const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana } = resultado;
+  const { tipo, valor, descricao, frequencia, dia_mes, dia_semana } = resultado;
+  const categoria = (!resultado.categoria || resultado.categoria === 'null' || resultado.categoria === 'undefined') ? 'Outros' : resultado.categoria;
 
   if (!valor || valor <= 0) {
     salvarRecorrenciaValorPendente(usuarioId, { tipo, descricao, categoria, frequencia, dia_mes, dia_semana });
