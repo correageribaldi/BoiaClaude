@@ -2071,11 +2071,6 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return fmt.formatarPendentes(pendentes);
   }
 
-  // Comando: pagar / liquidar / receber / recebi
-  if (lower.startsWith('pagar ') || lower.startsWith('liquidar ') || lower.startsWith('receber ') || lower.startsWith('recebi ')) {
-    return await handleLiquidar(usuarioId, msg);
-  }
-
   // Cancelar/excluir lançamento por nome natural (antes da IA para evitar interpretação errada)
   // Ex: "cancelar despesa cadastrada com o nome de emprestimo" → excluir por nome
   {
