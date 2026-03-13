@@ -469,6 +469,14 @@ client.on('message', async (msg) => {
       return;
     }
 
+    // Interceptar resposta de feedback ANTES do check de acesso (usuários bloqueados também respondem)
+    const feedbackPendente = await db.buscarFeedbackPendente(usuarioId);
+    if (feedbackPendente) {
+      await db.registrarRespostaFeedback(usuarioId, texto.trim());
+      await msg.reply('🙏 Muito obrigado pelo seu feedback! Sua opinião é muito importante para melhorarmos o Cronos.\n\nSe tiver mais alguma sugestão, é só mandar a qualquer momento!');
+      return;
+    }
+
     // Verificar acesso por assinatura
     const acesso = await pagamento.verificarAcesso(usuarioId);
 

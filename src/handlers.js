@@ -1684,13 +1684,6 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handlePontoZero(usuarioId, msg, pontoZero);
   }
 
-  // Verificar se há feedback pendente para este usuário
-  const feedbackPendente = await db.buscarFeedbackPendente(usuarioId);
-  if (feedbackPendente) {
-    await db.registrarRespostaFeedback(usuarioId, msg.trim());
-    return '🙏 Muito obrigado pelo seu feedback! Sua opinião é muito importante para melhorarmos o Cronos.\n\nSe tiver mais alguma sugestão, é só mandar a qualquer momento!';
-  }
-
   // Verificar se está no fluxo de cadastro do painel web
   const cadastroPainel = obterCadastroPainel(usuarioId);
   if (cadastroPainel) {
