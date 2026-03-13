@@ -1072,6 +1072,7 @@ async function fbPreview() {
   const countEl = document.getElementById('adm-fb-count');
   const listaEl = document.getElementById('adm-fb-lista');
   const wrapEl = document.getElementById('adm-fb-usuarios');
+  const todosCheck = document.getElementById('adm-fb-todos');
   countEl.textContent = '…';
 
   try {
@@ -1080,24 +1081,58 @@ async function fbPreview() {
     countEl.textContent = `${r.total} destinatário(s)`;
 
     listaEl.innerHTML = '';
+    todosCheck.checked = true;
+
     for (const u of fbUsuariosCache) {
       const nome = u.nome || u.usuario_id;
       const dias_desde = Math.floor((Date.now() - new Date(u.primeiro_contato).getTime()) / 86400000);
       const div = document.createElement('div');
-      div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px';
-      div.innerHTML = `<input type="checkbox" class="adm-fb-check" value="${u.usuario_id}" checked />
-        <span>${nome}</span>
-        <span style="color:var(--text-muted);font-size:11px">${dias_desde}d · ${u.status_assinatura || 'sem plano'}</span>`;
+      div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'adm-fb-check';
+      cb.value = u.usuario_id;
+      cb.checked = true;
+      cb.addEventListener('change', fbAtualizarContagem);
+
+      const spanNome = document.createElement('span');
+      spanNome.textContent = nome;
+
+      const spanInfo = document.createElement('span');
+      spanInfo.style.cssText = 'color:var(--text-muted);font-size:11px';
+      spanInfo.textContent = `${dias_desde}d · ${u.status_assinatura || 'sem plano'}`;
+
+      div.appendChild(cb);
+      div.appendChild(spanNome);
+      div.appendChild(spanInfo);
+
+      // Clicar na linha toggle o checkbox
+      div.addEventListener('click', (e) => {
+        if (e.target === cb) return;
+        cb.checked = !cb.checked;
+        fbAtualizarContagem();
+      });
+
       listaEl.appendChild(div);
     }
     wrapEl.classList.remove('hidden');
+    fbAtualizarContagem();
   } catch (err) {
     countEl.textContent = err.message;
   }
 }
 
+function fbAtualizarContagem() {
+  const total = document.querySelectorAll('.adm-fb-check').length;
+  const selecionados = document.querySelectorAll('.adm-fb-check:checked').length;
+  document.getElementById('adm-fb-count').textContent = `${selecionados} de ${total} selecionado(s)`;
+  document.getElementById('adm-fb-todos').checked = selecionados === total;
+}
+
 function fbToggleTodos(checked) {
   document.querySelectorAll('.adm-fb-check').forEach(cb => { cb.checked = checked; });
+  fbAtualizarContagem();
 }
 
 async function fbEnviar() {
@@ -1109,17 +1144,22 @@ async function fbEnviar() {
 
   if (!mensagem) { toast('Digite a mensagem de feedback', 'error'); return; }
 
-  // Pegar usuários selecionados
+  // Exigir que o preview tenha sido feito antes
+  if (fbUsuariosCache.length === 0) {
+    toast('Clique em "Ver destinatários" primeiro para carregar a lista', 'error');
+    return;
+  }
+
+  // Pegar usuários selecionados via checkboxes
   const checks = document.querySelectorAll('.adm-fb-check:checked');
   const usuario_ids = Array.from(checks).map(cb => cb.value);
 
-  if (usuario_ids.length === 0 && fbUsuariosCache.length > 0) {
+  if (usuario_ids.length === 0) {
     toast('Selecione ao menos um destinatário', 'error');
     return;
   }
 
-  const total = usuario_ids.length || 'todos os';
-  if (!confirm(`Enviar feedback para ${total} destinatário(s)?\n\nA primeira resposta de cada usuário será capturada automaticamente.`)) return;
+  if (!confirm(`Enviar feedback para ${usuario_ids.length} destinatário(s)?\n\nA primeira resposta de cada usuário será capturada automaticamente.`)) return;
 
   btn.disabled = true;
   btn.textContent = '⏳ Iniciando...';
