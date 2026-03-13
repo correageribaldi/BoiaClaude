@@ -12,39 +12,41 @@ function gerarMensagem(rodada, transacoes) {
   const qtd = transacoes.length;
 
   let detalhes = '\n';
-  for (const t of transacoes) {
+  for (let i = 0; i < transacoes.length; i++) {
+    const t = transacoes[i];
     const vencimento = fmt.formatarData(t.data);
     const partes = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }).split('/');
     const hoje = `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
     const atrasado = t.data < hoje;
     const tag = atrasado ? ' _(vencida!)_' : '';
-    detalhes += `  ${t.tipo === 'despesa' ? '🔴' : '🟢'} *#${t.numero_usuario}* - ${t.descricao}: ${fmt.formatarMoeda(t.valor)} (venc. ${vencimento})${tag}\n`;
+    detalhes += `  ${i + 1}. ${t.tipo === 'despesa' ? '🔴' : '🟢'} *${t.descricao}*: ${fmt.formatarMoeda(t.valor)} (venc. ${vencimento})${tag}\n`;
   }
   detalhes += `\n💵 *Total:* ${fmt.formatarMoeda(total)}`;
+
+  const instrucao = `\n\nResponda *"sim"* se pagou tudo, *"não"* se ainda não, ou diga quais pagou (ex: *"paguei 1 e 3"*).`;
 
   if (qtd === 1) {
     const t = transacoes[0];
     const acao = t.tipo === 'despesa' ? 'pagar' : 'receber';
     const artigo = t.tipo === 'despesa' ? 'a' : 'o';
-    const acaoPassado = t.tipo === 'despesa' ? 'pagou' : 'recebeu';
 
     if (rodada === 1) {
-      return `Bom dia! Passando pra lembrar que hoje a gente tem que ${acao} ${artigo} *${t.descricao}* no valor de *${fmt.formatarMoeda(t.valor)}*.\n\nSe já ${acaoPassado}, me confirma aqui que eu dou baixa! ✅`;
+      return `Bom dia! Passando pra lembrar que hoje a gente tem que ${acao} ${artigo} *${t.descricao}* no valor de *${fmt.formatarMoeda(t.valor)}*.${instrucao}`;
     }
     if (rodada === 2) {
-      return `E aí, deve ter sido corrido a manhã né... mas não deixa de ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}) hein!\n\nSe já ${acaoPassado}, me avisa! 💬`;
+      return `E aí, deve ter sido corrido a manhã né... mas não deixa de ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}) hein!${instrucao}`;
     }
-    return `Não querendo ser chato... kkkk mas temos que ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}). Olha a multa depois por atraso!\n\nSe já resolveu durante o dia, me fala! 📢`;
+    return `Não querendo ser chato... kkkk mas temos que ${acao} ${artigo} *${t.descricao}* (${fmt.formatarMoeda(t.valor)}). Olha a multa depois por atraso!${instrucao}`;
   }
 
   // Múltiplas contas
   if (rodada === 1) {
-    return `Bom dia! Passando pra lembrar que hoje temos *${qtd} contas* pra resolver:\n${detalhes}\n\nSe já pagou/recebeu alguma, me confirma aqui que eu dou baixa! ✅`;
+    return `Bom dia! Passando pra lembrar que hoje temos *${qtd} contas* pra resolver:\n${detalhes}${instrucao}`;
   }
   if (rodada === 2) {
-    return `E aí, a manhã foi corrida né... mas não esquece que ainda temos *${qtd} contas* pendentes:\n${detalhes}\n\nQualquer uma que já tenha pago/recebido, me avisa! 💬`;
+    return `E aí, a manhã foi corrida né... mas não esquece que ainda temos *${qtd} contas* pendentes:\n${detalhes}${instrucao}`;
   }
-  return `Não querendo ser chato... kkkk mas ainda temos *${qtd} contas* pendentes pra hoje:\n${detalhes}\n\nOlha a multa por atraso! Se já resolveu alguma durante o dia, me fala! 📢`;
+  return `Não querendo ser chato... kkkk mas ainda temos *${qtd} contas* pendentes pra hoje:\n${detalhes}${instrucao}`;
 }
 
 // Agrupa transações por usuário

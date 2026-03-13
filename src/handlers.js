@@ -1487,76 +1487,34 @@ function normalizarTexto(lower) {
     .trim();
 }
 
-// Fallback: quando não há estado em memória, confirma pagamento via lembretes_enviados do dia
-async function tentarConfirmacaoPorDB(usuarioId, lower) {
-  // Buscar pendentes primeiro — se não houver, não vale nem verificar intent
-  const pendentes = await db.buscarPendentesLembradosHoje(usuarioId);
-  if (pendentes.length === 0) return null;
+// tentarConfirmacaoPorDB REMOVIDO — confirmação de pagamento agora é feita
+// exclusivamente via fluxo fechado com estado (handleConfirmacaoLembrete)
 
-  // Fast path: palavras fortes e inequívocas de pagamento
-  const normalizado = normalizarTexto(lower);
-  let confirmou = PALAVRAS_CONFIRMACAO_FORTE.some(p =>
-    normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
-  );
-
-  // Slow path: IA interpreta linguagem natural ("já fiz", "mandei o pix", "quitei", etc.)
-  if (!confirmou) {
-    confirmou = await interpretarConfirmacaoPagamento(lower);
-  }
-
-  if (!confirmou) return null;
-
-  const pagas = [];
-  for (const t of pendentes) {
-    const result = await db.liquidarTransacaoPorId(t.id);
-    if (result) pagas.push(result);
-  }
-
-  if (pagas.length === 0) {
-    return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
-  }
-
-  if (pagas.length === 1) {
-    const t = pagas[0];
-    const acao = t.tipo === 'despesa' ? 'paga' : 'recebida';
-    return `✅ *${t.descricao}* marcada como ${acao}! Ótimo! 🎉`;
-  }
-
-  const lista = pagas.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
-  return `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo! 🎉`;
+// Extrai números de respostas como "paguei 1, 4 e 6" ou "1 e 3" ou "a 2"
+function extrairNumerosResposta(texto) {
+  const nums = texto.match(/\d+/g);
+  if (!nums) return [];
+  return nums.map(n => parseInt(n, 10)).filter(n => n > 0);
 }
 
-async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
-  const normalizado = normalizarTexto(lower);
+// Busca transações por descrição na lista de pendentes
+function buscarPorDescricao(texto, transacoesInfo) {
+  const lower = texto.toLowerCase();
+  return transacoesInfo.filter(t => {
+    const desc = t.descricao.toLowerCase();
+    return lower.includes(desc) || desc.split(/\s+/).some(p => p.length > 3 && lower.includes(p));
+  });
+}
 
-  // Fast path: palavras-chave conhecidas
-  let confirmou = PALAVRAS_PAGAMENTO_CONFIRMADO.some(p =>
-    normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p)
-  );
-
-  // Slow path: IA interpreta linguagem natural ("já fiz", "mandei o pix", "quitei", etc.)
-  if (!confirmou) {
-    confirmou = await interpretarConfirmacaoPagamento(lower);
-  }
-
-  if (!confirmou) {
-    // Não é confirmação de pagamento — limpar estado e processar como mensagem normal
-    limparConfirmacaoLembrete(usuarioId);
-    return null;
-  }
-
-  // Marcar todas as transações do lembrete como pagas
-  const { transacaoIds, transacoesInfo } = estado;
-  limparConfirmacaoLembrete(usuarioId);
-
+// Marca transações como pagas e retorna resultado com info de caixinhas
+async function liquidarTransacoes(usuarioId, ids) {
   const pagas = [];
   const caixinhasAtualizadas = [];
-  for (const id of transacaoIds) {
+  for (const id of ids) {
     try {
       const result = await db.liquidarTransacaoPorId(id);
       if (result) {
         pagas.push(result);
-        // Se for aporte agendado em caixinha, atualizar o saldo automaticamente
         const matchAporte = result.descricao?.match(/^Aporte\s*-\s*(.+)$/i);
         if (matchAporte && result.categoria === 'Investimentos') {
           const nomeCaixinha = matchAporte[1].trim();
@@ -1571,19 +1529,19 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
       console.error(`[CONFIRMACAO_LEMBRETE] Erro ao liquidar transacao ${id}:`, err.message);
     }
   }
+  return { pagas, caixinhasAtualizadas };
+}
 
-  if (pagas.length === 0) {
-    return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
-  }
-
+// Formata mensagem de confirmação de pagamento
+function formatarRespostaLiquidacao(pagas, pendentes, caixinhasAtualizadas) {
   let resposta;
   if (pagas.length === 1) {
     const t = pagas[0];
     const acao = t.tipo === 'despesa' ? 'paga' : 'recebida';
-    resposta = `✅ *${t.descricao}* marcada como ${acao}! Ótimo, tudo anotado aqui! 🎉`;
+    resposta = `✅ *${t.descricao}* marcada como ${acao}! 🎉`;
   } else {
     const lista = pagas.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
-    resposta = `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}\n\nÓtimo, tudo anotado! 🎉`;
+    resposta = `✅ *${pagas.length} contas* marcadas como pagas:\n${lista}`;
   }
 
   if (caixinhasAtualizadas.length > 0) {
@@ -1592,7 +1550,88 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
       .join('\n');
   }
 
+  if (pendentes.length > 0) {
+    const listaPend = pendentes.map(t => `  • *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`).join('\n');
+    resposta += `\n\n⏳ Ficaram pendentes:\n${listaPend}\n\n_Te lembro de novo mais tarde!_`;
+  }
+
   return resposta;
+}
+
+// Gera mensagem de ajuda do fluxo de confirmação
+function gerarAjudaConfirmacao(transacoesInfo) {
+  const lista = transacoesInfo.map((t, i) =>
+    `  ${i + 1}. ${t.tipo === 'despesa' ? '🔴' : '🟢'} *${t.descricao}* (${fmt.formatarMoeda(t.valor)})`
+  ).join('\n');
+  return `Não entendi 🤔 Preciso saber sobre suas contas pendentes:\n\n${lista}\n\n` +
+    `Responda:\n` +
+    `• *"sim"* ou *"paguei tudo"* — se pagou todas\n` +
+    `• *"não"* ou *"ainda não"* — se não pagou nenhuma\n` +
+    `• *"paguei 1 e 3"* — para especificar quais pagou`;
+}
+
+async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
+  const normalizado = normalizarTexto(lower);
+  const { transacaoIds, transacoesInfo } = estado;
+
+  // 1. Confirmar TUDO
+  const CONFIRMA_TUDO = ['sim', 'paguei', 'paguei tudo', 'ja paguei', 'ja paguei', 'pago', 'ja pago', 'ja pago', 'tudo pago', 'tudo certo', 'confirmado', 'recebi tudo', 'ja recebi', 'ja recebi', 'recebido', 'foi', 'pronto', 'feito', 'ok', 'okay', 'realizado', 'efetuado'];
+  if (CONFIRMA_TUDO.includes(normalizado)) {
+    limparConfirmacaoLembrete(usuarioId);
+    const { pagas, caixinhasAtualizadas } = await liquidarTransacoes(usuarioId, transacaoIds);
+    if (pagas.length === 0) return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
+    return formatarRespostaLiquidacao(pagas, [], caixinhasAtualizadas);
+  }
+
+  // 2. Negar TUDO
+  const NEGA_TUDO = ['nao', 'ainda nao', 'nenhuma', 'nao paguei', 'nao recebi'];
+  if (NEGA_TUDO.includes(normalizado)) {
+    limparConfirmacaoLembrete(usuarioId);
+    return '👍 Beleza, vou te lembrar de novo mais tarde!';
+  }
+
+  // 3. Especificar por NÚMERO: "paguei 1, 4 e 6", "1 e 3", "a 2"
+  const numeros = extrairNumerosResposta(lower);
+  if (numeros.length > 0) {
+    const idsParaLiquidar = [];
+    const infoPagas = [];
+    const infoPendentes = [];
+    for (let i = 0; i < transacoesInfo.length; i++) {
+      if (numeros.includes(i + 1)) {
+        idsParaLiquidar.push(transacaoIds[i]);
+        infoPagas.push(transacoesInfo[i]);
+      } else {
+        infoPendentes.push(transacoesInfo[i]);
+      }
+    }
+    if (idsParaLiquidar.length === 0) return gerarAjudaConfirmacao(transacoesInfo);
+    limparConfirmacaoLembrete(usuarioId);
+    const { pagas, caixinhasAtualizadas } = await liquidarTransacoes(usuarioId, idsParaLiquidar);
+    if (pagas.length === 0) return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
+    return formatarRespostaLiquidacao(pagas, infoPendentes, caixinhasAtualizadas);
+  }
+
+  // 4. Especificar por NOME: "paguei aluguel e gás"
+  const encontradas = buscarPorDescricao(lower, transacoesInfo);
+  if (encontradas.length > 0) {
+    const idsEncontrados = new Set(encontradas.map(t => t.id));
+    const idsParaLiquidar = [];
+    const infoPendentes = [];
+    for (let i = 0; i < transacoesInfo.length; i++) {
+      if (idsEncontrados.has(transacoesInfo[i].id)) {
+        idsParaLiquidar.push(transacaoIds[i]);
+      } else {
+        infoPendentes.push(transacoesInfo[i]);
+      }
+    }
+    limparConfirmacaoLembrete(usuarioId);
+    const { pagas, caixinhasAtualizadas } = await liquidarTransacoes(usuarioId, idsParaLiquidar);
+    if (pagas.length === 0) return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
+    return formatarRespostaLiquidacao(pagas, infoPendentes, caixinhasAtualizadas);
+  }
+
+  // 5. Não entendeu — fica preso no fluxo
+  return gerarAjudaConfirmacao(transacoesInfo);
 }
 
 // Mensagens de ack enquanto o bot vai buscar informações
@@ -1715,15 +1754,10 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
 
   // Verificar se há confirmação de lembrete financeiro pendente
+  // Fluxo fechado: se há lembrete ativo, o usuário fica preso até resolver
   const confLembrete = obterConfirmacaoLembrete(usuarioId);
   if (confLembrete) {
-    const resposta = await handleConfirmacaoLembrete(usuarioId, lower, confLembrete);
-    if (resposta !== null) return resposta;
-    // resposta null = não confirmou, seguir fluxo normal
-  } else {
-    // Sem estado em memória (bot reiniciou ou estado foi limpo) — tentar confirmação via DB
-    const resposta = await tentarConfirmacaoPorDB(usuarioId, lower);
-    if (resposta !== null) return resposta;
+    return await handleConfirmacaoLembrete(usuarioId, lower, confLembrete);
   }
 
   // Verificar se há múltiplas transações com dados incompletos
