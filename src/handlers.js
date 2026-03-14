@@ -844,8 +844,8 @@ function mensagensEscolhaInicio(nome) {
       `Como você prefere começar?\n\n` +
       `🎯 *Organizar agora!*\n\n` +
       `Eu faço algumas perguntas rápidas e você ja consegue ter uma visão clara das suas finanças\n\n` +
-      `> Vou perguntar seu saldo atual, suas receitas mensais, suas despesas fixas e cadastrar seus cartões de crédito se tiver\n\n` +
-      `> 🧮 Depois te entrego um panorama geral deste mês e você pode ir registrando tudo no dia a dia\n\n` +
+      `> 🧮 Depois te entrego um panorama geral deste mês e você pode ir registrando tudo no dia a dia\n` +
+      `*Recomendo esta opção* \n\n` +
       `Ou...`, semCitacao: true },
     { msg: `📝 *Dia a dia*\n\n` +
       `Você vai me dizendo o que recebeu e gastou durante o dia e no decorrer do mês registramos suas receitas e despesas fixas pra ter uma visão das suas finanças\n\n` +
