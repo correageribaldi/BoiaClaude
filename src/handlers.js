@@ -817,7 +817,7 @@ async function handleOnboardingNome(usuarioId, texto) {
   await db.atualizarNomeUsuario(usuarioId, nome);
   setOnboardingState(usuarioId, 'confirmando_nome');
 
-  return { msg: `Perfeito, a partir de agora eu vou te chamar de *${nome}*, tudo bem?🙏🏼\n\n_Se quiser alterar ou corrijir, é só mandar o novo nome ou manda um *ok* que a gente continua!_`, semCitacao: true };
+  return { msg: `Perfeito, a partir de agora eu vou te chamar de *${nome}*, tudo bem?🙏🏼\n\n> _Se quiser alterar ou corrijir, é só mandar o novo nome ou manda um ok que a gente continua!_`, semCitacao: true };
 }
 
 async function handleConfirmacaoNome(usuarioId, texto) {
