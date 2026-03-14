@@ -6852,7 +6852,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
   const item = await interpretarItemFinanceiro(texto, usuarioId);
 
   // Detecta qualquer variante de "quero avançar para o próximo passo"
-  const querAvancar = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai))\b/.test(lower);
+  const querAvancar = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai)|seguir|continua(r)?|ok|okay|vai l[aá]|vai|bora|vamos|manda|segue|pode sim|pode|sim|beleza|blz|firmeza|fechou|combinado|partiu|simbora|vamo|bora l[aá])\b/.test(lower);
 
   switch (estado.etapa) {
 
