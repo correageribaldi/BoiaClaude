@@ -6906,7 +6906,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           delete estado.confirmandoReceitas;
           estado.etapa = 'despesas_fixas';
           salvarPontoZero(usuarioId, estado);
-          return `Beleza! Agora as *despesas fixas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
+          return `📉 Beleza! Agora as *despesas fixas* tudo que sai todo mês: aluguel, internet, luz, água, escola... *(caso alguma seja no cartão de crédito deixe para os próximos passos)*\n\n> Pode mandar várias de uma vez! Use um valor médio quando o valor varia, você poderá ajustar quando a conta chegar.\n> _Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_`;
         }
         // Detectar edição: "alterar salário para 2000", "alterar dia do salário para 10"
         if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
@@ -6943,7 +6943,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
       if (item.tipo === 'nao' && estado.receitasFixas.length === 0) {
         estado.etapa = 'despesas_fixas';
         salvarPontoZero(usuarioId, estado);
-        return `Beleza! Agora as *despesas fixas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
+        return `📉 Beleza! Agora as *despesas fixas* tudo que sai todo mês: aluguel, internet, luz, água, escola... *(caso alguma seja no cartão de crédito deixe para os próximos passos)*\n\n> Pode mandar várias de uma vez! Use um valor médio quando o valor varia, você poderá ajustar quando a conta chegar.\n> _Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_`;
       }
       if ((item.tipo === 'nao' || querAvancar) && estado.receitasFixas.length > 0 && !estado.confirmandoReceitas) {
         // Antes de avançar, listar e pedir confirmação
