@@ -7423,15 +7423,35 @@ function calcularDataPendenteMesAtual(dia) {
 }
 
 async function salvarDadosPontoZero(usuarioId, estado) {
-  // Saldo inicial → receita já paga hoje (entra no saldoAtual imediatamente)
-  if (estado.saldoInicial > 0) {
-    const hojeISO = dateParaISO(new Date());
-    await db.adicionarTransacao(usuarioId, 'receita', estado.saldoInicial, 'Saldo inicial', 'Outros', hojeISO, 'pago');
+  const hojeISO = dateParaISO(new Date());
+  const diaHoje = new Date().getDate();
+
+  // Calcular quanto das receitas/despesas passadas serão salvas como 'pago'.
+  // Como o saldo informado já inclui esses valores, precisamos ajustar o
+  // "Saldo inicial" para que o saldoAtual final bata com o que o usuário disse.
+  // saldoAtual = saldo_inicial_ajustado + receitas_passadas_pago - despesas_passadas_pago
+  // queremos que saldoAtual == estado.saldoInicial, logo:
+  // saldo_inicial_ajustado = saldoInicial - receitas_passadas + despesas_passadas
+  const receitasPassadas = (estado.receitasFixas || [])
+    .filter(r => r.dia && r.dia < diaHoje)
+    .reduce((s, r) => s + r.valor, 0);
+  const despesasPassadas = (estado.despesasFixas || [])
+    .filter(d => d.dia && d.dia < diaHoje)
+    .reduce((s, d) => s + d.valor, 0);
+  const saldoAjustado = estado.saldoInicial - receitasPassadas + despesasPassadas;
+
+  // Saldo inicial ajustado → entra no saldoAtual imediatamente
+  if (saldoAjustado >= 0) {
+    if (saldoAjustado > 0) {
+      await db.adicionarTransacao(usuarioId, 'receita', saldoAjustado, 'Saldo inicial', 'Outros', hojeISO, 'pago');
+    }
+  } else {
+    await db.adicionarTransacao(usuarioId, 'despesa', Math.abs(saldoAjustado), 'Ajuste saldo inicial', 'Outros', hojeISO, 'pago');
   }
 
   // Receitas fixas → regra de recorrência + transação no mês atual
-  // Dia já passou → 'pago' (já refletido no saldo informado); dia futuro → 'pendente'
-  const diaHoje = new Date().getDate();
+  // Dia já passou → 'pago' (aparece no histórico, compensado pelo saldo ajustado)
+  // Dia futuro/hoje → 'pendente' (entra na projeção, usuário confirma no dia a dia)
   for (const r of estado.receitasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros',
@@ -7443,7 +7463,8 @@ async function salvarDadosPontoZero(usuarioId, estado) {
   }
 
   // Despesas fixas → regra de recorrência + transação no mês atual
-  // Dia já passou → 'pago' (já refletido no saldo informado); dia futuro → 'pendente'
+  // Dia já passou → 'pago' (aparece no histórico, compensado pelo saldo ajustado)
+  // Dia futuro/hoje → 'pendente' (entra na projeção, usuário confirma no dia a dia)
   for (const d of estado.despesasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros',
