@@ -6864,7 +6864,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
   // Detecta qualquer variante de "quero avançar para o próximo passo"
   // Fast path: regex para palavras comuns (evita chamada IA desnecessária)
-  const querAvancarRegex = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai)|seguir|continua(r)?|ok|okay|vai l[aá]|vai|bora|vamos|manda|segue|pode sim|pode|sim|beleza|blz|firmeza|fechou|combinado|partiu|simbora|vamo|bora l[aá])\b/.test(lower);
+  const querAvancarRegex = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai)|seguir|continua(r)?|ok|okay|vai l[aá]|vai|bora|vamos|manda|segue|pode sim|pode|sim|beleza|blz|firmeza|fechou|combinado|partiu|simbora|vamo|bora l[aá]|passar|passa|prosseguir|prossiga|adiante|em frente)\b/.test(lower);
   // Combina regex + interpretação IA (tipo "sim" = confirmação positiva, tipo "nao" = encerramento)
   const querAvancar = querAvancarRegex || item.tipo === 'sim' || item.tipo === 'nao';
 
