@@ -6949,6 +6949,27 @@ async function handlePontoZero(usuarioId, texto, estado) {
           ).join('\n');
           return { msg: `${respRemover}\n\n📋 Suas receitas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
         }
+        // Tentar adicionar novos itens à lista
+        const resNovo = coletarItens(item, estado.receitasFixas, estado.etapa);
+        if (resNovo.ok) {
+          if (resNovo.incompletos && resNovo.incompletos.length > 0) {
+            const [primeiro, ...restante] = resNovo.incompletos;
+            estado.itemParcial = { ...primeiro };
+            if (restante.length > 0) estado.itensPendentes = restante;
+            else delete estado.itensPendentes;
+            delete estado.confirmandoReceitas;
+            salvarPontoZero(usuarioId, estado);
+            if (resNovo.msg) {
+              return `Certo, anotei:\n\n${resNovo.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa)}`;
+            }
+            return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
+          }
+          salvarPontoZero(usuarioId, estado);
+          const listaAtualizada = estado.receitasFixas.map((r, i) =>
+            `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
+          ).join('\n');
+          return { msg: `📋 Suas receitas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar salário para 2000"_ ou _"alterar dia do salário para 10"_`, semCitacao: true };
+        }
         // Não entendeu — repetir a lista
         const listaRepetida = estado.receitasFixas.map((r, i) =>
           `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
@@ -7027,6 +7048,27 @@ async function handlePontoZero(usuarioId, texto, estado) {
             `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
           ).join('\n');
           return { msg: `${respRemover}\n\n📋 Suas despesas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+        }
+        // Tentar adicionar novos itens à lista
+        const resNovo = coletarItens(item, estado.despesasFixas, estado.etapa);
+        if (resNovo.ok) {
+          if (resNovo.incompletos && resNovo.incompletos.length > 0) {
+            const [primeiro, ...restante] = resNovo.incompletos;
+            estado.itemParcial = { ...primeiro };
+            if (restante.length > 0) estado.itensPendentes = restante;
+            else delete estado.itensPendentes;
+            delete estado.confirmandoDespesas;
+            salvarPontoZero(usuarioId, estado);
+            if (resNovo.msg) {
+              return `Certo, anotei:\n\n${resNovo.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa)}`;
+            }
+            return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
+          }
+          salvarPontoZero(usuarioId, estado);
+          const listaAtualizada = estado.despesasFixas.map((d, i) =>
+            `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
+          ).join('\n');
+          return { msg: `📋 Suas despesas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar aluguel para 3000"_ ou _"alterar dia da luz para 15"_`, semCitacao: true };
         }
         // Não entendeu — repetir a lista
         const listaRepetida = estado.despesasFixas.map((d, i) =>
