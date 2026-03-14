@@ -898,7 +898,7 @@ async function handleOnboardingInicio(usuarioId, texto) {
   const nome = usuario?.nome || 'amigo(a)';
   setOnboardingState(usuarioId, 'aguardando_inicio');
   return { msg: (
-    `Desculpa *${nome}* mas acho que não entendi o que escolheu!😞\n\n` +
+    `*${nome}* escolha uma dessas opções!\n\n` +
     `Diga:\n` +
     `1. *Organizar agora*\n` +
     `2. *Dia a dia*\n\n` +
