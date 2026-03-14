@@ -5808,7 +5808,7 @@ function perguntarCampoFaltante(campo, descricao) {
   switch (campo) {
     case 'descricao': return `Qual o nome desse item? Me diz como quer chamar.\n_Ex: "Aluguel", "Salário", "Internet"_`;
     case 'valor':     return `Qual o valor de ${nome}? 💰\n_Ex: "R$ 1.500" ou só "1500"_`;
-    case 'dia':       return `Em que dia do mês ${nome} vence (ou entra)? 📅\n_Ex: "dia 5" ou só "5"_`;
+    case 'dia':       return `Em que dia do mês entra o ${nome}? 📅\n> Ex: "dia 5" ou só "5"`;
     default:          return null;
   }
 }
@@ -6967,7 +6967,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           else delete estado.itensPendentes;
           salvarPontoZero(usuarioId, estado);
           if (res.msg) {
-            return `Anotei:\n\n${res.msg}\nMas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
           }
           return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
         }
@@ -6998,7 +6998,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
           else delete estado.itensPendentes;
           salvarPontoZero(usuarioId, estado);
           if (res.msg) {
-            return `Anotei:\n\n${res.msg}\nMas precisei da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
           }
           return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
         }
