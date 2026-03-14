@@ -18,10 +18,10 @@ async function enviarEulaPDF(whatsappClient, usuarioId) {
   }
 }
 
-const PRECO_CENTS_MENSAL = 1990;  // R$ 19,90/mês
-const PRECO_CENTS_ANUAL  = 17690; // R$ 176,90/ano (≈26% de desconto)
-const DIAS_TRIAL = 7;   // 7 dias grátis
-const DIAS_GRACA = 3;   // 3 dias de carência após expirar
+const PRECO_CENTS_MENSAL = 1830;  // R$ 18,30/mês
+const PRECO_CENTS_ANUAL  = 16300; // R$ 163,00/ano (≈26% de desconto)
+const DIAS_TRIAL = 3;   // 3 dias grátis
+const DIAS_GRACA = 0;   // sem carência — bloqueia imediatamente ao expirar
 
 // Determina quantos dias ativar com base no order_nsu (contém '_anual_' para plano anual)
 function diasDoPlano(orderNsu) {
@@ -149,7 +149,7 @@ async function gerarLinkPlano(usuarioId, plano = 'mensal') {
     await db.salvarLinkAssinatura(usuarioId, nsu, link);
     console.log(`[PAGAMENTO] 🔗 Link ${plano} gerado para ${usuarioId}: nsu=${nsu} url=${link}`);
 
-    const precoStr = plano === 'anual' ? 'R$ 176,90/ano' : 'R$ 19,90/mês';
+    const precoStr = plano === 'anual' ? 'R$ 163,00/ano' : 'R$ 18,30/mês';
     const emoji = plano === 'anual' ? '💎' : '💳';
     return `${emoji} *Plano ${plano === 'anual' ? 'Anual' : 'Mensal'} — ${precoStr}*\n\n` +
       `👉 ${link}\n\n_Após o pagamento, seu acesso é liberado automaticamente! ✅_`;
@@ -203,8 +203,8 @@ async function verificarAcesso(usuarioId) {
       if (diasRestantes <= 3 && assinatura.avisos_enviados < 2) {
         aviso = `⏰ Seu período de teste termina em *${diasRestantes} dia(s)*!\n\n` +
           `Escolha seu plano para continuar usando o Cronos:\n\n` +
-          `💳 *Mensal — R$ 19,90/mês*\n` +
-          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `💳 *Mensal — R$ 18,30/mês*\n` +
+          `💎 *Anual — R$ 163,00/ano* _(economize 26%!)_\n\n` +
           `_Responda *mensal* ou *anual* para receber seu link de pagamento._\n\n` +
           `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`;
         await db.incrementarAvisosAssinatura(usuarioId);
@@ -228,8 +228,8 @@ async function verificarAcesso(usuarioId) {
         status: 'graca',
         aviso: `⚠️ Seu período de teste acabou! Você tem *${diasGraca} dia(s) de carência*.\n\n` +
           `Escolha seu plano para não perder o acesso:\n\n` +
-          `💳 *Mensal — R$ 19,90/mês*\n` +
-          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `💳 *Mensal — R$ 18,30/mês*\n` +
+          `💎 *Anual — R$ 163,00/ano* _(economize 26%!)_\n\n` +
           `_Responda *mensal* ou *anual* para receber seu link._\n\n` +
           `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`,
       };
@@ -250,8 +250,8 @@ async function verificarAcesso(usuarioId) {
       if (diasRestantes <= 3 && assinatura.avisos_enviados < 2) {
         aviso = `🔔 Sua assinatura vence em *${diasRestantes} dia(s)*!\n\n` +
           `Renove escolhendo seu plano:\n\n` +
-          `💳 *Mensal — R$ 19,90/mês*\n` +
-          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `💳 *Mensal — R$ 18,30/mês*\n` +
+          `💎 *Anual — R$ 163,00/ano* _(economize 26%!)_\n\n` +
           `_Responda *mensal* ou *anual* para receber seu link de pagamento._\n\n` +
           `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`;
         await db.incrementarAvisosAssinatura(usuarioId);
@@ -275,8 +275,8 @@ async function verificarAcesso(usuarioId) {
         status: 'graca',
         aviso: `⚠️ Sua assinatura venceu! Você tem *${diasGraca} dia(s) de carência*.\n\n` +
           `Renove escolhendo seu plano:\n\n` +
-          `💳 *Mensal — R$ 19,90/mês*\n` +
-          `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+          `💳 *Mensal — R$ 18,30/mês*\n` +
+          `💎 *Anual — R$ 163,00/ano* _(economize 26%!)_\n\n` +
           `_Responda *mensal* ou *anual* para receber seu link._\n\n` +
           `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`,
       };
@@ -300,7 +300,7 @@ async function verificarAcesso(usuarioId) {
         permitido: true,
         status: 'graca',
         aviso: `⚠️ *${diasGraca} dia(s) de carência restante(s).*\n\n` +
-          `💳 *Mensal — R$ 19,90/mês* | 💎 *Anual — R$ 176,90/ano*\n\n` +
+          `💳 *Mensal — R$ 18,30/mês* | 💎 *Anual — R$ 163,00/ano*\n\n` +
           `_Responda *mensal*, *anual* ou *cupom SEUCÓDIGO*._`,
       };
     }
@@ -320,8 +320,8 @@ async function gerarMensagemBloqueio(usuarioId, nome) {
 
   return `🔒 ${saudacao}Seu acesso ao *Cronos* está suspenso.\n\n` +
     `Escolha um plano para continuar:\n\n` +
-    `💳 *Mensal — R$ 19,90/mês*\n` +
-    `💎 *Anual — R$ 176,90/ano* _(apenas R$ 14,74/mês — economize 26%!)_\n\n` +
+    `💳 *Mensal — R$ 18,30/mês*\n` +
+    `💎 *Anual — R$ 163,00/ano* _(apenas R$ 13,58/mês — economize 26%!)_\n\n` +
     `_Responda *mensal* ou *anual* para receber seu link de pagamento._\n\n` +
     `🎟️ _Tem um cupom? Responda *cupom SEUCÓDIGO*_`;
 }
@@ -332,8 +332,8 @@ function msgTrialBemVindo(nome) {
   return `🎉 *Bem-vindo${saudacao} ao Cronos!*\n\n` +
     `Você tem *${DIAS_TRIAL} dias grátis* para experimentar tudo!\n\n` +
     `Após o período de teste, escolha seu plano:\n` +
-    `💳 *Mensal — R$ 19,90/mês*\n` +
-    `💎 *Anual — R$ 176,90/ano* _(economize 26%!)_\n\n` +
+    `💳 *Mensal — R$ 18,30/mês*\n` +
+    `💎 *Anual — R$ 163,00/ano* _(economize 26%!)_\n\n` +
     `_Qualquer dúvida é só me chamar. Bora cuidar das finanças! 🚀_\n\n` +
     `_📄 Ao usar o Cronos, você concorda com nossos Termos de Uso. Responda *termos* para receber o documento._`;
 }
@@ -352,7 +352,7 @@ async function consultarPlano(usuarioId) {
   const assinatura = await db.buscarAssinatura(usuarioId);
 
   if (!assinatura) {
-    return `📋 *Seu Plano Cronos*\n\n❌ Nenhum plano encontrado.\n\n💳 Assine por *R$ 19,90/mês* para começar a usar o Cronos.`;
+    return `📋 *Seu Plano Cronos*\n\n❌ Nenhum plano encontrado.\n\n💳 Assine por *R$ 18,30/mês* para começar a usar o Cronos.`;
   }
 
   const agora = new Date();
@@ -367,14 +367,14 @@ async function consultarPlano(usuarioId) {
     } else {
       msg += `⚠️ *Status:* Trial expirado\n`;
     }
-    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês`;
+    msg += `\n💰 *Plano:* Mensal — R$ 18,30/mês`;
 
   } else if (assinatura.status === 'ativo') {
     const pagoAte = new Date(assinatura.pago_ate + 'T23:59:59');
     const diasRestantes = Math.ceil((pagoAte - agora) / (1000 * 60 * 60 * 24));
     msg += `✅ *Status:* Ativo\n`;
     msg += `📅 *Válido até:* ${formatarDataBR(pagoAte)} (${diasRestantes} dia(s))\n`;
-    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês`;
+    msg += `\n💰 *Plano:* Mensal — R$ 18,30/mês`;
 
   } else if (assinatura.status === 'graca') {
     const base = assinatura.pago_ate
@@ -384,13 +384,13 @@ async function consultarPlano(usuarioId) {
     fimGraca.setDate(fimGraca.getDate() + DIAS_GRACA);
     const diasGraca = Math.max(0, Math.ceil((fimGraca - agora) / (1000 * 60 * 60 * 24)));
     msg += `⚠️ *Status:* Carência — ${diasGraca} dia(s) para suspender\n`;
-    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês\n`;
+    msg += `\n💰 *Plano:* Mensal — R$ 18,30/mês\n`;
     const link = await obterLinkPagamento(usuarioId, assinatura);
     msg += `\n👉 Renove agora: ${link || 'Entre em contato para renovar.'}`;
 
   } else {
     msg += `🔒 *Status:* Suspenso\n`;
-    msg += `\n💰 *Plano:* Mensal — R$ 19,90/mês\n`;
+    msg += `\n💰 *Plano:* Mensal — R$ 18,30/mês\n`;
     const link = await obterLinkPagamento(usuarioId, assinatura);
     msg += `\n👉 Assine para reativar: ${link || 'Entre em contato para assinar.'}`;
   }
