@@ -5712,7 +5712,13 @@ async function iniciarPontoZero(usuarioId) {
     orcamentos: [],
   });
 
-  return `E aí! 😄 Bora deixar tudo em dia?\n\nEm poucos minutos organizo teu financeiro completo.\n\nPrimeiro: *quanto tu tem disponível hoje em conta corrente, carteira e pix?*\n\n⚠️ _Não inclua investimentos (poupança, CDB, etc.) — eles serão registrados em seguida como caixinhas._\n\n_Ex: "R$ 1.850" ou "tenho uns 2 mil"_\n\n_A qualquer momento digite *cancelar* para sair._`;
+  return { msg: (
+    `Vamos colocar tudo em dia então!\n\n` +
+    `Primeiro: *quanto você tem disponível hoje na conta ou carteira?*\n\n` +
+    `> ⚠️ Se tiver em mais de um lugar é só dizer o total, ele será seu ponta pé inicial.\n` +
+    `> 💰 Caso tenha investimentos, caixinhas ou poupança deixe esses pra registrar depois\n\n` +
+    `_*Diga* Ex: "1250" ou "tenho uns 2 mil"_`
+  ), semCitacao: true };
 }
 
 function coletarItens(item, lista, etapa) {
@@ -6851,13 +6857,37 @@ async function handlePontoZero(usuarioId, texto, estado) {
   switch (estado.etapa) {
 
     case 'saldo': {
+      // Sub-estado: confirmando o valor do saldo
+      if (estado.confirmandoSaldo) {
+        const normalizado = normalizarTexto(lower);
+        const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'continuar', 'seguir', 'seguir em frente', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito', 'prosseguir', 'vai', 'manda'];
+        if (CONFIRMA.includes(normalizado)) {
+          delete estado.confirmandoSaldo;
+          estado.etapa = 'receitas_fixas';
+          salvarPontoZero(usuarioId, estado);
+          return `Perfeito ✅\n\n📈 Agora me diz suas *receitas fixas* do mês — aquilo que entra todo mês no mesmo dia (salário, benefício, aluguel recebido...).\n\nPode mandar tudo de uma vez!\n_Ex: "Salário dia 5 R$ 3.000 e aluguel dia 10 R$ 800"_\n\n_Se não tem, manda "não"._`;
+        }
+        // Tentou alterar o valor
+        const novoItem = await interpretarItemFinanceiro(texto, usuarioId);
+        if (novoItem.tipo === 'item' && novoItem.valor) {
+          estado.saldoInicial = novoItem.valor;
+          salvarPontoZero(usuarioId, estado);
+          return { msg: `Maravilha, registrei *${fmt.formatarMoeda(novoItem.valor)}*, posso seguir ou quer alterar o valor inicial?\n\n> Ajuste o valor ou diga: Ex: ok, continuar, seguir em frente`, semCitacao: true };
+        }
+        const usuario = await db.buscarUsuario(usuarioId);
+        const nome = usuario?.nome || 'amigo(a)';
+        return { msg: `Desculpa *${nome}* mas acho que não entendi o valor!😞\n\n*Diga* Ex: "1250" ou "tenho uns 2 mil"\n\n> Você pode me mandar por áudio, se quiser, também! 🎤`, semCitacao: true };
+      }
+
       if (item.tipo !== 'item' || !item.valor) {
-        return await redireccionarPontoZero(usuarioId, texto, 'saldo');
+        const usuario = await db.buscarUsuario(usuarioId);
+        const nome = usuario?.nome || 'amigo(a)';
+        return { msg: `Desculpa *${nome}* mas acho que não entendi o valor!😞\n\n*Diga* Ex: "1250" ou "tenho uns 2 mil"\n\n> Você pode me mandar por áudio, se quiser, também! 🎤`, semCitacao: true };
       }
       estado.saldoInicial = item.valor;
-      estado.etapa = 'receitas_fixas';
+      estado.confirmandoSaldo = true;
       salvarPontoZero(usuarioId, estado);
-      return `Perfeito ✅ Saldo atual: *${fmt.formatarMoeda(item.valor)}*\n\n📈 Agora me diz suas *receitas fixas* do mês — aquilo que entra todo mês no mesmo dia (salário, benefício, aluguel recebido...).\n\nPode mandar tudo de uma vez!\n_Ex: "Salário dia 5 R$ 3.000 e aluguel dia 10 R$ 800"_\n\n_Se não tem, manda "não"._`;
+      return { msg: `Maravilha, registrei *${fmt.formatarMoeda(item.valor)}*, posso seguir ou quer alterar o valor inicial?\n\n> Ajuste o valor ou diga: Ex: ok, continuar, seguir em frente`, semCitacao: true };
     }
 
     case 'receitas_fixas': {
