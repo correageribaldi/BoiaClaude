@@ -6867,9 +6867,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
           salvarPontoZero(usuarioId, estado);
           return { msg: `Perfeito, seu saldo inicial é de *${fmt.formatarMoeda(estado.saldoInicial)}*\n\n` +
             `📈 Agora me diz suas *receitas fixas* aquelas que você recebe todo mês no mesmo dia (salário, benefício, pensão, mesada...).\n\n` +
-            `Pode mandar tudo de uma vez e por áudio se quiser!🎤\n` +
-            `_Ex: "Salário dia 5 R$ 3.000 e benefício dia 10 R$ 800"_\n\n` +
-            `_Se não tem nenhuma receita fixa, manda "não"._`, semCitacao: true };
+            `> Pode mandar tudo de uma vez e por áudio se quiser!🎤\n` +
+            `> _Ex: "Salário dia 5 R$ 3.000 e benefício dia 10 R$ 800"_`, semCitacao: true };
         }
         // Tentou alterar o valor
         const novoItem = await interpretarItemFinanceiro(texto, usuarioId);
