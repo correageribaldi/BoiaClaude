@@ -4512,7 +4512,7 @@ async function handleUsoCartao(usuarioId, nomeCartao) {
     }
     if (limite) msg += `  💳 Limite: ${fmt.formatarMoeda(limite)} ${cor} ${pct}% comprometido\n`;
     if (disponivel !== null) msg += `  ✅ Disponível: *${fmt.formatarMoeda(disponivel)}*\n`;
-    if (c.dia_fechamento) msg += `  📅 Fecha dia ${c.dia_fechamento} · Ciclo desde: ${fmt.formatarData(inicioStr)}\n`;
+    if (c.dia_fechamento) msg += `  📅 Sua fatura fecha no próximo dia ${c.dia_fechamento}\n`;
     msg += '\n';
   }
   return msg.trim();
