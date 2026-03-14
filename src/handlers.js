@@ -7110,6 +7110,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'despesas_cartao': {
+      // Garantir que a lista existe (estados criados antes da atualização podem não ter)
+      if (!estado.despesasCartao) { estado.despesasCartao = []; salvarPontoZero(usuarioId, estado); }
       // Sub-estado: confirmando as assinaturas de cartão listadas
       if (estado.confirmandoDespesasCartao) {
         if (querAvancar) {
