@@ -270,7 +270,9 @@ async function responderMensagem(msg, usuarioId, resposta) {
   };
 
   if (Array.isArray(resposta)) {
-    for (const parte of resposta) {
+    for (let i = 0; i < resposta.length; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 2000));
+      const parte = resposta[i];
       if (typeof parte === 'object' && parte?.msg) {
         await enviar(parte.msg, parte.semCitacao);
       } else {
