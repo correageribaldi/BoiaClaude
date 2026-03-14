@@ -760,7 +760,7 @@ Se forem MÚLTIPLOS ITENS FINANCEIROS na mesma mensagem (2 ou mais itens):
 
 Regras dos itens:
 - "valor": número positivo (ex: 3000.00)
-- "descricao": nome curto do item (ex: "Salário", "Internet", "Aluguel")
+- "descricao": use EXATAMENTE o que o usuário escreveu como identificação do item, preservando nomes próprios e qualificadores. Ex: "Telefone Federico" NÃO simplifique para "Telefone". Se o usuário disse "Salário Renata", use "Salário Renata", NÃO "Salário". Remova apenas verbos de ação (pagar, adicionar, cadastrar, etc.)
 - "dia": dia do mês 1-31. Resolva expressões relativas usando a data de hoje (dia ${diaHoje}). Ex: "amanhã" → ${diaAmanha}, "semana que vem" → ${Math.min(diaHoje + 7, diasNoMes)}. null apenas se nenhum dia for mencionado.
 - "categoria": use uma subcategoria existente das categorias: ${categorias}. Se nenhuma se encaixa, crie uma descritiva. NUNCA use o nome de uma categoria principal.
 
