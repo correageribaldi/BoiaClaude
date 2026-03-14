@@ -8139,4 +8139,31 @@ async function handleAssessorCompra(usuarioId, resultado) {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome };
+// Garbage collector: limpa entradas expiradas de todos os Maps de estado
+function limparMapsExpirados() {
+  const agora = Date.now();
+  let limpos = 0;
+  const maps = [
+    confirmacoesPendentes, transacaoPendente, excluirPendentes,
+    removerCartaoPendentes, editarTxPendentes, editarRecPendentes,
+    editarRecDiretoPendentes, editarCartaoPendentes, editarCaixinhaPendentes,
+    editarLimitePendentes, editarLembretePendentes, transacoesMultiplasPendentes,
+    assessorCompraPendenteMap, recorrenciaDiaPendente, recorrenciaValorPendente,
+    lembretesPendentes, confirmacaoLembrete, pontoZeroEstados,
+    analiseFinanceiraEstados, localizacaoUsuario, removerContatoPendente,
+    onboardingEstados, cadastroPainelEstados,
+  ];
+  for (const m of maps) {
+    for (const [key, val] of m.entries()) {
+      if (val && val.expiraEm && agora > val.expiraEm) {
+        m.delete(key);
+        limpos++;
+      }
+    }
+  }
+  if (limpos > 0) {
+    console.log(`[GC] ${limpos} entrada(s) expirada(s) removida(s) dos Maps de estado.`);
+  }
+}
+
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados };

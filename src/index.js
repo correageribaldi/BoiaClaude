@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const pagamento = require('./pagamento');
@@ -15,6 +15,10 @@ const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
+
+// Controle para evitar listeners duplicados no reconnect
+let _readyExecutado = false;
+let _sweeperInterval = null;
 
 const client = new Client({
   authStrategy: new LocalAuth(),
@@ -192,42 +196,62 @@ client.on('ready', async () => {
   console.log('📊 Cronos Assistente Pessoal está rodando.');
   console.log('   Envie "ajuda" no WhatsApp para ver os comandos.');
 
-  // Iniciar sistema de lembretes financeiros (cron 10h/13h/20h)
-  iniciarLembretes(client);
+  // Prevenir listeners duplicados em reconexões
+  if (!_readyExecutado) {
+    _readyExecutado = true;
 
-  // Iniciar worker BullMQ para lembretes pontuais e recorrentes
-  criarWorkerReminders(client, connection);
+    // Iniciar sistema de lembretes financeiros (cron 10h/13h/20h)
+    iniciarLembretes(client);
 
-  // Re-enfileirar reminders pendentes após restart do processo
-  reEnqueueOnStartup().catch(err =>
-    console.error('[STARTUP] Erro no reEnqueueOnStartup:', err.message)
-  );
+    // Iniciar worker BullMQ para lembretes pontuais e recorrentes
+    criarWorkerReminders(client, connection);
 
-  // Sweeper fallback: roda a cada 60s para cobrir jobs perdidos
-  setInterval(sweeperReminders, 60_000);
-  console.log('🔁 Sweeper de lembretes iniciado (60s).');
+    // Re-enfileirar reminders pendentes após restart do processo
+    reEnqueueOnStartup().catch(err =>
+      console.error('[STARTUP] Erro no reEnqueueOnStartup:', err.message)
+    );
 
-  // Iniciar polling de pagamentos pendentes (fallback do webhook)
-  pagamento.iniciarPollingPagamentos(client);
+    // Sweeper fallback: roda a cada 60s para cobrir jobs perdidos
+    _sweeperInterval = setInterval(sweeperReminders, 60_000);
+    console.log('🔁 Sweeper de lembretes iniciado (60s).');
 
-  // Recuperar mensagens perdidas durante o restart
+    // Iniciar polling de pagamentos pendentes (fallback do webhook)
+    pagamento.iniciarPollingPagamentos(client);
+
+    // GC periódico: limpa Maps de estado expirados a cada 5 min
+    setInterval(limparMapsExpirados, 5 * 60 * 1000);
+    console.log('🧹 GC de Maps iniciado (5min).');
+  } else {
+    console.log('🔄 Reconexão detectada — listeners já registrados, pulando duplicação.');
+  }
+
+  // Recuperar mensagens perdidas durante o restart (sempre executa)
   processarMensagensPerdidas(client).catch(err =>
     console.error('[STARTUP] Erro ao processar mensagens perdidas:', err.message)
   );
-});
-
-client.on('authenticated', () => {
-  console.log('🔐 Autenticação realizada com sucesso.');
 });
 
 client.on('auth_failure', (msg) => {
   console.error('❌ Falha na autenticação:', msg);
 });
 
+let _reconnectAttempts = 0;
 client.on('disconnected', (reason) => {
   console.log('🔌 Desconectado:', reason);
-  console.log('   Reiniciando...');
-  client.initialize();
+  _reconnectAttempts++;
+  const delay = Math.min(5000 * _reconnectAttempts, 60000); // 5s, 10s, 15s... max 60s
+  console.log(`   Reconectando em ${delay / 1000}s (tentativa ${_reconnectAttempts})...`);
+  setTimeout(() => {
+    client.initialize().catch(err => {
+      console.error('❌ Erro ao reinicializar:', err.message);
+    });
+  }, delay);
+});
+
+// Resetar contador de reconexão quando conectar com sucesso
+client.on('authenticated', () => {
+  console.log('🔐 Autenticação realizada com sucesso.');
+  _reconnectAttempts = 0;
 });
 
 async function notificarContatosCompartilhados(usuarioPrincipalId, notificarContatos) {
@@ -559,15 +583,28 @@ async function start() {
 
 start();
 
+// Error handlers globais — evita que promises rejeitadas travem o event loop silenciosamente
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('⚠️  [UNHANDLED REJECTION]', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('💥 [UNCAUGHT EXCEPTION]', err);
+  // Dá tempo pro log ser escrito antes de encerrar
+  setTimeout(() => process.exit(1), 1000);
+});
+
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Encerrando bot...');
+  if (_sweeperInterval) clearInterval(_sweeperInterval);
   client.destroy();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Encerrando bot...');
+  if (_sweeperInterval) clearInterval(_sweeperInterval);
   client.destroy();
   process.exit(0);
 });

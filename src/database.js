@@ -2,6 +2,14 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: 10,                       // máximo de conexões simultâneas
+  idleTimeoutMillis: 30000,      // fecha conexão ociosa após 30s
+  connectionTimeoutMillis: 5000, // timeout para obter conexão do pool
+  statement_timeout: 15000,      // timeout para queries (15s)
+});
+
+pool.on('error', (err) => {
+  console.error('⚠️  [POOL] Erro inesperado no pool PostgreSQL:', err.message);
 });
 
 // Helper: data de hoje em YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
