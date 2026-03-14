@@ -815,18 +815,35 @@ async function handleOnboardingNome(usuarioId, texto) {
   }
 
   await db.atualizarNomeUsuario(usuarioId, nome);
-  setOnboardingState(usuarioId, 'aguardando_inicio');
+  setOnboardingState(usuarioId, 'confirmando_nome');
 
-  return (
-    `A partir de agora eu te chamo de *${nome}* 😊\n\n` +
-    `Agora me diz...\n` +
-    `Como você prefere começar?\n\n` +
-    `🎯 *Organizar tudo agora*\n` +
-    `Eu te faço algumas perguntas rápidas e já deixo teu financeiro completo (saldo, receitas, despesas e contas do mês).\n\n` +
-    `📝 *Ir cadastrando aos poucos*\n` +
-    `Você vai me dizendo o que gastou ou recebeu no dia a dia, e eu organizo automaticamente.\n\n` +
-    `👉 Recomendo organizar tudo agora pra você já ter uma visão clara do teu dinheiro. 💪`
-  );
+  return { msg: `Perfeito, a partir de agora eu vou te chamar de *${nome}*, tudo bem?🙏🏼\n_Se quiser alterar ou corrigir, é só mandar o novo nome ou manda um *ok* que a gente continua!_`, semCitacao: true };
+}
+
+async function handleConfirmacaoNome(usuarioId, texto) {
+  const lower = texto.trim().toLowerCase();
+  const normalizado = normalizarTexto(lower);
+
+  // Confirmação: ok, sim, tudo bem, ta certo, isso, beleza, etc.
+  const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'seguir', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito'];
+  if (CONFIRMA.includes(normalizado)) {
+    const usuario = await db.buscarUsuario(usuarioId);
+    const nome = usuario?.nome || 'amigo(a)';
+    setOnboardingState(usuarioId, 'aguardando_inicio');
+    return { msg: (
+      `Show, *${nome}*! 😊\n\n` +
+      `Agora me diz...\n` +
+      `Como você prefere começar?\n\n` +
+      `🎯 *Organizar tudo agora*\n` +
+      `Eu te faço algumas perguntas rápidas e já deixo teu financeiro completo (saldo, receitas, despesas e contas do mês).\n\n` +
+      `📝 *Ir cadastrando aos poucos*\n` +
+      `Você vai me dizendo o que gastou ou recebeu no dia a dia, e eu organizo automaticamente.\n\n` +
+      `👉 Recomendo organizar tudo agora pra você já ter uma visão clara do teu dinheiro. 💪`
+    ), semCitacao: true };
+  }
+
+  // Caso contrário, é um novo nome — atualizar
+  return await handleOnboardingNome(usuarioId, texto);
 }
 
 async function handleTrocaNome(usuarioId, texto, retornarA = null) {
@@ -1687,6 +1704,9 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const estadoOnboarding = await getOnboardingState(usuarioId);
   if (estadoOnboarding === 'aguardando_nome') {
     return await handleOnboardingNome(usuarioId, msg);
+  }
+  if (estadoOnboarding === 'confirmando_nome') {
+    return await handleConfirmacaoNome(usuarioId, msg);
   }
   if (estadoOnboarding === 'trocando_nome') {
     return await handleTrocaNome(usuarioId, msg);
