@@ -6860,8 +6860,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
       // Sub-estado: confirmando o valor do saldo
       if (estado.confirmandoSaldo) {
         const normalizado = normalizarTexto(lower);
-        const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'continuar', 'seguir', 'seguir em frente', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito', 'prosseguir', 'vai', 'manda'];
-        if (CONFIRMA.includes(normalizado)) {
+        const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'continuar', 'seguir', 'seguir em frente', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito', 'prosseguir', 'vai', 'manda', 'pode seguir', 'vai la', 'vai lá', 'manda ver', 'segue', 'proximo', 'próximo', 'proxima', 'próxima', 'avancar', 'avançar', 'avanca', 'avança', 'ta ok', 'tá ok', 'ta bem', 'tá bem', 'pode continuar', 'pode prosseguir', 'ta otimo', 'tá ótimo', 'otimo', 'ótimo', 'correto', 'exato', 'positivo', 'com certeza', 'claro', 'obvio', 'óbvio', 'sem duvida', 'sem dúvida', 'isso mesmo', 'isso ai', 'isso aí', 'ta certo', 'tá certo', 'certeza', 'ta isso', 'tá isso', 'ta isso mesmo', 'tá isso mesmo', 'bora la', 'bora lá', 'vamo', 'vamo la', 'vamo lá', 'valeu', 'tranquilo', 'de boa', 'suave', 'firmeza', 'fechou', 'combinado', 'pode sim', 'manda bala', 'partiu', 'simbora'];
+        if (CONFIRMA.some(p => normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p))) {
           delete estado.confirmandoSaldo;
           estado.etapa = 'receitas_fixas';
           salvarPontoZero(usuarioId, estado);
@@ -6872,11 +6872,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
         if (novoItem.tipo === 'item' && novoItem.valor) {
           estado.saldoInicial = novoItem.valor;
           salvarPontoZero(usuarioId, estado);
-          return { msg: `Maravilha, registrei *${fmt.formatarMoeda(novoItem.valor)}*, posso seguir ou quer alterar o valor inicial?\n\n> Ajuste o valor ou diga: Ex: ok, continuar, seguir em frente`, semCitacao: true };
+          const usuario = await db.buscarUsuario(usuarioId);
+          const nome = usuario?.nome || 'amigo(a)';
+          return { msg: `Certo *${nome}*, alterei o saldo inicial para *${fmt.formatarMoeda(novoItem.valor)}*, podemos seguir assim ou deseja alterar novamente?`, semCitacao: true };
         }
+        // Não entendeu — mas o valor JÁ está registrado, mostrar para o usuário
         const usuario = await db.buscarUsuario(usuarioId);
         const nome = usuario?.nome || 'amigo(a)';
-        return { msg: `Desculpa *${nome}* mas acho que não entendi o valor!😞\n\n*Diga* Ex: "1250" ou "tenho uns 2 mil"\n\n> Você pode me mandar por áudio, se quiser, também! 🎤`, semCitacao: true };
+        return { msg: `*${nome}*, registrei o valor de *${fmt.formatarMoeda(estado.saldoInicial)}*, você deseja continuar ou alterar o valor?`, semCitacao: true };
       }
 
       if (item.tipo !== 'item' || !item.valor) {
@@ -6887,7 +6890,7 @@ async function handlePontoZero(usuarioId, texto, estado) {
       estado.saldoInicial = item.valor;
       estado.confirmandoSaldo = true;
       salvarPontoZero(usuarioId, estado);
-      return { msg: `Maravilha, registrei *${fmt.formatarMoeda(item.valor)}*, posso seguir ou quer alterar o valor inicial?\n\n> Ajuste o valor ou diga: Ex: ok, continuar, seguir em frente`, semCitacao: true };
+      return { msg: `Maravilha, registrei *${fmt.formatarMoeda(item.valor)}*, posso seguir ou quer alterar o valor inicial?`, semCitacao: true };
     }
 
     case 'receitas_fixas': {
