@@ -6994,9 +6994,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
 
     case 'despesas_fixas': {
       if (item.tipo === 'nao' || (querAvancar && estado.despesasFixas.length > 0)) {
-        estado.etapa = 'investimentos';
+        estado.etapa = 'cartoes';
         salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
+        return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
       }
       const res = coletarItens(item, estado.despesasFixas, estado.etapa);
       if (res.ok) {
@@ -7032,9 +7032,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
           const lista = (estado.investimentos || []).map(i => `  💰 *${i.nome}* — ${fmt.formatarMoeda(i.saldo)}`).join('\n');
           return `✅ ${qtd === 1 ? 'Caixinha cadastrada' : `${qtd} caixinhas cadastradas`} com sucesso!\n\n${lista}\n\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
         }
-        estado.etapa = 'cartoes';
-        salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+        const budget = await gerarOrcamentoProporcional(estado);
+        estado.orcamentos = budget.orcamentos;
+        return await finalizarPontoZero(usuarioId, estado);
       }
       const nomeCaixinha = texto.trim();
       if (!nomeCaixinha || nomeCaixinha.length < 2) {
@@ -7079,9 +7079,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
           const lista = (estado.cartoes || []).map(c => `  💳 *${c.nome}* — vence dia ${c.diaVencimento}${c.valorFatura > 0 ? ` | fatura ${fmt.formatarMoeda(c.valorFatura)}` : ''}`).join('\n');
           return `✅ ${qtd === 1 ? 'Cartão cadastrado' : `${qtd} cartões cadastrados`} com sucesso!\n\n${lista}`;
         }
-        const budget = await gerarOrcamentoProporcional(estado);
-        estado.orcamentos = budget.orcamentos;
-        return await finalizarPontoZero(usuarioId, estado);
+        estado.etapa = 'investimentos';
+        salvarPontoZero(usuarioId, estado);
+        return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
       }
       // Qualquer texto que não seja "não" → nome do cartão
       const nomeCartao = texto.trim();
