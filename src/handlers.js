@@ -6839,8 +6839,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
     return removerItemFluxo(usuarioId, estado, matchRemover[2].trim());
   }
 
-  // Editar/renomear item
-  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)) {
+  // Editar/renomear item (não interceptar durante confirmação de saldo — o case 'saldo' trata isso)
+  if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower) && !(estado.etapa === 'saldo' && estado.confirmandoSaldo)) {
     return await editarItemFluxo(usuarioId, texto, estado);
   }
 
@@ -6870,14 +6870,14 @@ async function handlePontoZero(usuarioId, texto, estado) {
             `> Pode mandar tudo de uma vez e por áudio se quiser!🎤\n` +
             `> _Ex: "Salário dia 5 R$ 3.000 e benefício dia 10 R$ 800"_`, semCitacao: true };
         }
-        // Tentou alterar o valor
-        const novoItem = await interpretarItemFinanceiro(texto, usuarioId);
-        if (novoItem.tipo === 'item' && novoItem.valor) {
-          estado.saldoInicial = novoItem.valor;
+        // Tentou alterar o valor — primeiro tenta extração direta (mais rápido e confiável)
+        const valorDireto = await extrairValorRobusto(texto);
+        if (valorDireto && valorDireto > 0) {
+          estado.saldoInicial = valorDireto;
           salvarPontoZero(usuarioId, estado);
           const usuario = await db.buscarUsuario(usuarioId);
           const nome = usuario?.nome || 'amigo(a)';
-          return { msg: `Certo *${nome}*, alterei o saldo inicial para *${fmt.formatarMoeda(novoItem.valor)}*, podemos seguir assim ou deseja alterar novamente?`, semCitacao: true };
+          return { msg: `Certo *${nome}*, alterei o saldo inicial para *${fmt.formatarMoeda(valorDireto)}*, podemos seguir assim ou deseja alterar novamente?`, semCitacao: true };
         }
         // Não entendeu — mas o valor JÁ está registrado, mostrar para o usuário
         const usuario = await db.buscarUsuario(usuarioId);
@@ -6885,15 +6885,20 @@ async function handlePontoZero(usuarioId, texto, estado) {
         return { msg: `*${nome}*, registrei o valor de *${fmt.formatarMoeda(estado.saldoInicial)}*, você deseja continuar ou alterar o valor?`, semCitacao: true };
       }
 
-      if (item.tipo !== 'item' || !item.valor) {
+      // Tenta pelo interpretador IA, senão fallback para extração direta
+      let valorSaldo = (item.tipo === 'item' && item.valor) ? item.valor : null;
+      if (!valorSaldo) {
+        valorSaldo = await extrairValorRobusto(texto);
+      }
+      if (!valorSaldo || valorSaldo <= 0) {
         const usuario = await db.buscarUsuario(usuarioId);
         const nome = usuario?.nome || 'amigo(a)';
         return { msg: `Desculpa *${nome}* mas acho que não entendi o valor!😞\n\n*Diga* Ex: "1250" ou "tenho uns 2 mil"\n\n> Você pode me mandar por áudio, se quiser, também! 🎤`, semCitacao: true };
       }
-      estado.saldoInicial = item.valor;
+      estado.saldoInicial = valorSaldo;
       estado.confirmandoSaldo = true;
       salvarPontoZero(usuarioId, estado);
-      return { msg: `Maravilha, registrei *${fmt.formatarMoeda(item.valor)}*, posso seguir ou quer alterar o valor inicial?`, semCitacao: true };
+      return { msg: `Maravilha, registrei *${fmt.formatarMoeda(valorSaldo)}*, posso seguir ou quer alterar o valor inicial?`, semCitacao: true };
     }
 
     case 'receitas_fixas': {
