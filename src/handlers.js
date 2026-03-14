@@ -6852,16 +6852,18 @@ async function handlePontoZero(usuarioId, texto, estado) {
   const item = await interpretarItemFinanceiro(texto, usuarioId);
 
   // Detecta qualquer variante de "quero avançar para o próximo passo"
-  const querAvancar = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai)|seguir|continua(r)?|ok|okay|vai l[aá]|vai|bora|vamos|manda|segue|pode sim|pode|sim|beleza|blz|firmeza|fechou|combinado|partiu|simbora|vamo|bora l[aá])\b/.test(lower);
+  // Fast path: regex para palavras comuns (evita chamada IA desnecessária)
+  const querAvancarRegex = /\b(n[aã]o( tem| tenho)?|nenhum[a]?|pra frente|pode passar|pode avan[çc]ar|pode pular|pode ir|pode continuar|pr[oó]xim[oa]|avan[çc]a(r)?|avan[çc]ar pra|pronto( isso)?|feito|mais nada|nada mais|s[oó] isso|s[oó] essa|pul[ao](r)?|skip|suficiente|chega( por)? (aí|ai)|seguir|continua(r)?|ok|okay|vai l[aá]|vai|bora|vamos|manda|segue|pode sim|pode|sim|beleza|blz|firmeza|fechou|combinado|partiu|simbora|vamo|bora l[aá])\b/.test(lower);
+  // Combina regex + interpretação IA (tipo "sim" = confirmação positiva, tipo "nao" = encerramento)
+  const querAvancar = querAvancarRegex || item.tipo === 'sim' || item.tipo === 'nao';
 
   switch (estado.etapa) {
 
     case 'saldo': {
       // Sub-estado: confirmando o valor do saldo
       if (estado.confirmandoSaldo) {
-        const normalizado = normalizarTexto(lower);
-        const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'continuar', 'seguir', 'seguir em frente', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito', 'prosseguir', 'vai', 'manda', 'pode seguir', 'vai la', 'vai lá', 'manda ver', 'segue', 'proximo', 'próximo', 'proxima', 'próxima', 'avancar', 'avançar', 'avanca', 'avança', 'ta ok', 'tá ok', 'ta bem', 'tá bem', 'pode continuar', 'pode prosseguir', 'ta otimo', 'tá ótimo', 'otimo', 'ótimo', 'correto', 'exato', 'positivo', 'com certeza', 'claro', 'obvio', 'óbvio', 'sem duvida', 'sem dúvida', 'isso mesmo', 'isso ai', 'isso aí', 'ta certo', 'tá certo', 'certeza', 'ta isso', 'tá isso', 'ta isso mesmo', 'tá isso mesmo', 'bora la', 'bora lá', 'vamo', 'vamo la', 'vamo lá', 'valeu', 'tranquilo', 'de boa', 'suave', 'firmeza', 'fechou', 'combinado', 'pode sim', 'manda bala', 'partiu', 'simbora'];
-        if (CONFIRMA.some(p => normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p))) {
+        // Confirma via regex (fast path) OU via IA (item.tipo === 'sim')
+        if (querAvancar) {
           delete estado.confirmandoSaldo;
           estado.etapa = 'receitas_fixas';
           salvarPontoZero(usuarioId, estado);
@@ -6904,9 +6906,8 @@ async function handlePontoZero(usuarioId, texto, estado) {
     case 'receitas_fixas': {
       // Sub-estado: confirmando as receitas listadas
       if (estado.confirmandoReceitas) {
-        const normalizado = normalizarTexto(lower);
-        const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'continuar', 'seguir', 'seguir em frente', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito', 'prosseguir', 'vai', 'manda', 'pode seguir', 'vai la', 'vai lá', 'manda ver', 'segue', 'proximo', 'próximo', 'proxima', 'próxima', 'avancar', 'avançar', 'ta ok', 'tá ok', 'pode continuar', 'pode prosseguir', 'otimo', 'ótimo', 'correto', 'exato', 'com certeza', 'claro', 'isso mesmo', 'isso ai', 'isso aí', 'certeza', 'bora la', 'bora lá', 'vamo', 'valeu', 'tranquilo', 'de boa', 'suave', 'firmeza', 'fechou', 'combinado', 'pode sim', 'manda bala', 'partiu', 'simbora', 'ta certo', 'tá certo'];
-        if (CONFIRMA.some(p => normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p))) {
+        // Confirma via regex (fast path) OU via IA (item.tipo === 'sim' ou 'nao')
+        if (querAvancar) {
           delete estado.confirmandoReceitas;
           estado.etapa = 'despesas_fixas';
           salvarPontoZero(usuarioId, estado);
