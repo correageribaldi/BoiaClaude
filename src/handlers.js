@@ -6568,24 +6568,32 @@ function buscarItensPorNome(estado, queryNome) {
   if (!palavrasQuery.length) return [];
 
   const resultados = [];
-  const testar = (nome) => {
+  const pontuar = (nome) => {
     const n = normalizarTextoBusca(nome);
-    return palavrasQuery.some(p => n.includes(p));
+    // Conta quantas palavras da query estão no nome
+    const matches = palavrasQuery.filter(p => n.includes(p)).length;
+    return matches;
   };
 
-  for (const item of estado.receitasFixas || []) {
-    if (testar(item.descricao)) resultados.push({ item, tipo: 'receita' });
+  const todos = [
+    ...(estado.receitasFixas || []).map(i => ({ item: i, tipo: 'receita', nome: i.descricao })),
+    ...(estado.despesasFixas || []).map(i => ({ item: i, tipo: 'despesa', nome: i.descricao })),
+    ...(estado.investimentos || []).map(i => ({ item: i, tipo: 'investimento', nome: i.nome })),
+    ...(estado.cartoes || []).map(i => ({ item: i, tipo: 'cartão', nome: i.nome })),
+  ];
+
+  for (const candidato of todos) {
+    const score = pontuar(candidato.nome);
+    if (score > 0) resultados.push({ ...candidato, score });
   }
-  for (const item of estado.despesasFixas || []) {
-    if (testar(item.descricao)) resultados.push({ item, tipo: 'despesa' });
-  }
-  for (const item of estado.investimentos || []) {
-    if (testar(item.nome)) resultados.push({ item, tipo: 'investimento' });
-  }
-  for (const item of estado.cartoes || []) {
-    if (testar(item.nome)) resultados.push({ item, tipo: 'cartão' });
-  }
-  return resultados;
+
+  if (resultados.length === 0) return [];
+
+  // Priorizar match mais completo (mais palavras coincidindo)
+  const maxScore = Math.max(...resultados.map(r => r.score));
+  // Se algum item tem score maior, retorna apenas os melhores
+  const melhores = resultados.filter(r => r.score === maxScore);
+  return melhores.map(({ item, tipo }) => ({ item, tipo }));
 }
 
 async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, textoOriginal) {
