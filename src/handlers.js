@@ -7429,24 +7429,29 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     await db.adicionarTransacao(usuarioId, 'receita', estado.saldoInicial, 'Saldo inicial', 'Outros', hojeISO, 'pago');
   }
 
-  // Receitas fixas → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
+  // Receitas fixas → regra de recorrência + transação no mês atual
+  // Dia já passou → 'pago' (já refletido no saldo informado); dia futuro → 'pendente'
+  const diaHoje = new Date().getDate();
   for (const r of estado.receitasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros',
       'mensal', r.dia || 1, null, null, null
     );
     const dataStr = calcularDataPendenteMesAtual(r.dia);
-    await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
+    const status = (r.dia && r.dia < diaHoje) ? 'pago' : 'pendente';
+    await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, status, recorrenciaId);
   }
 
-  // Despesas fixas → regra de recorrência + transação pendente no mês atual (sempre neste mês no setup inicial)
+  // Despesas fixas → regra de recorrência + transação no mês atual
+  // Dia já passou → 'pago' (já refletido no saldo informado); dia futuro → 'pendente'
   for (const d of estado.despesasFixas || []) {
     const recorrenciaId = await db.criarRecorrencia(
       usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros',
       'mensal', d.dia || 1, null, null, null
     );
     const dataStr = calcularDataPendenteMesAtual(d.dia);
-    await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, 'pendente', recorrenciaId);
+    const status = (d.dia && d.dia < diaHoje) ? 'pago' : 'pendente';
+    await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, status, recorrenciaId);
   }
 
   // Cartões → criar cartão + gastos detalhados ou fatura simples
