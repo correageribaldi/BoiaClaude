@@ -6862,9 +6862,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
           estado.etapa = 'cartoes';
           salvarPontoZero(usuarioId, estado);
           return { msg: `Perfeito, seu saldo inicial é de *${fmt.formatarMoeda(estado.saldoInicial)}*\n\n` +
-            `💳 Agora me diz se você tem *cartão de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\n` +
+            `💳 Agora me diz se você tem *cartão de crédito* assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\n` +
             `Me diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n` +
-            `_Se não tem cartão, manda "não"._`, semCitacao: true };
+            `_Se não tem cartão, manda "não" para seguir_`, semCitacao: true };
         }
         // Tentou alterar o valor — primeiro tenta extração direta (mais rápido e confiável)
         const valorDireto = await extrairValorRobusto(texto);
