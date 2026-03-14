@@ -6865,7 +6865,11 @@ async function handlePontoZero(usuarioId, texto, estado) {
           delete estado.confirmandoSaldo;
           estado.etapa = 'receitas_fixas';
           salvarPontoZero(usuarioId, estado);
-          return `Perfeito ✅\n\n📈 Agora me diz suas *receitas fixas* do mês — aquilo que entra todo mês no mesmo dia (salário, benefício, aluguel recebido...).\n\nPode mandar tudo de uma vez!\n_Ex: "Salário dia 5 R$ 3.000 e aluguel dia 10 R$ 800"_\n\n_Se não tem, manda "não"._`;
+          return { msg: `Perfeito, seu saldo inicial é de *${fmt.formatarMoeda(estado.saldoInicial)}*\n\n` +
+            `📈 Agora me diz suas *receitas fixas* aquelas que você recebe todo mês no mesmo dia (salário, benefício, pensão, mesada...).\n\n` +
+            `Pode mandar tudo de uma vez e por áudio se quiser!🎤\n` +
+            `_Ex: "Salário dia 5 R$ 3.000 e benefício dia 10 R$ 800"_\n\n` +
+            `_Se não tem nenhuma receita fixa, manda "não"._`, semCitacao: true };
         }
         // Tentou alterar o valor
         const novoItem = await interpretarItemFinanceiro(texto, usuarioId);
@@ -6894,10 +6898,61 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'receitas_fixas': {
-      if (item.tipo === 'nao' || (querAvancar && estado.receitasFixas.length > 0)) {
+      // Sub-estado: confirmando as receitas listadas
+      if (estado.confirmandoReceitas) {
+        const normalizado = normalizarTexto(lower);
+        const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'continuar', 'seguir', 'seguir em frente', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito', 'prosseguir', 'vai', 'manda', 'pode seguir', 'vai la', 'vai lá', 'manda ver', 'segue', 'proximo', 'próximo', 'proxima', 'próxima', 'avancar', 'avançar', 'ta ok', 'tá ok', 'pode continuar', 'pode prosseguir', 'otimo', 'ótimo', 'correto', 'exato', 'com certeza', 'claro', 'isso mesmo', 'isso ai', 'isso aí', 'certeza', 'bora la', 'bora lá', 'vamo', 'valeu', 'tranquilo', 'de boa', 'suave', 'firmeza', 'fechou', 'combinado', 'pode sim', 'manda bala', 'partiu', 'simbora', 'ta certo', 'tá certo'];
+        if (CONFIRMA.some(p => normalizado === p || normalizado.startsWith(p + ' ') || normalizado.endsWith(' ' + p))) {
+          delete estado.confirmandoReceitas;
+          estado.etapa = 'despesas_fixas';
+          salvarPontoZero(usuarioId, estado);
+          return `Beleza! Agora as *despesas fixas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
+        }
+        // Detectar edição: "alterar salário para 2000", "alterar dia do salário para 10"
+        if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
+          const resp = await editarItemFluxo(usuarioId, texto, estado);
+          if (!resp.includes('Não encontrei')) {
+            // Após edição, listar novamente e pedir confirmação
+            const listaAtualizada = estado.receitasFixas.map((r, i) =>
+              `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
+            ).join('\n');
+            return { msg: `${resp}\n\n📋 Suas receitas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+          }
+        }
+        // Detectar remoção
+        const matchRemover = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+        if (matchRemover) {
+          const respRemover = removerItemFluxo(usuarioId, estado, matchRemover[2].trim());
+          if (estado.receitasFixas.length === 0) {
+            delete estado.confirmandoReceitas;
+            salvarPontoZero(usuarioId, estado);
+            return `${respRemover}\n\nNenhuma receita fixa restante. Tem alguma receita fixa pra adicionar ou quer seguir em frente?`;
+          }
+          const listaAtualizada = estado.receitasFixas.map((r, i) =>
+            `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
+          ).join('\n');
+          return { msg: `${respRemover}\n\n📋 Suas receitas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+        }
+        // Não entendeu — repetir a lista
+        const listaRepetida = estado.receitasFixas.map((r, i) =>
+          `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
+        ).join('\n');
+        return { msg: `📋 Suas receitas fixas:\n${listaRepetida}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar salário para 2000"_ ou _"alterar dia do salário para 10"_`, semCitacao: true };
+      }
+
+      if (item.tipo === 'nao' && estado.receitasFixas.length === 0) {
         estado.etapa = 'despesas_fixas';
         salvarPontoZero(usuarioId, estado);
         return `Beleza! Agora as *despesas fixas* — tudo que sai todo mês: aluguel, internet, luz, água, escola, streaming...\n\nPode mandar várias de uma vez! Use o valor médio quando o valor varia — você poderá ajustar quando a conta chegar.\n_Ex: "Aluguel dia 5 R$ 1.500, luz dia 10 R$ 150, internet dia 15 R$ 120"_\n\n_Se não tem, manda "não"._`;
+      }
+      if ((item.tipo === 'nao' || querAvancar) && estado.receitasFixas.length > 0 && !estado.confirmandoReceitas) {
+        // Antes de avançar, listar e pedir confirmação
+        const listaConfirma = estado.receitasFixas.map((r, i) =>
+          `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
+        ).join('\n');
+        estado.confirmandoReceitas = true;
+        salvarPontoZero(usuarioId, estado);
+        return { msg: `📋 Suas receitas fixas:\n${listaConfirma}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar salário para 2000"_ ou _"alterar dia do salário para 10"_`, semCitacao: true };
       }
       const res = coletarItens(item, estado.receitasFixas, estado.etapa);
       if (res.ok) {
@@ -6913,8 +6968,13 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
         }
         salvarPontoZero(usuarioId, estado);
-        const mais = res.quantidade > 1 ? `${res.quantidade} receitas fixas anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\nTem mais alguma receita fixa ou pode passar pra frente?`;
+        // Listar todas as receitas e pedir confirmação
+        const listaCompleta = estado.receitasFixas.map((r, i) =>
+          `  ${i + 1}. *${r.descricao}* — ${fmt.formatarMoeda(r.valor)} (dia ${r.dia})`
+        ).join('\n');
+        estado.confirmandoReceitas = true;
+        salvarPontoZero(usuarioId, estado);
+        return { msg: `📋 Suas receitas fixas:\n${listaCompleta}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar salário para 2000"_ ou _"alterar dia do salário para 10"_`, semCitacao: true };
       }
       return await redireccionarPontoZero(usuarioId, texto, 'receitas_fixas');
     }
