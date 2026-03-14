@@ -792,28 +792,16 @@ async function getOnboardingState(usuarioId) {
 
 function mensagemApresentacao() {
   return (
-    `Fala! 👋 Eu sou o *Cronos*.\n` +
-    `Teu assistente pessoal no WhatsApp, começo organizando tuas finanças, mas vou bem além disso.\n\n` +
-    `💰 *Finanças sem complicação*\n` +
-    `Receitas, despesas, saldo, contas do mês e gastos recorrentes, limites por categoria, tudo direto na conversa.\n` +
-    `Sem app, sem planilha, sem bagunça.\n\n` +
-    `🧠 *Assistente pra tudo*\n` +
-    `• Lembretes e compromissos (inclusive recorrentes)\n` +
-    `• Respostas pra qualquer pergunta _(tipo: "me dá uma receita de bolo")_\n` +
-    `• Ajuda no dia a dia: organização, decisões e tarefas\n\n` +
-    `📍 *Pesquiso lugares perto de você*\n` +
-    `Quer encontrar mercado, restaurante, farmácia ou algum serviço?\n` +
-    `Você me manda sua localização por aqui e eu te mostro os melhores lugares próximos de você (pelas avaliações do Google) e mando o link pra abrir no Maps.\n\n` +
-    `_E isso é só o começo… ao longo do tempo vou aprendendo e te ajudando no seu dia a dia 😉_`
+    `Olá, que bom que você está aqui! 👋\n\n` +
+    `> Eu sou o *Cronos!*\n\n` +
+    `A partir de agora eu vou te ajudar a ter o *controle de verdade* das suas finanças e muito mais!\n\n` +
+    `Agora me diz uma coisa…\n\n` +
+    `_Como você prefere que eu te chame?_`
   );
 }
 
 function mensagemPerguntaNome() {
-  return (
-    `Agora me diz uma coisa…\n` +
-    `Como você prefere que eu te chame?\n\n` +
-    `Seu nome, apelido ou algo estilo _"meu rei"_, _"minha rainha"_, _"chefe supremo"_? 😅`
-  );
+  return mensagemApresentacao();
 }
 
 async function handleOnboardingNome(usuarioId, texto) {
@@ -4013,9 +4001,7 @@ async function handleMensagemIA(usuarioId, texto, enviarAck) {
     await db.limparDadosUsuario(usuarioId);
     limparPontoZero(usuarioId);
     setOnboardingState(usuarioId, 'aguardando_nome');
-    if (enviarAck) await enviarAck(mensagemApresentacao()).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
-    return mensagemPerguntaNome();
+    return mensagemApresentacao();
   }
 
   const resultado = await interpretarMensagem(texto, usuarioId);
