@@ -5803,12 +5803,15 @@ function proximoCampoFaltante(itemParcial, etapa) {
 }
 
 // Gera a pergunta para o campo faltante
-function perguntarCampoFaltante(campo, descricao) {
+function perguntarCampoFaltante(campo, descricao, etapa) {
   const nome = descricao ? `*${descricao}*` : 'esse item';
   switch (campo) {
     case 'descricao': return `Qual o nome desse item? Me diz como quer chamar.\n_Ex: "Aluguel", "Salário", "Internet"_`;
     case 'valor':     return `Qual o valor de ${nome}? 💰\n_Ex: "R$ 1.500" ou só "1500"_`;
-    case 'dia':       return `Em que dia do mês entra o ${nome}? 📅\n> Ex: "dia 5" ou só "5"`;
+    case 'dia': {
+      const verbo = etapa === 'despesas_fixas' ? 'você paga' : 'entra o';
+      return `Em que dia do mês ${verbo} ${nome}? 📅\n> Ex: "dia 5" ou só "5"`;
+    }
     default:          return null;
   }
 }
@@ -5845,7 +5848,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
         if (proximoCampo) {
           ip.esperandoCampo = proximoCampo;
           salvarPontoZero(usuarioId, estado);
-          return `✅ Valor de *${ip.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntarCampoFaltante(proximoCampo, ip.descricao)}`;
+          return `✅ Valor de *${ip.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntarCampoFaltante(proximoCampo, ip.descricao, estado.etapa)}`;
         }
         // Item completo — não deveria acontecer aqui, mas por segurança
         return `✅ Valor de *${ip.descricao}* atualizado para *${fmt.formatarMoeda(valor)}*!`;
@@ -5860,7 +5863,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
         if (novoNome.length >= 2) {
           ip.descricao = novoNome;
           salvarPontoZero(usuarioId, estado);
-          return `✅ Renomeado para *${novoNome}*!\n\n${perguntarCampoFaltante(campo, ip.descricao)}`;
+          return `✅ Renomeado para *${novoNome}*!\n\n${perguntarCampoFaltante(campo, ip.descricao, estado.etapa)}`;
         }
       }
       return `Qual o novo nome?\n_Ex: "alterar nome para Financiamento"_`;
@@ -5875,9 +5878,9 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
         if (proximoCampo && proximoCampo !== campo) {
           ip.esperandoCampo = proximoCampo;
           salvarPontoZero(usuarioId, estado);
-          return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(proximoCampo, ip.descricao)}`;
+          return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(proximoCampo, ip.descricao, estado.etapa)}`;
         }
-        return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(campo, ip.descricao)}`;
+        return `✅ Dia de *${ip.descricao}* atualizado para dia *${dia}*!\n\n${perguntarCampoFaltante(campo, ip.descricao, estado.etapa)}`;
       }
       return `Qual o novo dia?\n_Ex: "dia 10" ou "10"_`;
     }
@@ -5885,7 +5888,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
     // Se não é edição do item atual, tenta editar itens já adicionados
     const resp = await editarItemFluxo(usuarioId, texto, estado);
     if (!resp.includes('Não encontrei')) {
-      return resp + `\n\n_Continuando..._\n${perguntarCampoFaltante(campo, ip.descricao)}`;
+      return resp + `\n\n_Continuando..._\n${perguntarCampoFaltante(campo, ip.descricao, estado.etapa)}`;
     }
     // Fallback: não encontrou nada, tratar como resposta normal
   }
@@ -5893,7 +5896,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   // Detectar intenção de remover itens já adicionados
   const matchRemoverSub = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
   if (matchRemoverSub) {
-    const campoFaltante = perguntarCampoFaltante(campo, ip.descricao);
+    const campoFaltante = perguntarCampoFaltante(campo, ip.descricao, estado.etapa);
     return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando..._\n${campoFaltante}`;
   }
 
@@ -5922,7 +5925,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   if (proximo) {
     ip.esperandoCampo = proximo;
     salvarPontoZero(usuarioId, estado);
-    return perguntarCampoFaltante(proximo, ip.descricao);
+    return perguntarCampoFaltante(proximo, ip.descricao, estado.etapa);
   }
 
   // Item completo — adiciona à lista correta
@@ -5939,7 +5942,7 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
     if (resto.length > 0) estado.itensPendentes = resto;
     else delete estado.itensPendentes;
     salvarPontoZero(usuarioId, estado);
-    return `${confirmacao}\n\nAinda faltou uma info em *${proximo.descricao}* 👇\n\n${perguntarCampoFaltante(proximo.esperandoCampo, proximo.descricao)}`;
+    return `${confirmacao}\n\nAinda faltou uma info em *${proximo.descricao}* 👇\n\n${perguntarCampoFaltante(proximo.esperandoCampo, proximo.descricao, estado.etapa)}`;
   }
 
   delete estado.itensPendentes;
@@ -6976,9 +6979,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
           else delete estado.itensPendentes;
           salvarPontoZero(usuarioId, estado);
           if (res.msg) {
-            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa)}`;
           }
-          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
+          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
         }
         salvarPontoZero(usuarioId, estado);
         // Listar todas as receitas e pedir confirmação
@@ -7007,9 +7010,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
           else delete estado.itensPendentes;
           salvarPontoZero(usuarioId, estado);
           if (res.msg) {
-            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao)}`;
+            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa)}`;
           }
-          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao);
+          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
         }
         salvarPontoZero(usuarioId, estado);
         const mais = res.quantidade > 1 ? `${res.quantidade} despesas anotadas` : `Anotado`;
