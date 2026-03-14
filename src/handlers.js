@@ -2261,7 +2261,9 @@ async function handleResumo(usuarioId, msg) {
 
   const totalReceitas = totaisReceita.total || 0;
   const totalDespesas = totaisDespesa.total || 0;
-  const saldo = totalReceitas - totalDespesas;
+  // Usar calcularSaldos para saldo real (exclui gastos de cartão da conta corrente)
+  const saldos = await db.calcularSaldos(usuarioId);
+  const saldo = saldos.saldoAtual;
 
   if (totaisReceita.quantidade === 0 && totaisDespesa.quantidade === 0) {
     return `📊 *Resumo — ${periodo.rotulo}*\n\nNenhum lançamento encontrado neste período.`;
