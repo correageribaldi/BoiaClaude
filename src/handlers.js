@@ -6996,10 +6996,57 @@ async function handlePontoZero(usuarioId, texto, estado) {
     }
 
     case 'despesas_fixas': {
-      if (item.tipo === 'nao' || (querAvancar && estado.despesasFixas.length > 0)) {
+      // Sub-estado: confirmando as despesas listadas
+      if (estado.confirmandoDespesas) {
+        if (querAvancar) {
+          delete estado.confirmandoDespesas;
+          estado.etapa = 'cartoes';
+          salvarPontoZero(usuarioId, estado);
+          return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+        }
+        // Detectar edição
+        if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
+          const resp = await editarItemFluxo(usuarioId, texto, estado);
+          if (!resp.includes('Não encontrei')) {
+            const listaAtualizada = estado.despesasFixas.map((d, i) =>
+              `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
+            ).join('\n');
+            return { msg: `${resp}\n\n📋 Suas despesas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+          }
+        }
+        // Detectar remoção
+        const matchRemover = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+        if (matchRemover) {
+          const respRemover = removerItemFluxo(usuarioId, estado, matchRemover[2].trim());
+          if (estado.despesasFixas.length === 0) {
+            delete estado.confirmandoDespesas;
+            salvarPontoZero(usuarioId, estado);
+            return `${respRemover}\n\nNenhuma despesa fixa restante. Tem alguma despesa fixa pra adicionar ou quer seguir em frente?`;
+          }
+          const listaAtualizada = estado.despesasFixas.map((d, i) =>
+            `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
+          ).join('\n');
+          return { msg: `${respRemover}\n\n📋 Suas despesas fixas:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+        }
+        // Não entendeu — repetir a lista
+        const listaRepetida = estado.despesasFixas.map((d, i) =>
+          `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
+        ).join('\n');
+        return { msg: `📋 Suas despesas fixas:\n${listaRepetida}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar aluguel para 3000"_ ou _"alterar dia da luz para 15"_`, semCitacao: true };
+      }
+
+      if (item.tipo === 'nao' && estado.despesasFixas.length === 0) {
         estado.etapa = 'cartoes';
         salvarPontoZero(usuarioId, estado);
         return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+      }
+      if ((item.tipo === 'nao' || querAvancar) && estado.despesasFixas.length > 0 && !estado.confirmandoDespesas) {
+        const listaConfirma = estado.despesasFixas.map((d, i) =>
+          `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
+        ).join('\n');
+        estado.confirmandoDespesas = true;
+        salvarPontoZero(usuarioId, estado);
+        return { msg: `📋 Suas despesas fixas:\n${listaConfirma}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar aluguel para 3000"_ ou _"alterar dia da luz para 15"_`, semCitacao: true };
       }
       const res = coletarItens(item, estado.despesasFixas, estado.etapa);
       if (res.ok) {
@@ -7015,8 +7062,13 @@ async function handlePontoZero(usuarioId, texto, estado) {
           return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
         }
         salvarPontoZero(usuarioId, estado);
-        const mais = res.quantidade > 1 ? `${res.quantidade} despesas anotadas` : `Anotado`;
-        return `${mais}:\n\n${res.msg}\nTem mais alguma despesa ou pode passar pra frente?`;
+        // Listar todas as despesas e pedir confirmação
+        const listaCompleta = estado.despesasFixas.map((d, i) =>
+          `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)} (dia ${d.dia})`
+        ).join('\n');
+        estado.confirmandoDespesas = true;
+        salvarPontoZero(usuarioId, estado);
+        return { msg: `📋 Suas despesas fixas:\n${listaCompleta}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar aluguel para 3000"_ ou _"alterar dia da luz para 15"_`, semCitacao: true };
       }
       return await redireccionarPontoZero(usuarioId, texto, 'despesas_fixas');
     }
