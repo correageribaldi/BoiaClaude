@@ -1885,7 +1885,7 @@ async function handleMessage(usuarioId, texto, enviarAck) {
 
   // Comando: ajuda / menu / help
   if (['ajuda', 'menu', 'help', '/start'].includes(lower)) {
-    return ajudaMsg();
+    return { msg: ajudaMsg(), semCitacao: true };
   }
 
   // Comando: categorias
@@ -3303,14 +3303,14 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     const transacoes = await db.listarTransacoes(usuarioId, null, 1);
     const jaUsaBot = transacoes && transacoes.length > 0;
 
+    let texto;
     if (jaUsaBot) {
-      // Usuário existente - saudação curta e amigável
       const nomeExibir = nome || 'amigo(a)';
-      return resultado.resposta.replace(/{{NOME}}/g, nomeExibir);
+      texto = resultado.resposta.replace(/{{NOME}}/g, nomeExibir);
     } else {
-      // Usuário novo - mensagem de boas-vindas completa
-      return mensagemBoasVindas(nome);
+      texto = mensagemBoasVindas(nome);
     }
+    return { msg: texto, semCitacao: true };
   }
 
   // Lembrete único
@@ -3386,7 +3386,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   // Conversa casual - resposta humana e natural
   if (resultado.acao === 'conversa') {
-    return resultado.resposta;
+    return { msg: resultado.resposta, semCitacao: true };
   }
 
   // Assistente do dia a dia - respostas rápidas e práticas

@@ -260,6 +260,15 @@ async function notificarContatosCompartilhados(usuarioPrincipalId, notificarCont
 }
 
 async function responderMensagem(msg, usuarioId, resposta) {
+  // Helper: envia sem citação (sendMessage) ou com citação (reply)
+  const enviar = async (conteudo, semCitacao) => {
+    if (semCitacao) {
+      await client.sendMessage(usuarioId, conteudo);
+    } else {
+      await msg.reply(conteudo);
+    }
+  };
+
   if (Array.isArray(resposta)) {
     for (const parte of resposta) {
       await msg.reply(parte);
@@ -268,16 +277,21 @@ async function responderMensagem(msg, usuarioId, resposta) {
   }
 
   if (typeof resposta === 'object' && resposta?.texto && resposta?.grafico) {
-    await msg.reply(resposta.texto);
+    await enviar(resposta.texto, resposta.semCitacao);
     const media = new MessageMedia('image/png', resposta.grafico.toString('base64'), 'grafico.png');
-    await msg.reply(media);
+    await enviar(media, resposta.semCitacao);
     console.log(`[GRAFICO] Gráfico enviado para ${usuarioId}`);
     return;
   }
 
   if (typeof resposta === 'object' && resposta?.texto) {
-    await msg.reply(resposta.texto);
+    await enviar(resposta.texto, resposta.semCitacao);
     await notificarContatosCompartilhados(usuarioId, resposta.notificarContatos);
+    return;
+  }
+
+  if (typeof resposta === 'object' && resposta?.semCitacao) {
+    await client.sendMessage(usuarioId, resposta.msg);
     return;
   }
 
