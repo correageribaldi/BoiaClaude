@@ -271,7 +271,11 @@ async function responderMensagem(msg, usuarioId, resposta) {
 
   if (Array.isArray(resposta)) {
     for (const parte of resposta) {
-      await msg.reply(parte);
+      if (typeof parte === 'object' && parte?.msg) {
+        await enviar(parte.msg, parte.semCitacao);
+      } else {
+        await msg.reply(parte);
+      }
     }
     return;
   }

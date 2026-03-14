@@ -830,20 +830,27 @@ async function handleConfirmacaoNome(usuarioId, texto) {
     const usuario = await db.buscarUsuario(usuarioId);
     const nome = usuario?.nome || 'amigo(a)';
     setOnboardingState(usuarioId, 'aguardando_inicio');
-    return { msg: (
-      `Show, *${nome}*! 😊\n\n` +
-      `Agora me diz...\n` +
-      `Como você prefere começar?\n\n` +
-      `🎯 *Organizar tudo agora*\n` +
-      `Eu te faço algumas perguntas rápidas e já deixo teu financeiro completo (saldo, receitas, despesas e contas do mês).\n\n` +
-      `📝 *Ir cadastrando aos poucos*\n` +
-      `Você vai me dizendo o que gastou ou recebeu no dia a dia, e eu organizo automaticamente.\n\n` +
-      `👉 Recomendo organizar tudo agora pra você já ter uma visão clara do teu dinheiro. 💪`
-    ), semCitacao: true };
+    return mensagensEscolhaInicio(nome);
   }
 
   // Caso contrário, é um novo nome — atualizar
   return await handleOnboardingNome(usuarioId, texto);
+}
+
+function mensagensEscolhaInicio(nome) {
+  return [
+    { msg: `Certo, *${nome}!* 😊\n\n` +
+      `Agora me diz...\n` +
+      `Como você prefere começar?\n\n` +
+      `🎯 *Organizar agora!*\n\n` +
+      `Eu faço algumas perguntas rápidas e você ja consegue ter uma visão clara das suas finanças\n\n` +
+      `> Vou perguntar seu saldo atual, suas receitas mensais, suas despesas fixas e cadastrar seus cartões de crédito se tiver\n\n` +
+      `> 🧮 Depois te entrego um panorama geral deste mês e você pode ir registrando tudo no dia a dia\n\n` +
+      `Ou...`, semCitacao: true },
+    { msg: `📝 *Dia a dia*\n\n` +
+      `Você vai me dizendo o que recebeu e gastou durante o dia e no decorrer do mês registramos suas receitas e despesas fixas pra ter uma visão das suas finanças\n\n` +
+      `> 👉 Recomendo organizar tudo agora pra você já ter uma visão clara ainda esse mês. 💪`, semCitacao: true }
+  ];
 }
 
 async function handleTrocaNome(usuarioId, texto, retornarA = null) {
@@ -855,15 +862,7 @@ async function handleTrocaNome(usuarioId, texto, retornarA = null) {
 
   if (retornarA === 'aguardando_inicio') {
     setOnboardingState(usuarioId, 'aguardando_inicio');
-    return (
-      `Feito! A partir de agora te chamo de *${nome}* 😊\n\n` +
-      `Como você prefere começar?\n\n` +
-      `🎯 *Organizar tudo agora*\n` +
-      `Eu te faço algumas perguntas rápidas e já deixo teu financeiro completo (saldo, receitas, despesas e contas do mês).\n\n` +
-      `📝 *Ir cadastrando aos poucos*\n` +
-      `Você vai me dizendo o que gastou ou recebeu no dia a dia, e eu organizo automaticamente.\n\n` +
-      `👉 Recomendo organizar tudo agora pra você já ter uma visão clara do teu dinheiro. 💪`
-    );
+    return mensagensEscolhaInicio(nome);
   }
 
   setOnboardingState(usuarioId, null);
@@ -874,7 +873,7 @@ async function handleOnboardingInicio(usuarioId, texto) {
   const lower = texto.toLowerCase().trim();
 
   const querOrganizar = /organizar|agora|tudo|^1$|🎯/.test(lower);
-  const querPoucos   = /poucos|gradual|^2$|📝|cadastrando/.test(lower);
+  const querPoucos   = /dia a dia|dia dia|dia|poucos|gradual|^2$|📝|cadastrando/.test(lower);
 
   if (querOrganizar && !querPoucos) {
     setOnboardingState(usuarioId, null);
@@ -883,7 +882,7 @@ async function handleOnboardingInicio(usuarioId, texto) {
 
   if (querPoucos && !querOrganizar) {
     setOnboardingState(usuarioId, null);
-    return (
+    return { msg: (
       `Ótimo! É bem simples. 😊\n\n` +
       `É só me contar o que você gastou ou recebeu, assim:\n\n` +
       `_"gastei 50 de gasolina"_\n` +
@@ -891,26 +890,20 @@ async function handleOnboardingInicio(usuarioId, texto) {
       `_"recebi 2000 de salário"_\n` +
       `_"comprei R$ 80 no mercado"_\n\n` +
       `Pode mandar por texto, áudio ou foto de nota/boleto — eu registro e organizo tudo pra você!`
-    );
+    ), semCitacao: true };
   }
 
-  // Fora de contexto: piada com o que disse + volta à pergunta
+  // Não entendeu — perguntar de forma reduzida
+  const usuario = await db.buscarUsuario(usuarioId);
+  const nome = usuario?.nome || 'amigo(a)';
   setOnboardingState(usuarioId, 'aguardando_inicio');
-  const promptPiada = (
-    `O usuário está no onboarding de um app financeiro chamado Cronos. ` +
-    `Ele acabou de ser perguntado se prefere "Organizar tudo agora" (opção 1) ou "Ir cadastrando aos poucos" (opção 2). ` +
-    `Em vez de responder, ele mandou: "${texto}". ` +
-    `Faça uma piada curta e espirituosa (máx 2 frases) sobre o que ele disse, com um toque financeiro se possível. ` +
-    `Depois devolva com leveza à pergunta original, pedindo para escolher entre as duas opções. ` +
-    `Não use emojis em excesso. Responda em português brasileiro.`
-  );
-  const piada = await responderAssistente(promptPiada);
-  return (
-    `${piada}\n\n` +
-    `Mas voltando... 😄\n` +
-    `🎯 *Organizar tudo agora* — te faço algumas perguntas rápidas\n` +
-    `📝 *Ir cadastrando aos poucos* — você vai mandando conforme acontecer`
-  );
+  return { msg: (
+    `Desculpa *${nome}* mas acho que não entendi o que escolheu!😞\n\n` +
+    `Diga:\n` +
+    `1. *Organizar agora*\n` +
+    `2. *Dia a dia*\n\n` +
+    `> Você pode me mandar por áudio, se quiser, também! 🎤`
+  ), semCitacao: true };
 }
 
 // Estado de cadastro do painel web (aguardando usuário/senha) — expira em 15 min
