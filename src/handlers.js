@@ -5709,6 +5709,7 @@ async function iniciarPontoZero(usuarioId) {
     despesasFixas: [],
     investimentos: [],
     cartoes: [],
+    despesasCartao: [],
     orcamentos: [],
   });
 
@@ -5931,7 +5932,8 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   // Item completo — adiciona à lista correta
   delete estado.itemParcial;
   const lista =
-    estado.etapa === 'receitas_fixas' ? estado.receitasFixas : estado.despesasFixas;
+    estado.etapa === 'receitas_fixas' ? estado.receitasFixas :
+    estado.etapa === 'despesas_cartao' ? estado.despesasCartao : estado.despesasFixas;
   lista.push({ valor: ip.valor, descricao: ip.descricao, dia: ip.dia, categoria: ip.categoria });
   const confirmacao = `✅ *${ip.descricao}* — ${fmt.formatarMoeda(ip.valor)}${ip.dia ? ` (dia ${ip.dia})` : ''}`;
 
@@ -5948,14 +5950,13 @@ async function handleItemParcialPontoZero(usuarioId, texto, estado) {
   delete estado.itensPendentes;
   salvarPontoZero(usuarioId, estado);
 
-  const nomeEtapa = estado.etapa === 'receitas_fixas' ? 'receita fixa' : 'despesa';
+  const nomeEtapa = estado.etapa === 'receitas_fixas' ? 'receita fixa' : estado.etapa === 'despesas_cartao' ? 'assinatura de cartão' : 'despesa';
   return `${confirmacao}\n\nTem mais alguma ${nomeEtapa} ou pode passar pra frente?`;
 }
 
 function resumoCartaoEmCadastro(cc) {
   const linhas = [];
   if (cc.limiteTotal != null) linhas.push(`  Limite total: ${fmt.formatarMoeda(cc.limiteTotal)}`);
-  if (cc.valorFatura != null) linhas.push(`  Fatura atual: ${fmt.formatarMoeda(cc.valorFatura)}`);
   if (cc.diaFechamento != null) linhas.push(`  Fecha: dia ${cc.diaFechamento}`);
   if (cc.diaVencimento != null) linhas.push(`  Vence: dia ${cc.diaVencimento}`);
   return linhas.length ? `_Cadastrado até agora para *${cc.nome}*:_\n${linhas.join('\n')}\n\n` : '';
@@ -5974,7 +5975,6 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
 
   // Edição inline: detecta se quer ajustar um campo já respondido (ou antecipado)
   const editandoLimite  = /\b(limite|limite total|credito|cr[eé]dito)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
-  const editandoFatura  = /\b(fatura|fatura atual|valor da fatura|valor em aberto)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
   const editandoFecha   = /\b(fechamento|fecha|dia de fechamento)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
   const editandoVence   = /\b(vencimento|vence|vence dia|pagamento)\b/.test(lower) && /\b(ajustar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|editar?)\b/.test(lower);
 
@@ -5986,16 +5986,6 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
       return `✅ Limite total atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
     }
     return `Qual o novo limite total? _Ex: "R$ 8.000"_`;
-  }
-
-  if (editandoFatura) {
-    const valor = await extrairValorRobusto(texto);
-    if (valor != null && valor >= 0) {
-      cc.valorFatura = valor;
-      salvarPontoZero(usuarioId, estado);
-      return `✅ Fatura atual atualizada para *${fmt.formatarMoeda(valor)}*!\n\n${resumoCartaoEmCadastro(cc)}${perguntaCartaoCampo(cc)}`;
-    }
-    return `Qual o valor da fatura atual? _Ex: "R$ 1.200" ou "0" se não tem_`;
   }
 
   if (editandoFecha) {
@@ -6024,7 +6014,7 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
     return removerItemFluxo(usuarioId, estado, matchRemoverSub[2].trim()) + `\n\n_Continuando o cadastro do cartão *${cc.nome}*..._\n${perguntaCartaoCampo(cc)}`;
   }
   if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?|renomear?)\b/.test(lower)
-      && !editandoLimite && !editandoFatura && !editandoFecha && !editandoVence) {
+      && !editandoLimite && !editandoFecha && !editandoVence) {
     // Detectar edição do NOME do cartão em cadastro
     const querEditarNome = /\b(nome|renomear?|chamar?)\b/.test(lower) || /\b(cartao|cartão)\b/.test(lower);
     if (querEditarNome) {
@@ -6056,21 +6046,6 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
         return `Não entendi o valor 😅 Qual o *limite total* do *${cc.nome}*?\n_Ex: "R$ 5.000" ou "5000"_`;
       }
       cc.limiteTotal = valor;
-      cc.campo = 'valorFatura';
-      salvarPontoZero(usuarioId, estado);
-      return `Qual o *valor da fatura em aberto* até hoje no *${cc.nome}*? 💰\n_Ex: "R$ 1.200" — ou "0" se não tem nada lançado._`;
-    }
-
-    case 'valorFatura': {
-      let valorFatura = 0;
-      if (!/^(0|zero|nao sei|não sei|nada|nenhum)$/.test(lower)) {
-        const valor = await extrairValorRobusto(texto);
-        if (valor === null) {
-          return `Não entendi o valor 😅 Qual o valor da fatura atual do *${cc.nome}*?\n_Ex: "R$ 1.200" — ou "0" se não tem._`;
-        }
-        valorFatura = valor;
-      }
-      cc.valorFatura = valorFatura;
       cc.campo = 'diaFechamento';
       salvarPontoZero(usuarioId, estado);
       return `Qual o *dia de fechamento* da fatura do *${cc.nome}*? 📅\n_Ex: "dia 15" ou só "15"_`;
@@ -6199,7 +6174,6 @@ async function handleCartaoCadastro(usuarioId, texto, estado) {
 function perguntaCartaoCampo(cc) {
   switch (cc.campo) {
     case 'limiteTotal':  return `Qual o *limite total* do *${cc.nome}*?\n_Ex: "R$ 5.000"_`;
-    case 'valorFatura':  return `Qual o *valor da fatura em aberto* até hoje?\n_Ex: "R$ 1.200" ou "0"_`;
     case 'diaFechamento': return `Qual o *dia de fechamento* da fatura?\n_Ex: "dia 15"_`;
     case 'diaVencimento': return `Qual o *dia de vencimento* da fatura?\n_Ex: "dia 22"_`;
     // Método completo desativado:
@@ -6292,18 +6266,15 @@ function finalizarCadastroCartao(estado, cc, usuarioId) {
     limiteTotal: cc.limiteTotal,
     diaFechamento: cc.diaFechamento,
     diaVencimento: cc.diaVencimento,
-    valorFatura: cc.valorFatura,
   });
   delete estado.cartaoEmCadastro;
   salvarPontoZero(usuarioId, estado);
 
-  const faturaStr = cc.valorFatura > 0 ? fmt.formatarMoeda(cc.valorFatura) : 'R$ 0';
   const listaAtual = estado.cartoes.length > 1
     ? `\n\n*Cartões adicionados:*\n${estado.cartoes.map(c => `  💳 ${c.nome}`).join('\n')}\n_Para remover um, manda "remover [nome]"._`
     : '';
   return `✅ *${cc.nome}* cadastrado!\n` +
     `  Limite: ${fmt.formatarMoeda(cc.limiteTotal)}\n` +
-    `  Fatura atual: ${faturaStr}\n` +
     `  Fecha dia ${cc.diaFechamento} · Vence dia ${cc.diaVencimento}${listaAtual}\n\n` +
     `Tem outro cartão pra cadastrar?\n_Manda o nome ou "não" pra avançar._`;
 }
@@ -6485,6 +6456,7 @@ function perguntaAtualEtapa(etapa) {
     saldo: 'Me diz o valor aproximado que tu tem disponível hoje.\n_Ex: "R$ 1.850" ou "uns 2 mil"_',
     receitas_fixas: 'Me diz suas receitas fixas (salário, benefício...).\n_Ex: "Salário dia 5 R$ 3.000"_\n_Ou manda "não" se não tem._',
     despesas_fixas: 'Me diz suas despesas fixas (aluguel, internet, luz...).\n_Ex: "Aluguel dia 5 R$ 1.500"_\n_Ou manda "não"._',
+    despesas_cartao: 'Me diz as assinaturas do cartão.\n_Ex: "Netflix 45,90, Spotify 21,90"_\n_Ou manda "não"._',
     investimentos: 'Me diz o nome da sua primeira caixinha de investimento.\n_Ex: "Poupança", "CDB Nubank"_\n_Ou manda "não"._',
     cartoes: 'Tem cartão de crédito? Me diz o nome.\n_Ex: "Nubank", "Inter"_\n_Ou manda "não"._',
     despesas_dia_a_dia: 'Me diz os gastos do mês atual.\n_Ex: "mercado R$ 350, uber R$ 80"_\n_Ou manda "não"._',
@@ -6495,7 +6467,8 @@ function perguntaAtualEtapa(etapa) {
 async function redireccionarPontoZero(usuarioId, texto, etapa) {
   const etapaLabel = {
     saldo: 'saldo atual', receitas_fixas: 'receitas fixas',
-    despesas_fixas: 'despesas fixas', investimentos: 'investimentos/caixinhas',
+    despesas_fixas: 'despesas fixas', despesas_cartao: 'assinaturas de cartão',
+    investimentos: 'investimentos/caixinhas',
     cartoes: 'cartões de crédito', despesas_dia_a_dia: 'gastos do mês',
   };
   const pergunta = perguntaAtualEtapa(etapa);
@@ -6527,7 +6500,13 @@ function mostrarResumoFluxo(estado) {
   if (estado.cartoes?.length) {
     msg += `\n💳 *Cartões:*\n`;
     estado.cartoes.forEach((c, i) => {
-      msg += `  ${i + 1}. *${c.nome}* — vence dia ${c.diaVencimento}${c.valorFatura > 0 ? ` | ~${fmt.formatarMoeda(c.valorFatura)}/mês` : ''}\n`;
+      msg += `  ${i + 1}. *${c.nome}* — limite ${fmt.formatarMoeda(c.limiteTotal)} · fecha dia ${c.diaFechamento} · vence dia ${c.diaVencimento}\n`;
+    });
+  }
+  if (estado.despesasCartao?.length) {
+    msg += `\n💳 *Assinaturas de cartão:*\n`;
+    estado.despesasCartao.forEach((d, i) => {
+      msg += `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}\n`;
     });
   }
   return msg.trim();
@@ -6536,7 +6515,7 @@ function mostrarResumoFluxo(estado) {
 function removerItemFluxo(usuarioId, estado, query) {
   // Normalizar: remover acentos e palavras-tipo como "despesa", "receita", "cartão" etc.
   const lq = normalizarTextoBusca(query)
-    .replace(/\b(receita|despesa|investimento|cartao|caixinha|lancamento|fixo|fixa)\b/g, '')
+    .replace(/\b(receita|despesa|investimento|cartao|caixinha|lancamento|fixo|fixa|assinatura)\b/g, '')
     .replace(/\s+/g, ' ').trim();
 
   if (/saldo|conta/.test(lq)) {
@@ -6548,6 +6527,7 @@ function removerItemFluxo(usuarioId, estado, query) {
   const listas = [
     { lista: estado.receitasFixas,  campo: 'descricao', label: 'receita' },
     { lista: estado.despesasFixas,  campo: 'descricao', label: 'despesa' },
+    { lista: estado.despesasCartao, campo: 'descricao', label: 'assinatura' },
     { lista: estado.investimentos,  campo: 'nome',      label: 'investimento' },
     { lista: estado.cartoes,        campo: 'nome',      label: 'cartão' },
   ];
@@ -6581,6 +6561,7 @@ function buscarItensPorNome(estado, queryNome) {
   const todos = [
     ...(estado.receitasFixas || []).map(i => ({ item: i, tipo: 'receita', nome: i.descricao })),
     ...(estado.despesasFixas || []).map(i => ({ item: i, tipo: 'despesa', nome: i.descricao })),
+    ...(estado.despesasCartao || []).map(i => ({ item: i, tipo: 'assinatura', nome: i.descricao })),
     ...(estado.investimentos || []).map(i => ({ item: i, tipo: 'investimento', nome: i.nome })),
     ...(estado.cartoes || []).map(i => ({ item: i, tipo: 'cartão', nome: i.nome })),
   ];
@@ -6636,7 +6617,7 @@ async function aplicarEdicao(usuarioId, estado, candidato, campo, novoValor, tex
     return `Qual o novo valor para *${nomeItem}*? _Ex: "R$ 3.000"_`;
   }
   if (tipo === 'investimento') item.saldo = valor;
-  else if (tipo === 'cartão') item.valorFatura = valor;
+  else if (tipo === 'cartão') item.limiteTotal = valor;
   else item.valor = valor;
   salvarPontoZero(usuarioId, estado);
   return `✅ Valor de *${nomeItem}* atualizado para *${fmt.formatarMoeda(valor)}*!\n\n${perguntaAtualEtapa(estado.etapa)}`;
@@ -6722,7 +6703,7 @@ async function editarItemFluxo(usuarioId, texto, estado) {
       .replace(/\b(trocar?|mudar?|alterar?|renomear?|corrigir?)\b/g, '')
       .replace(/\bnome\s*d[aeo]?\b/g, '')
       .replace(/\bnome\b/g, '')
-      .replace(/\b(caixinha|investimento|cartao|receita|despesa|conta)\b/g, '')
+      .replace(/\b(caixinha|investimento|cartao|receita|despesa|assinatura|conta)\b/g, '')
       .replace(/\b\d+\b/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -6732,6 +6713,7 @@ async function editarItemFluxo(usuarioId, texto, estado) {
       ...(estado.cartoes        || []).map(i => ({ item: i, tipo: 'cartão' })),
       ...(estado.receitasFixas  || []).map(i => ({ item: i, tipo: 'receita' })),
       ...(estado.despesasFixas  || []).map(i => ({ item: i, tipo: 'despesa' })),
+      ...(estado.despesasCartao || []).map(i => ({ item: i, tipo: 'assinatura' })),
     ];
     const candidatos = queryNome ? buscarItensPorNome(estado, queryNome) : todosCandidatos;
 
@@ -6876,12 +6858,12 @@ async function handlePontoZero(usuarioId, texto, estado) {
         // Confirma via regex (fast path) OU via IA (item.tipo === 'sim')
         if (querAvancar) {
           delete estado.confirmandoSaldo;
-          estado.etapa = 'receitas_fixas';
+          estado.etapa = 'cartoes';
           salvarPontoZero(usuarioId, estado);
           return { msg: `Perfeito, seu saldo inicial é de *${fmt.formatarMoeda(estado.saldoInicial)}*\n\n` +
-            `📈 Agora me diz suas *receitas fixas* aquelas que você recebe todo mês no mesmo dia (salário, benefício, pensão, mesada...).\n\n` +
-            `> Pode mandar tudo de uma vez e por áudio se quiser!🎤\n` +
-            `> _Ex: "Salário dia 5 R$ 3.000 e benefício dia 10 R$ 800"_`, semCitacao: true };
+            `💳 Agora me diz se você tem *cartão de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\n` +
+            `Me diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n` +
+            `_Se não tem cartão, manda "não"._`, semCitacao: true };
         }
         // Tentou alterar o valor — primeiro tenta extração direta (mais rápido e confiável)
         const valorDireto = await extrairValorRobusto(texto);
@@ -7021,9 +7003,15 @@ async function handlePontoZero(usuarioId, texto, estado) {
       if (estado.confirmandoDespesas) {
         if (querAvancar) {
           delete estado.confirmandoDespesas;
-          estado.etapa = 'cartoes';
+          if ((estado.cartoes || []).length > 0) {
+            estado.etapa = 'despesas_cartao';
+            salvarPontoZero(usuarioId, estado);
+            const nomeCartoes = estado.cartoes.map(c => c.nome).join(', ');
+            return `💳 Agora me diz as *despesas recorrentes do cartão* — assinaturas tipo Netflix, Spotify, iCloud, academia no cartão...\n\n> Cartões cadastrados: *${nomeCartoes}*\n> Pode mandar várias de uma vez!\n> _Ex: "Netflix 45,90, Spotify 21,90, iCloud 3,50"_\n\n_Se não tem assinatura no cartão, manda "não"._`;
+          }
+          estado.etapa = 'investimentos';
           salvarPontoZero(usuarioId, estado);
-          return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+          return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
         }
         // Detectar edição
         if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
@@ -7078,9 +7066,15 @@ async function handlePontoZero(usuarioId, texto, estado) {
       }
 
       if (item.tipo === 'nao' && estado.despesasFixas.length === 0) {
-        estado.etapa = 'cartoes';
+        if ((estado.cartoes || []).length > 0) {
+          estado.etapa = 'despesas_cartao';
+          salvarPontoZero(usuarioId, estado);
+          const nomeCartoes = estado.cartoes.map(c => c.nome).join(', ');
+          return `💳 Agora me diz as *despesas recorrentes do cartão* — assinaturas tipo Netflix, Spotify, iCloud, academia no cartão...\n\n> Cartões cadastrados: *${nomeCartoes}*\n> Pode mandar várias de uma vez!\n> _Ex: "Netflix 45,90, Spotify 21,90, iCloud 3,50"_\n\n_Se não tem assinatura no cartão, manda "não"._`;
+        }
+        estado.etapa = 'investimentos';
         salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora vamos registrar seus *cartões de crédito* — assim as faturas entram na sua projeção e te lembro dos vencimentos.\n\nMe diz o nome do primeiro cartão.\n_Ex: "Nubank", "Inter", "Bradesco Visa"_\n\n_Se não tem cartão, manda "não"._`;
+        return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
       }
       if ((item.tipo === 'nao' || querAvancar) && estado.despesasFixas.length > 0 && !estado.confirmandoDespesas) {
         const listaConfirma = estado.despesasFixas.map((d, i) =>
@@ -7113,6 +7107,105 @@ async function handlePontoZero(usuarioId, texto, estado) {
         return { msg: `📋 Suas despesas fixas:\n${listaCompleta}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar aluguel para 3000"_ ou _"alterar dia da luz para 15"_`, semCitacao: true };
       }
       return await redireccionarPontoZero(usuarioId, texto, 'despesas_fixas');
+    }
+
+    case 'despesas_cartao': {
+      // Sub-estado: confirmando as assinaturas de cartão listadas
+      if (estado.confirmandoDespesasCartao) {
+        if (querAvancar) {
+          delete estado.confirmandoDespesasCartao;
+          estado.etapa = 'investimentos';
+          salvarPontoZero(usuarioId, estado);
+          return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
+        }
+        // Detectar edição
+        if (/\b(editar?|alterar?|mudar?|corrigir?|atualizar?|trocar?)\b/.test(lower)) {
+          const resp = await editarItemFluxo(usuarioId, texto, estado);
+          if (!resp.includes('Não encontrei')) {
+            const listaAtualizada = estado.despesasCartao.map((d, i) =>
+              `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}`
+            ).join('\n');
+            return { msg: `${resp}\n\n📋 Suas assinaturas de cartão:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+          }
+        }
+        // Detectar remoção
+        const matchRemover = lower.match(/^(remover?|excluir?|deletar?|tirar|apagar?)\s+(.+)$/);
+        if (matchRemover) {
+          const respRemover = removerItemFluxo(usuarioId, estado, matchRemover[2].trim());
+          if (estado.despesasCartao.length === 0) {
+            delete estado.confirmandoDespesasCartao;
+            salvarPontoZero(usuarioId, estado);
+            return `${respRemover}\n\nNenhuma assinatura de cartão restante. Tem alguma assinatura pra adicionar ou quer seguir em frente?`;
+          }
+          const listaAtualizada = estado.despesasCartao.map((d, i) =>
+            `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}`
+          ).join('\n');
+          return { msg: `${respRemover}\n\n📋 Suas assinaturas de cartão:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?`, semCitacao: true };
+        }
+        // Tentar adicionar novos itens à lista
+        const resNovo = coletarItens(item, estado.despesasCartao, estado.etapa);
+        if (resNovo.ok) {
+          if (resNovo.incompletos && resNovo.incompletos.length > 0) {
+            const [primeiro, ...restante] = resNovo.incompletos;
+            estado.itemParcial = { ...primeiro };
+            if (restante.length > 0) estado.itensPendentes = restante;
+            else delete estado.itensPendentes;
+            delete estado.confirmandoDespesasCartao;
+            salvarPontoZero(usuarioId, estado);
+            if (resNovo.msg) {
+              return `Certo, anotei:\n\n${resNovo.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa)}`;
+            }
+            return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
+          }
+          salvarPontoZero(usuarioId, estado);
+          const listaAtualizada = estado.despesasCartao.map((d, i) =>
+            `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}`
+          ).join('\n');
+          return { msg: `📋 Suas assinaturas de cartão:\n${listaAtualizada}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar netflix para 55"_`, semCitacao: true };
+        }
+        // Não entendeu — repetir a lista
+        const listaRepetida = estado.despesasCartao.map((d, i) =>
+          `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}`
+        ).join('\n');
+        return { msg: `📋 Suas assinaturas de cartão:\n${listaRepetida}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar netflix para 55"_`, semCitacao: true };
+      }
+
+      if (item.tipo === 'nao' && estado.despesasCartao.length === 0) {
+        estado.etapa = 'investimentos';
+        salvarPontoZero(usuarioId, estado);
+        return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
+      }
+      if ((item.tipo === 'nao' || querAvancar) && estado.despesasCartao.length > 0 && !estado.confirmandoDespesasCartao) {
+        const listaConfirma = estado.despesasCartao.map((d, i) =>
+          `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}`
+        ).join('\n');
+        estado.confirmandoDespesasCartao = true;
+        salvarPontoZero(usuarioId, estado);
+        return { msg: `📋 Suas assinaturas de cartão:\n${listaConfirma}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar netflix para 55"_`, semCitacao: true };
+      }
+      const res = coletarItens(item, estado.despesasCartao, estado.etapa);
+      if (res.ok) {
+        if (res.incompletos && res.incompletos.length > 0) {
+          const [primeiro, ...restante] = res.incompletos;
+          estado.itemParcial = { ...primeiro };
+          if (restante.length > 0) estado.itensPendentes = restante;
+          else delete estado.itensPendentes;
+          salvarPontoZero(usuarioId, estado);
+          if (res.msg) {
+            return `Certo, anotei:\n\n${res.msg}\nMas preciso da sua ajuda 👇\n\n${perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa)}`;
+          }
+          return perguntarCampoFaltante(primeiro.esperandoCampo, primeiro.descricao, estado.etapa);
+        }
+        salvarPontoZero(usuarioId, estado);
+        // Listar todas e pedir confirmação
+        const listaCompleta = estado.despesasCartao.map((d, i) =>
+          `  ${i + 1}. *${d.descricao}* — ${fmt.formatarMoeda(d.valor)}`
+        ).join('\n');
+        estado.confirmandoDespesasCartao = true;
+        salvarPontoZero(usuarioId, estado);
+        return { msg: `📋 Suas assinaturas de cartão:\n${listaCompleta}\n\nEstá tudo certo? Posso continuar?\n\n> Você pode alterar dizendo: _"alterar netflix para 55"_`, semCitacao: true };
+      }
+      return await redireccionarPontoZero(usuarioId, texto, 'despesas_cartao');
     }
 
     case 'investimentos': {
@@ -7173,12 +7266,12 @@ async function handlePontoZero(usuarioId, texto, estado) {
           limparPontoZero(usuarioId);
           const qtd = (estado.cartoes || []).length;
           if (qtd === 0) return `Tudo bem! Nenhum cartão cadastrado.`;
-          const lista = (estado.cartoes || []).map(c => `  💳 *${c.nome}* — vence dia ${c.diaVencimento}${c.valorFatura > 0 ? ` | fatura ${fmt.formatarMoeda(c.valorFatura)}` : ''}`).join('\n');
+          const lista = (estado.cartoes || []).map(c => `  💳 *${c.nome}* — limite ${fmt.formatarMoeda(c.limiteTotal)} · vence dia ${c.diaVencimento}`).join('\n');
           return `✅ ${qtd === 1 ? 'Cartão cadastrado' : `${qtd} cartões cadastrados`} com sucesso!\n\n${lista}`;
         }
-        estado.etapa = 'investimentos';
+        estado.etapa = 'receitas_fixas';
         salvarPontoZero(usuarioId, estado);
-        return `Ótimo! Agora me conta sobre suas *reservas e investimentos* 🏦\n\nPoupança, CDB, Tesouro Direto, ações, fundos... cada um vira uma *caixinha* separada e entra no seu patrimônio total.\n\nMe diz o nome da primeira caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Se não tem nada guardado, manda "não"._`;
+        return `📈 Agora me diz suas *receitas fixas* aquelas que você recebe todo mês no mesmo dia (salário, benefício, pensão, mesada...).\n\n> Pode mandar tudo de uma vez e por áudio se quiser!🎤\n> _Ex: "Salário dia 5 R$ 3.000 e benefício dia 10 R$ 800"_`;
       }
       // Qualquer texto que não seja "não" → nome do cartão
       const nomeCartao = texto.trim();
@@ -7354,9 +7447,28 @@ async function salvarDadosPontoZero(usuarioId, estado) {
   }
 
   // Cartões → criar cartão + gastos detalhados ou fatura simples
+  const cartaoIds = [];
   for (const c of estado.cartoes || []) {
     const cartaoId = await db.criarCartao(usuarioId, c.nome, c.limiteTotal, c.diaFechamento, c.diaVencimento);
+    cartaoIds.push(cartaoId);
     await salvarGastosCartao(usuarioId, c, cartaoId);
+  }
+
+  // Despesas de cartão (assinaturas) → recorrência mensal vinculada ao primeiro cartão
+  if ((estado.despesasCartao || []).length > 0) {
+    const hojeISO = dateParaISO(new Date());
+    const cartaoIdRef = cartaoIds.length > 0 ? cartaoIds[0] : null;
+    const diaFechaRef = (estado.cartoes || [])[0]?.diaFechamento || 1;
+    for (const ass of estado.despesasCartao) {
+      const recId = await db.criarRecorrencia(
+        usuarioId, 'despesa', ass.valor, ass.descricao, 'Assinatura',
+        'mensal', diaFechaRef, null, null, null
+      );
+      await db.adicionarTransacaoComRecorrencia(
+        usuarioId, 'despesa', ass.valor, ass.descricao, 'Assinatura',
+        hojeISO, 'pago', recId, cartaoIdRef
+      );
+    }
   }
 
   // Investimentos → criar caixinhas no banco
@@ -7393,18 +7505,15 @@ async function finalizarPontoZero(usuarioId, estado) {
   const rfFixasPass = (estado.receitasFixas || []).filter(r => !ehFuturo(r));
   const dfFixasPass = (estado.despesasFixas || []).filter(d => !ehFuturo(d));
 
-  // Cartões: fatura futura = diaVencimento ainda não passou; passada = já passou
-  const cartoesFut  = (estado.cartoes || []).filter(c => c.valorFatura > 0 && (!c.diaVencimento || c.diaVencimento >= diaHoje));
-  const cartoesPass = (estado.cartoes || []).filter(c => c.valorFatura > 0 && c.diaVencimento && c.diaVencimento < diaHoje);
+  // Assinaturas de cartão — sempre mensais, contam como despesa futura
+  const totalAssinaturas = (estado.despesasCartao || []).reduce((s, d) => s + d.valor, 0);
 
   const soma = arr => arr.reduce((s, x) => s + x.valor, 0);
-  const somaCartoes = arr => arr.reduce((s, c) => s + c.valorFatura, 0);
 
   const totalRecFixasFut   = soma(rfFixasFut);
   const totalDespFixasFut  = soma(dfFixasFut);
-  const totalCartoesFut    = somaCartoes(cartoesFut);
   const totalRecFut  = totalRecFixasFut;
-  const totalDespFut = totalDespFixasFut + totalCartoesFut;
+  const totalDespFut = totalDespFixasFut + totalAssinaturas;
   const previsao = estado.saldoInicial + totalRecFut - totalDespFut;
 
   const investimentos = estado.investimentos || [];
@@ -7435,9 +7544,10 @@ async function finalizarPontoZero(usuarioId, estado) {
     msg += '\n';
   }
 
-  if (totalCartoesFut > 0) {
-    msg += `💳 *Faturas de cartão:* -${fmt.formatarMoeda(totalCartoesFut)}`;
-    msg += cartoesFut.length > 1 ? ` _(${cartoesFut.length} cartões)_` : '';
+  if (totalAssinaturas > 0) {
+    const qtdAss = (estado.despesasCartao || []).length;
+    msg += `💳 *Assinaturas de cartão:* -${fmt.formatarMoeda(totalAssinaturas)}`;
+    msg += qtdAss > 1 ? ` _(${qtdAss} itens)_` : '';
     msg += '\n';
   }
 
@@ -7445,7 +7555,7 @@ async function finalizarPontoZero(usuarioId, estado) {
 
   // Orçamento proporcional
   const totalReceitas = totalReceitasGeral;
-  const totalFixasReal = totalDespesasGeral;
+  const totalFixasReal = totalDespesasGeral + totalAssinaturas;
   let catsPrincipais = await db.listarCategoriasPrincipais(usuarioId);
   if (catsPrincipais.length === 0) catsPrincipais = db.CATEGORIAS_PRINCIPAIS_PADRAO;
   const catFixas = catsPrincipais.find(c => c.nome === 'Despesas Fixas');
