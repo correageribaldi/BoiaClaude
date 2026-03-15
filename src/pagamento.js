@@ -200,8 +200,8 @@ async function verificarAcesso(usuarioId) {
       const diasRestantes = Math.ceil((trialFim - agora) / (1000 * 60 * 60 * 24));
       let aviso = null;
 
-      if (diasRestantes <= 3 && assinatura.avisos_enviados < 2) {
-        aviso = `⏰ Seu período de teste termina em *${diasRestantes} dia(s)*!\n\n` +
+      if (diasRestantes <= 1 && assinatura.avisos_enviados < 1) {
+        aviso = `⏰ Seu período de teste *expira hoje*!\n\n` +
           `Escolha seu plano para continuar usando o Cronos:\n\n` +
           `💳 *Mensal — R$ 18,30/mês*\n` +
           `💎 *Anual — R$ 163,00/ano* _(economize 26%!)_\n\n` +
