@@ -6869,8 +6869,9 @@ async function handlePontoZero(usuarioId, texto, estado) {
             `_Se não tem cartão, manda "não" para seguir_`, semCitacao: true };
         }
         // Tentou alterar o valor — primeiro tenta extração direta (mais rápido e confiável)
-        const valorDireto = await extrairValorRobusto(texto);
-        if (valorDireto && valorDireto > 0) {
+        const querZeroConf = /\b(zero|nada|n[aã]o tenho( nada)?|zerado|sem nada)\b/i.test(lower);
+        const valorDireto = querZeroConf ? 0 : await extrairValorRobusto(texto);
+        if (valorDireto !== null && valorDireto >= 0) {
           estado.saldoInicial = valorDireto;
           salvarPontoZero(usuarioId, estado);
           const usuario = await db.buscarUsuario(usuarioId);
@@ -6884,11 +6885,13 @@ async function handlePontoZero(usuarioId, texto, estado) {
       }
 
       // Tenta pelo interpretador IA, senão fallback para extração direta
-      let valorSaldo = (item.tipo === 'item' && item.valor) ? item.valor : null;
-      if (!valorSaldo) {
+      // Aceitar "0", "zero", "nada", "não tenho nada" como saldo zero
+      const querZero = /\b(zero|nada|n[aã]o tenho( nada)?|zerado|sem nada|0)\b/i.test(lower);
+      let valorSaldo = querZero ? 0 : ((item.tipo === 'item' && item.valor) ? item.valor : null);
+      if (valorSaldo === null) {
         valorSaldo = await extrairValorRobusto(texto);
       }
-      if (!valorSaldo || valorSaldo <= 0) {
+      if (valorSaldo === null || valorSaldo < 0) {
         const usuario = await db.buscarUsuario(usuarioId);
         const nome = usuario?.nome || 'amigo(a)';
         return { msg: `Desculpa *${nome}* mas acho que não entendi o valor!😞\n\n*Diga* Ex: "1250" ou "tenho uns 2 mil"\n\n> Você pode me mandar por áudio, se quiser, também! 🎤`, semCitacao: true };
