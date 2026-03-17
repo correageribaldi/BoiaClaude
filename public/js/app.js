@@ -963,311 +963,6 @@ async function carregarAgenda() {
   }
 }
 
-// ── Admin — Campanhas ─────────────────────────────────────────────────────────
-
-let campPollTimer = null;
-
-async function campPreview() {
-  const filtro = document.getElementById('adm-camp-filtro').value;
-  const countEl = document.getElementById('adm-camp-count');
-  countEl.textContent = '…';
-  try {
-    const r = await api('/api/admin/campanhas/destinatarios?filtro=' + filtro);
-    countEl.textContent = `${r.total} destinatário(s)`;
-  } catch (err) {
-    countEl.textContent = err.message;
-  }
-}
-
-async function campEnviar() {
-  const mensagem = document.getElementById('adm-camp-msg').value.trim();
-  const filtro = document.getElementById('adm-camp-filtro').value;
-  const statusEl = document.getElementById('adm-camp-status');
-  const progressoEl = document.getElementById('adm-camp-progresso');
-  const btn = document.getElementById('adm-camp-enviar');
-
-  if (!mensagem) { toast('Digite a mensagem da campanha', 'error'); return; }
-
-  const previewCount = document.getElementById('adm-camp-count').textContent;
-  if (!confirm(`Confirmar envio da campanha para:\n${previewCount || 'destinatários selecionados'}?\n\nO envio será feito com delay aleatório entre mensagens.`)) return;
-
-  btn.disabled = true;
-  btn.textContent = '⏳ Iniciando...';
-  statusEl.textContent = '';
-  progressoEl.classList.add('hidden');
-
-  try {
-    const r = await api('/api/admin/campanhas/enviar', {
-      method: 'POST',
-      body: JSON.stringify({ mensagem, filtro }),
-    });
-
-    if (r.total === 0) {
-      statusEl.textContent = r.aviso || 'Nenhum destinatário encontrado.';
-      btn.disabled = false;
-      btn.textContent = '📤 Enviar Campanha';
-      return;
-    }
-
-    progressoEl.classList.remove('hidden');
-    document.getElementById('adm-camp-prog-label').textContent = 'Enviando...';
-    document.getElementById('adm-camp-prog-nums').textContent = `0 / ${r.total}`;
-    document.getElementById('adm-camp-barra').style.width = '0%';
-    document.getElementById('adm-camp-log').innerHTML = '';
-    btn.textContent = '⏳ Enviando...';
-
-    campStartPolling(r.campanhaId, r.total);
-  } catch (err) {
-    toast(err.message, 'error');
-    btn.disabled = false;
-    btn.textContent = '📤 Enviar Campanha';
-  }
-}
-
-function campStartPolling(campanhaId, total) {
-  if (campPollTimer) clearInterval(campPollTimer);
-
-  campPollTimer = setInterval(async () => {
-    try {
-      const s = await api('/api/admin/campanhas/' + campanhaId);
-      const feitos = s.enviados + s.erros;
-      const pct = total > 0 ? Math.round((feitos / total) * 100) : 0;
-
-      document.getElementById('adm-camp-prog-nums').textContent = `${feitos} / ${total}`;
-      document.getElementById('adm-camp-barra').style.width = pct + '%';
-
-      const logEl = document.getElementById('adm-camp-log');
-      const logAtual = logEl.children.length;
-      const novos = s.log.slice(logAtual);
-      for (const item of novos) {
-        const div = document.createElement('div');
-        div.className = 'camp-log-item ' + (item.ok ? 'camp-log-ok' : 'camp-log-erro');
-        div.textContent = (item.ok ? '✅ ' : '❌ ') + item.nome + (item.erro ? ` — ${item.erro}` : '');
-        logEl.appendChild(div);
-        logEl.scrollTop = logEl.scrollHeight;
-      }
-
-      if (s.finalizado) {
-        clearInterval(campPollTimer);
-        campPollTimer = null;
-        document.getElementById('adm-camp-prog-label').textContent =
-          `Concluído! ${s.enviados} enviados, ${s.erros} erros.`;
-        document.getElementById('adm-camp-barra').style.width = '100%';
-        const btnFim = document.getElementById('adm-camp-enviar');
-        btnFim.disabled = false;
-        btnFim.textContent = '📤 Enviar Campanha';
-        toast(`Campanha concluída: ${s.enviados} mensagens enviadas!`, 'success');
-      }
-    } catch (_) {}
-  }, 3000);
-}
-
-// ── Admin — Feedback ─────────────────────────────────────────────────────────
-
-let fbPollTimer = null;
-let fbUsuariosCache = [];
-
-async function fbPreview() {
-  const dias = parseInt(document.getElementById('adm-fb-dias').value) || 0;
-  const countEl = document.getElementById('adm-fb-count');
-  const listaEl = document.getElementById('adm-fb-lista');
-  const wrapEl = document.getElementById('adm-fb-usuarios');
-  countEl.textContent = '…';
-
-  try {
-    const r = await api('/api/admin/feedback/destinatarios?dias_apos_acesso=' + dias);
-    fbUsuariosCache = r.usuarios || [];
-    countEl.textContent = `${r.total} destinatário(s)`;
-
-    listaEl.innerHTML = '';
-    for (const u of fbUsuariosCache) {
-      const nome = u.nome || u.usuario_id;
-      const dias_desde = Math.floor((Date.now() - new Date(u.primeiro_contato).getTime()) / 86400000);
-      const div = document.createElement('div');
-      div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px';
-      div.innerHTML = `<input type="checkbox" class="adm-fb-check" value="${u.usuario_id}" checked />
-        <span>${nome}</span>
-        <span style="color:var(--text-muted);font-size:11px">${dias_desde}d · ${u.status_assinatura || 'sem plano'}</span>`;
-      listaEl.appendChild(div);
-    }
-    wrapEl.classList.remove('hidden');
-  } catch (err) {
-    countEl.textContent = err.message;
-  }
-}
-
-function fbToggleTodos(checked) {
-  document.querySelectorAll('.adm-fb-check').forEach(cb => { cb.checked = checked; });
-}
-
-async function fbEnviar() {
-  const mensagem = document.getElementById('adm-fb-msg').value.trim();
-  const dias = parseInt(document.getElementById('adm-fb-dias').value) || 0;
-  const statusEl = document.getElementById('adm-fb-status');
-  const progressoEl = document.getElementById('adm-fb-progresso');
-  const btn = document.getElementById('adm-fb-enviar');
-
-  if (!mensagem) { toast('Digite a mensagem de feedback', 'error'); return; }
-
-  // Pegar usuários selecionados
-  const checks = document.querySelectorAll('.adm-fb-check:checked');
-  const usuario_ids = Array.from(checks).map(cb => cb.value);
-
-  if (usuario_ids.length === 0 && fbUsuariosCache.length > 0) {
-    toast('Selecione ao menos um destinatário', 'error');
-    return;
-  }
-
-  const total = usuario_ids.length || 'todos os';
-  if (!confirm(`Enviar feedback para ${total} destinatário(s)?\n\nA primeira resposta de cada usuário será capturada automaticamente.`)) return;
-
-  btn.disabled = true;
-  btn.textContent = '⏳ Iniciando...';
-  statusEl.textContent = '';
-  progressoEl.classList.add('hidden');
-
-  try {
-    const body = { mensagem, dias_apos_acesso: dias };
-    if (usuario_ids.length > 0) body.usuario_ids = usuario_ids;
-
-    const r = await api('/api/admin/feedback/enviar', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-
-    if (r.total === 0) {
-      statusEl.textContent = r.aviso || 'Nenhum destinatário encontrado.';
-      btn.disabled = false;
-      btn.textContent = '📤 Enviar Feedback';
-      return;
-    }
-
-    progressoEl.classList.remove('hidden');
-    document.getElementById('adm-fb-prog-label').textContent = 'Enviando...';
-    document.getElementById('adm-fb-prog-nums').textContent = `0 / ${r.total}`;
-    document.getElementById('adm-fb-barra').style.width = '0%';
-    btn.textContent = '⏳ Enviando...';
-
-    fbStartPolling(r.campanhaId, r.total);
-  } catch (err) {
-    toast(err.message, 'error');
-    btn.disabled = false;
-    btn.textContent = '📤 Enviar Feedback';
-  }
-}
-
-function fbStartPolling(campanhaId, total) {
-  if (fbPollTimer) clearInterval(fbPollTimer);
-
-  fbPollTimer = setInterval(async () => {
-    try {
-      const s = await api('/api/admin/feedback/campanhas/' + campanhaId);
-      const camp = s.campanha;
-      if (!camp) return;
-      const feitos = camp.enviados + camp.erros;
-      const pct = total > 0 ? Math.round((feitos / total) * 100) : 0;
-
-      document.getElementById('adm-fb-prog-nums').textContent = `${feitos} / ${total}`;
-      document.getElementById('adm-fb-barra').style.width = pct + '%';
-
-      if (camp.finalizado) {
-        clearInterval(fbPollTimer);
-        fbPollTimer = null;
-        document.getElementById('adm-fb-prog-label').textContent =
-          `Concluído! ${camp.enviados} enviados, ${camp.erros} erros.`;
-        document.getElementById('adm-fb-barra').style.width = '100%';
-        const btnFim = document.getElementById('adm-fb-enviar');
-        btnFim.disabled = false;
-        btnFim.textContent = '📤 Enviar Feedback';
-        toast(`Feedback enviado para ${camp.enviados} usuários!`, 'success');
-      }
-    } catch (_) {}
-  }, 3000);
-}
-
-async function fbCarregarHistorico() {
-  const wrapEl = document.getElementById('adm-fb-historico');
-  const listaEl = document.getElementById('adm-fb-campanhas-lista');
-  const isHidden = wrapEl.classList.contains('hidden');
-
-  if (isHidden) {
-    wrapEl.classList.remove('hidden');
-    listaEl.innerHTML = '<span style="font-size:13px;color:var(--text-muted)">Carregando...</span>';
-
-    try {
-      const r = await api('/api/admin/feedback/campanhas');
-      const campanhas = r.campanhas || [];
-
-      if (campanhas.length === 0) {
-        listaEl.innerHTML = '<span style="font-size:13px;color:var(--text-muted)">Nenhuma campanha de feedback ainda.</span>';
-        return;
-      }
-
-      listaEl.innerHTML = '';
-      for (const c of campanhas) {
-        const data = new Date(c.criado_em).toLocaleDateString('pt-BR');
-        const div = document.createElement('div');
-        div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer';
-        div.innerHTML = `
-          <div>
-            <strong>${data}</strong> — ${c.mensagem.substring(0, 50)}${c.mensagem.length > 50 ? '...' : ''}
-            <br><span style="color:var(--text-muted);font-size:11px">Filtro: ${c.filtro_dias_apos_acesso != null ? c.filtro_dias_apos_acesso + ' dias' : 'manual'} · Enviados: ${c.enviados} · Respostas: ${c.total_respostas || 0}</span>
-          </div>
-          <span style="font-size:11px;color:var(--primary)">Ver ▸</span>`;
-        div.addEventListener('click', () => fbVerDetalhe(c.id));
-        listaEl.appendChild(div);
-      }
-    } catch (err) {
-      listaEl.innerHTML = `<span style="font-size:13px;color:red">${err.message}</span>`;
-    }
-  } else {
-    wrapEl.classList.add('hidden');
-  }
-}
-
-async function fbVerDetalhe(campanhaId) {
-  const detalheEl = document.getElementById('adm-fb-detalhe');
-  const tituloEl = document.getElementById('adm-fb-detalhe-titulo');
-  const respostasEl = document.getElementById('adm-fb-detalhe-respostas');
-
-  detalheEl.classList.remove('hidden');
-  tituloEl.textContent = 'Carregando...';
-  respostasEl.innerHTML = '';
-
-  try {
-    const r = await api('/api/admin/feedback/campanhas/' + campanhaId);
-    const camp = r.campanha;
-    const respostas = r.respostas || [];
-
-    const data = new Date(camp.criado_em).toLocaleDateString('pt-BR');
-    const respondidas = respostas.filter(r => r.respondido).length;
-    tituloEl.textContent = `Campanha ${data} — ${respondidas}/${respostas.length} respostas`;
-
-    respostasEl.innerHTML = '';
-    if (respostas.length === 0) {
-      respostasEl.innerHTML = '<span style="font-size:13px;color:var(--text-muted)">Nenhum destinatário registrado.</span>';
-      return;
-    }
-
-    for (const resp of respostas) {
-      const div = document.createElement('div');
-      div.style.cssText = 'padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px';
-      const nome = resp.nome_usuario || resp.usuario_id;
-      if (resp.respondido) {
-        const dataResp = new Date(resp.respondido_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        div.innerHTML = `<div style="display:flex;justify-content:space-between"><strong>✅ ${nome}</strong><span style="color:var(--text-muted);font-size:11px">${dataResp}</span></div>
-          <div style="margin-top:4px;padding:6px 8px;background:var(--bg-secondary);border-radius:6px;font-size:13px">${resp.resposta}</div>`;
-      } else {
-        div.innerHTML = `<div style="display:flex;justify-content:space-between"><strong>⏳ ${nome}</strong><span style="color:var(--text-muted);font-size:11px">Aguardando resposta</span></div>`;
-      }
-      respostasEl.appendChild(div);
-    }
-  } catch (err) {
-    tituloEl.textContent = 'Erro';
-    respostasEl.innerHTML = `<span style="color:red">${err.message}</span>`;
-  }
-}
-
 // ── Admin — Envio Individual ──────────────────────────────────────────────────
 
 const admInd = { pagina: 1, ppp: 10, busca: '' };
@@ -1388,7 +1083,7 @@ function fmtValidade(u) {
 }
 
 async function carregarAdmin() {
-  await Promise.all([carregarAdminUsuarios(), carregarAdminCupons()]);
+  await Promise.all([carregarAdminUsuarios(), carregarAdminCupons(), carregarAdminCrons()]);
 }
 
 async function carregarAdminUsuarios() {
@@ -1425,6 +1120,280 @@ async function carregarAdminCupons() {
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+// ── Admin Crons ──────────────────────────────────────────────────────────────
+
+const REGRA_LABELS = {
+  ativos_x_dias: 'Ativos (últimos X dias)',
+  inativos_x_dias: 'Inativos (há X dias)',
+  nao_pagantes: 'Não pagantes',
+  trial: 'Em teste',
+  expirados: 'Expirados',
+  graca: 'Em carência',
+  dias_apos_acesso: 'Dias após acesso',
+  manual: 'Seleção manual',
+};
+
+const REGRAS_COM_VALOR = ['ativos_x_dias', 'inativos_x_dias', 'dias_apos_acesso'];
+
+const FREQ_LABELS = {
+  cada_30min: 'A cada 30 min',
+  cada_1h: 'A cada 1 hora',
+  cada_2h: 'A cada 2 horas',
+  cada_4h: 'A cada 4 horas',
+  cada_6h: 'A cada 6 horas',
+  cada_12h: 'A cada 12 horas',
+  todo_dia: 'Todo dia',
+  cada_2dias: 'A cada 2 dias',
+  cada_3dias: 'A cada 3 dias',
+  semanal: 'Semanal',
+};
+
+// Frequências >= diárias mostram horário
+const FREQ_COM_HORARIO = ['todo_dia', 'cada_2dias', 'cada_3dias', 'semanal'];
+
+function fmtDataHora(s) {
+  if (!s) return '—';
+  const d = new Date(s);
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function carregarAdminCrons() {
+  try {
+    const crons = await api('/api/admin/crons');
+    const tbody = document.getElementById('adm-crons-tbody');
+    const empty = document.getElementById('adm-crons-empty');
+    if (!crons.length) {
+      tbody.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    tbody.innerHTML = crons.map(c => {
+      const regraLabel = REGRA_LABELS[c.regra] || c.regra;
+      const regraDetalhe = REGRAS_COM_VALOR.includes(c.regra) && c.regra_valor
+        ? `${regraLabel.replace('X', c.regra_valor)}`
+        : regraLabel;
+      return `
+      <tr>
+        <td><strong>${esc(c.titulo)}</strong></td>
+        <td style="font-size:12px">${esc(regraDetalhe)}</td>
+        <td style="font-size:12px">${esc(FREQ_LABELS[c.frequencia] || c.frequencia)}${c.horario ? ' às ' + esc(c.horario) : ''}</td>
+        <td style="font-size:12px">${fmtDataHora(c.ultimo_envio)}<br><span style="color:var(--text-muted)">${c.total_enviados} enviados</span></td>
+        <td><span class="badge ${c.ativo ? 'badge-pago' : 'badge-pendente'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
+        <td>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="btn btn-sm" onclick="cronToggle(${c.id}, ${!c.ativo})" title="${c.ativo ? 'Desativar' : 'Ativar'}">${c.ativo ? '⏸️' : '▶️'}</button>
+            <button class="btn btn-sm" onclick="cronExecutar(${c.id})" title="Executar agora">🚀</button>
+            <button class="btn btn-sm" onclick="cronEditar(${c.id})" title="Editar">✏️</button>
+            <button class="btn btn-sm" onclick="cronExcluir(${c.id})" title="Excluir" style="color:#e74c3c">🗑️</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+let _cronsCache = [];
+
+async function cronToggle(id, ativo) {
+  try {
+    await api(`/api/admin/crons/${id}`, { method: 'PUT', body: JSON.stringify({ ativo }) });
+    toast(ativo ? '▶️ Cron ativada' : '⏸️ Cron desativada', 'success');
+    carregarAdminCrons();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function cronExecutar(id) {
+  if (!confirm('Executar esta cron agora? As mensagens serão enviadas imediatamente.')) return;
+  try {
+    await api(`/api/admin/crons/${id}/executar`, { method: 'POST' });
+    toast('🚀 Execução iniciada em background', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function cronExcluir(id) {
+  if (!confirm('Tem certeza que deseja excluir esta cron?')) return;
+  try {
+    await api(`/api/admin/crons/${id}`, { method: 'DELETE' });
+    toast('🗑️ Cron excluída', 'success');
+    carregarAdminCrons();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function cronEditar(id) {
+  try {
+    const crons = await api('/api/admin/crons');
+    const c = crons.find(x => x.id === id);
+    if (!c) return toast('Cron não encontrada', 'error');
+
+    document.getElementById('adm-cron-edit-id').value = c.id;
+    document.getElementById('adm-cron-titulo').value = c.titulo;
+    document.getElementById('adm-cron-frequencia').value = c.frequencia || 'todo_dia';
+    document.getElementById('adm-cron-horario').value = c.horario || '10:00';
+    cronAtualizarHorario(c.frequencia || 'todo_dia');
+    document.getElementById('adm-cron-regra').value = c.regra;
+    document.getElementById('adm-cron-valor').value = c.regra_valor || 7;
+    document.getElementById('adm-cron-msg').value = c.mensagem;
+
+    cronAtualizarCamposRegra(c.regra);
+
+    // Se manual, popular Select2
+    if (c.regra === 'manual' && c.usuario_ids && c.usuario_ids.length) {
+      const sel = $('#adm-cron-usuarios');
+      sel.empty();
+      for (const uid of c.usuario_ids) {
+        sel.append(new Option(uid, uid, true, true));
+      }
+      sel.trigger('change');
+    }
+
+    document.getElementById('modal-cron-titulo-header').textContent = 'Editar Cron';
+    document.getElementById('modal-cron').classList.remove('hidden');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function cronAtualizarCamposRegra(regra) {
+  const valorWrap = document.getElementById('adm-cron-valor-wrap');
+  const manualWrap = document.getElementById('adm-cron-manual-wrap');
+
+  if (REGRAS_COM_VALOR.includes(regra)) {
+    valorWrap.style.display = '';
+  } else {
+    valorWrap.style.display = 'none';
+  }
+
+  if (regra === 'manual') {
+    manualWrap.classList.remove('hidden');
+  } else {
+    manualWrap.classList.add('hidden');
+  }
+}
+
+function cronLimparForm() {
+  document.getElementById('adm-cron-edit-id').value = '';
+  document.getElementById('adm-cron-titulo').value = '';
+  document.getElementById('adm-cron-frequencia').value = 'todo_dia';
+  document.getElementById('adm-cron-horario').value = '10:00';
+  cronAtualizarHorario('todo_dia');
+  document.getElementById('adm-cron-regra').value = 'ativos_x_dias';
+  document.getElementById('adm-cron-valor').value = '7';
+  document.getElementById('adm-cron-msg').value = '';
+  const sel = $('#adm-cron-usuarios');
+  if (sel.length) { sel.val(null).trigger('change'); }
+  cronAtualizarCamposRegra('ativos_x_dias');
+}
+
+async function cronSalvar() {
+  const editId = document.getElementById('adm-cron-edit-id').value;
+  const titulo = document.getElementById('adm-cron-titulo').value.trim();
+  const mensagem = document.getElementById('adm-cron-msg').value.trim();
+  const frequencia = document.getElementById('adm-cron-frequencia').value;
+  const horario = document.getElementById('adm-cron-horario').value || null;
+  const regra = document.getElementById('adm-cron-regra').value;
+  const regra_valor = parseInt(document.getElementById('adm-cron-valor').value) || null;
+  let usuario_ids = null;
+
+  if (!titulo || !mensagem) { toast('Preencha título e mensagem', 'error'); return; }
+  if (!frequencia) { toast('Selecione a frequência', 'error'); return; }
+
+  if (regra === 'manual') {
+    usuario_ids = $('#adm-cron-usuarios').val();
+    if (!usuario_ids || !usuario_ids.length) { toast('Selecione ao menos um usuário', 'error'); return; }
+  }
+
+  const body = { titulo, mensagem, frequencia, horario, regra, regra_valor, usuario_ids };
+
+  try {
+    if (editId) {
+      await api(`/api/admin/crons/${editId}`, { method: 'PUT', body: JSON.stringify(body) });
+      toast('✅ Cron atualizada!', 'success');
+    } else {
+      await api('/api/admin/crons', { method: 'POST', body: JSON.stringify(body) });
+      toast('✅ Cron criada!', 'success');
+    }
+    fecharModalCron();
+    carregarAdminCrons();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function cronPreview() {
+  const regra = document.getElementById('adm-cron-regra').value;
+  const valor = document.getElementById('adm-cron-valor').value;
+  const countEl = document.getElementById('adm-cron-preview-count');
+  try {
+    const data = await api(`/api/admin/crons/preview?regra=${regra}&valor=${valor}`);
+    countEl.textContent = `${data.total} destinatário(s)`;
+  } catch (err) {
+    countEl.textContent = 'Erro ao carregar';
+    toast(err.message, 'error');
+  }
+}
+
+function cronAtualizarHorario(freq) {
+  const wrap = document.getElementById('adm-cron-horario-wrap');
+  if (FREQ_COM_HORARIO.includes(freq)) {
+    wrap.style.display = '';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+
+function abrirModalCron() {
+  cronLimparForm();
+  document.getElementById('modal-cron-titulo-header').textContent = 'Nova Cron';
+  document.getElementById('modal-cron').classList.remove('hidden');
+}
+
+function fecharModalCron() {
+  document.getElementById('modal-cron').classList.add('hidden');
+  cronLimparForm();
+}
+
+function inicializarCronAdmin() {
+  // Novo
+  document.getElementById('adm-cron-novo').addEventListener('click', abrirModalCron);
+
+  // Salvar e Preview
+  document.getElementById('adm-cron-salvar').addEventListener('click', cronSalvar);
+  // Toggle campos conforme regra selecionada
+  document.getElementById('adm-cron-regra').addEventListener('change', (e) => {
+    cronAtualizarCamposRegra(e.target.value);
+  });
+
+  // Toggle horário conforme frequência selecionada
+  document.getElementById('adm-cron-frequencia').addEventListener('change', (e) => {
+    cronAtualizarHorario(e.target.value);
+  });
+
+  // Select2 para seleção manual
+  $('#adm-cron-usuarios').select2({
+    placeholder: 'Buscar por nome ou número...',
+    allowClear: true,
+    minimumInputLength: 2,
+    dropdownParent: $('#modal-cron .modal-box'),
+    width: '100%',
+    ajax: {
+      url: '/api/admin/crons/usuarios-busca',
+      dataType: 'json',
+      delay: 300,
+      headers: { 'Authorization': 'Bearer ' + (getJwt() || '') },
+      data: function(params) { return { q: params.term }; },
+      processResults: function(data) { return { results: data }; },
+    },
+  });
+
+  // Fechar modal ao clicar fora
+  document.getElementById('modal-cron').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-cron') fecharModalCron();
+  });
+
+  // Estado inicial dos campos
+  cronAtualizarCamposRegra(document.getElementById('adm-cron-regra').value);
+  cronAtualizarHorario(document.getElementById('adm-cron-frequencia').value);
 }
 
 function renderAdminUsuarios(lista) {
@@ -1666,8 +1635,11 @@ function inicializar() {
     const e = estado.ag; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarAgenda();
   });
 
-  // Admin: criar cupom
+  // Admin
   if (_isAdmin) {
+    inicializarCronAdmin();
+
+    // Criar cupom
     document.getElementById('adm-cupom-criar').addEventListener('click', async () => {
       const codigo = document.getElementById('adm-cupom-codigo').value.trim().toUpperCase();
       const tipo = document.getElementById('adm-cupom-tipo').value;
@@ -1697,14 +1669,6 @@ function inicializar() {
       renderEnvioIndividual();
     });
 
-    // Admin: campanhas
-    document.getElementById('adm-camp-preview').addEventListener('click', campPreview);
-    document.getElementById('adm-camp-enviar').addEventListener('click', campEnviar);
-
-    // Admin: feedback
-    document.getElementById('adm-fb-preview').addEventListener('click', fbPreview);
-    document.getElementById('adm-fb-enviar').addEventListener('click', fbEnviar);
-    document.getElementById('adm-fb-historico-btn').addEventListener('click', fbCarregarHistorico);
     document.getElementById('adm-fb-todos').addEventListener('change', (e) => fbToggleTodos(e.target.checked));
 
     // Admin: busca de usuários

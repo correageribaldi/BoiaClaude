@@ -603,6 +603,40 @@ async function initTables() {
     CREATE INDEX IF NOT EXISTS idx_feedback_respostas_campanha ON feedback_respostas(campanha_id);
     CREATE INDEX IF NOT EXISTS idx_feedback_respostas_usuario ON feedback_respostas(usuario_id);
   `);
+
+  // Tabela de crons configuráveis pelo admin
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_crons (
+      id SERIAL PRIMARY KEY,
+      titulo TEXT NOT NULL,
+      mensagem TEXT NOT NULL,
+      frequencia TEXT NOT NULL DEFAULT 'todo_dia',
+      horario TEXT DEFAULT '10:00',
+      regra TEXT NOT NULL,
+      regra_valor INTEGER,
+      usuario_ids TEXT[],
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      ultimo_envio TIMESTAMPTZ,
+      total_enviados INTEGER NOT NULL DEFAULT 0,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  // Migração: trocar expressao_cron → frequencia + horario (caso tabela antiga exista)
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_crons' AND column_name='expressao_cron') THEN
+        ALTER TABLE admin_crons DROP COLUMN expressao_cron;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_crons' AND column_name='frequencia') THEN
+        ALTER TABLE admin_crons ADD COLUMN frequencia TEXT NOT NULL DEFAULT 'todo_dia';
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_crons' AND column_name='horario') THEN
+        ALTER TABLE admin_crons ADD COLUMN horario TEXT DEFAULT '10:00';
+      END IF;
+    END$$;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -2892,6 +2926,97 @@ async function buscarFeedbackPendente(usuarioId) {
   return result.rows[0] || null;
 }
 
+// ─── Admin Crons ──────────────────────────────────────────────────────────────
+
+async function criarAdminCron(titulo, mensagem, frequencia, horario, regra, regraValor, usuarioIds) {
+  const result = await pool.query(
+    `INSERT INTO admin_crons (titulo, mensagem, frequencia, horario, regra, regra_valor, usuario_ids)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [titulo, mensagem, frequencia, horario || null, regra, regraValor || null, usuarioIds || null]
+  );
+  return result.rows[0];
+}
+
+async function listarAdminCrons() {
+  const result = await pool.query(`SELECT * FROM admin_crons ORDER BY criado_em DESC`);
+  return result.rows;
+}
+
+async function buscarAdminCron(id) {
+  const result = await pool.query(`SELECT * FROM admin_crons WHERE id = $1`, [id]);
+  return result.rows[0] || null;
+}
+
+async function atualizarAdminCron(id, campos) {
+  const sets = [];
+  const vals = [];
+  let idx = 1;
+  for (const [key, val] of Object.entries(campos)) {
+    sets.push(`${key} = $${idx}`);
+    vals.push(val);
+    idx++;
+  }
+  vals.push(id);
+  const result = await pool.query(
+    `UPDATE admin_crons SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+    vals
+  );
+  return result.rows[0] || null;
+}
+
+async function excluirAdminCron(id) {
+  await pool.query(`DELETE FROM admin_crons WHERE id = $1`, [id]);
+}
+
+async function registrarEnvioAdminCron(id, totalEnviados) {
+  await pool.query(
+    `UPDATE admin_crons SET ultimo_envio = NOW(), total_enviados = total_enviados + $1 WHERE id = $2`,
+    [totalEnviados, id]
+  );
+}
+
+async function listarUsuariosAtivos(dias) {
+  const result = await pool.query(`
+    SELECT DISTINCT u.usuario_id, u.nome FROM usuarios u
+    JOIN transacoes t ON t.usuario_id = u.usuario_id
+    WHERE t.criado_em >= NOW() - MAKE_INTERVAL(days => $1)
+      AND u.usuario_id NOT LIKE '%@lid'
+  `, [dias]);
+  return result.rows;
+}
+
+async function listarUsuariosInativos(dias) {
+  const result = await pool.query(`
+    SELECT u.usuario_id, u.nome FROM usuarios u
+    WHERE u.usuario_id NOT LIKE '%@lid'
+      AND NOT EXISTS (
+        SELECT 1 FROM transacoes t
+        WHERE t.usuario_id = u.usuario_id
+          AND t.criado_em >= NOW() - MAKE_INTERVAL(days => $1)
+      )
+  `, [dias]);
+  return result.rows;
+}
+
+async function buscarUsuariosPorIds(ids) {
+  if (!ids || ids.length === 0) return [];
+  const result = await pool.query(
+    `SELECT usuario_id, nome FROM usuarios WHERE usuario_id = ANY($1)`,
+    [ids]
+  );
+  return result.rows;
+}
+
+async function buscarUsuariosParaSelect(q) {
+  const result = await pool.query(`
+    SELECT u.usuario_id, u.nome FROM usuarios u
+    WHERE u.usuario_id NOT LIKE '%@lid'
+      AND (u.nome ILIKE $1 OR u.usuario_id ILIKE $1)
+    ORDER BY u.nome ASC LIMIT 50
+  `, [`%${q}%`]);
+  return result.rows;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -3030,4 +3155,14 @@ module.exports = {
   listarFeedbackCampanhas,
   buscarFeedbackCampanha,
   buscarFeedbackPendente,
+  criarAdminCron,
+  listarAdminCrons,
+  buscarAdminCron,
+  atualizarAdminCron,
+  excluirAdminCron,
+  registrarEnvioAdminCron,
+  listarUsuariosAtivos,
+  listarUsuariosInativos,
+  buscarUsuariosPorIds,
+  buscarUsuariosParaSelect,
 };

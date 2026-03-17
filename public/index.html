@@ -6,6 +6,83 @@
   <title>Cronos — Painel Financeiro</title>
   <link rel="stylesheet" href="/css/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+  <style>
+    /* Select2 — tema escuro */
+    .select2-container--default .select2-selection--multiple {
+      background: #1c1c24;
+      border: 1.5px solid #2a2a36;
+      border-radius: 8px;
+      min-height: 42px;
+      padding: 4px 6px;
+    }
+    .select2-container--default.select2-container--focus .select2-selection--multiple {
+      border-color: #4a9edd;
+      outline: none;
+    }
+    .select2-container--default .select2-selection--multiple .select2-selection__choice {
+      background: #2a2a3e;
+      border: 1px solid #3a3a52;
+      color: #e8e8f0;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 12px;
+      margin: 2px 4px 2px 0;
+    }
+    .select2-container--default .select2-selection--multiple .select2-selection__choice__remove {
+      color: #8888aa;
+      margin-right: 4px;
+    }
+    .select2-container--default .select2-selection--multiple .select2-selection__choice__remove:hover {
+      color: #e74c3c;
+      background: transparent;
+    }
+    .select2-container--default .select2-selection--multiple .select2-selection__placeholder {
+      color: #8888aa;
+    }
+    .select2-dropdown {
+      background: #1c1c24;
+      border: 1.5px solid #2a2a36;
+      border-radius: 8px;
+      color: #e8e8f0;
+      box-shadow: 0 4px 20px rgba(0,0,0,.5);
+    }
+    .select2-container--default .select2-results__option {
+      padding: 8px 12px;
+      font-size: 13px;
+      color: #e8e8f0;
+    }
+    .select2-container--default .select2-results__option--highlighted[aria-selected] {
+      background: #2a2a3e;
+      color: #e8e8f0;
+    }
+    .select2-container--default .select2-results__option[aria-selected=true] {
+      background: #0d1f2d;
+      color: #4a9edd;
+    }
+    .select2-search--dropdown .select2-search__field {
+      background: #0f0f13;
+      border: 1px solid #2a2a36;
+      border-radius: 6px;
+      color: #e8e8f0;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .select2-search--dropdown .select2-search__field:focus {
+      outline: none;
+      border-color: #4a9edd;
+    }
+    .select2-container--default .select2-results__option--disabled {
+      color: #8888aa;
+    }
+    .select2-container--default .select2-selection--multiple .select2-selection__rendered {
+      display: flex;
+      flex-wrap: wrap;
+      padding: 0;
+    }
+  </style>
 </head>
 <body>
 
@@ -286,111 +363,29 @@
     <section id="tab-admin" class="tab-content hidden">
       <div class="section-header"><h2>⚙️ Administração</h2></div>
 
-      <!-- Campanhas -->
+      <!-- Crons Agendadas -->
       <div class="admin-card">
-        <h3>📣 Enviar Campanha</h3>
-
-        <div class="admin-row" style="margin-bottom:10px">
-          <div class="input-group" style="flex:1;min-width:160px">
-            <label>Público-alvo</label>
-            <select id="adm-camp-filtro">
-              <option value="todos">Todos não pagantes</option>
-              <option value="trial">Em período de teste</option>
-              <option value="expirado">Expirados</option>
-              <option value="graca">Em carência</option>
-            </select>
-          </div>
-          <div style="display:flex;align-items:flex-end">
-            <button class="btn btn-sm" id="adm-camp-preview" style="background:#f0f2f5;color:var(--text)">🔍 Ver destinatários</button>
-          </div>
-          <div style="display:flex;align-items:flex-end">
-            <span id="adm-camp-count" style="font-size:13px;color:var(--text-muted);padding:6px 0"></span>
-          </div>
+        <div class="admin-card-header">
+          <h3>⏰ Crons Agendadas</h3>
+          <button class="btn btn-primary btn-sm" id="adm-cron-novo">+ Nova Cron</button>
         </div>
 
-        <div class="input-group">
-          <label>Mensagem <span style="color:var(--text-muted);font-weight:400">— use {nome} para personalizar</span></label>
-          <textarea id="adm-camp-msg" rows="5" placeholder="Olá {nome}! Sabia que o Cronos pode te ajudar a controlar suas finanças pelo WhatsApp?..." style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;resize:vertical;font-family:inherit"></textarea>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
-          <button class="btn btn-primary" id="adm-camp-enviar">📤 Enviar Campanha</button>
-          <span id="adm-camp-status" style="font-size:13px;color:var(--text-muted)"></span>
-        </div>
-
-        <!-- Progresso -->
-        <div id="adm-camp-progresso" class="hidden" style="margin-top:16px">
-          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
-            <span id="adm-camp-prog-label">Enviando...</span>
-            <span id="adm-camp-prog-nums"></span>
-          </div>
-          <div class="camp-barra-bg">
-            <div class="camp-barra-fill" id="adm-camp-barra"></div>
-          </div>
-          <div id="adm-camp-log" class="camp-log"></div>
-        </div>
-      </div>
-
-      <!-- Feedback -->
-      <div class="admin-card">
-        <h3>📋 Coleta de Feedback</h3>
-
-        <div class="admin-row" style="margin-bottom:10px">
-          <div class="input-group" style="flex:1;min-width:160px">
-            <label>Dias após primeiro acesso</label>
-            <input type="number" id="adm-fb-dias" min="0" value="7" placeholder="Ex: 7" style="width:100px" />
-          </div>
-          <div style="display:flex;align-items:flex-end">
-            <button class="btn btn-sm" id="adm-fb-preview" style="background:#f0f2f5;color:var(--text)">🔍 Ver destinatários</button>
-          </div>
-          <div style="display:flex;align-items:flex-end">
-            <span id="adm-fb-count" style="font-size:13px;color:var(--text-muted);padding:6px 0"></span>
-          </div>
-        </div>
-
-        <div id="adm-fb-usuarios" class="hidden" style="margin-bottom:12px;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <label style="font-size:12px;color:var(--text-muted)">Selecione os destinatários:</label>
-            <label style="font-size:12px;cursor:pointer"><input type="checkbox" id="adm-fb-todos" checked /> Todos</label>
-          </div>
-          <div id="adm-fb-lista"></div>
-        </div>
-
-        <div class="input-group">
-          <label>Mensagem <span style="color:var(--text-muted);font-weight:400">— use {nome} para personalizar</span></label>
-          <textarea id="adm-fb-msg" rows="4" placeholder="Olá {nome}! Estamos melhorando o Cronos e sua opinião é muito importante. O que você acha do app até agora? Alguma sugestão?" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;resize:vertical;font-family:inherit"></textarea>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
-          <button class="btn btn-primary" id="adm-fb-enviar">📤 Enviar Feedback</button>
-          <button class="btn btn-sm" id="adm-fb-historico-btn" style="background:#f0f2f5;color:var(--text)">📊 Histórico</button>
-          <span id="adm-fb-status" style="font-size:13px;color:var(--text-muted)"></span>
-        </div>
-
-        <!-- Progresso -->
-        <div id="adm-fb-progresso" class="hidden" style="margin-top:16px">
-          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
-            <span id="adm-fb-prog-label">Enviando...</span>
-            <span id="adm-fb-prog-nums"></span>
-          </div>
-          <div class="camp-barra-bg">
-            <div class="camp-barra-fill" id="adm-fb-barra"></div>
-          </div>
-        </div>
-
-        <!-- Histórico de campanhas -->
-        <div id="adm-fb-historico" class="hidden" style="margin-top:16px">
-          <h4 style="font-size:14px;margin-bottom:8px">Campanhas anteriores</h4>
-          <div id="adm-fb-campanhas-lista"></div>
-        </div>
-
-        <!-- Detalhe de campanha -->
-        <div id="adm-fb-detalhe" class="hidden" style="margin-top:16px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <h4 id="adm-fb-detalhe-titulo" style="font-size:14px"></h4>
-            <button class="btn btn-sm" onclick="document.getElementById('adm-fb-detalhe').classList.add('hidden')" style="background:#f0f2f5;color:var(--text)">✕ Fechar</button>
-          </div>
-          <div id="adm-fb-detalhe-respostas"></div>
+        <!-- Tabela de crons existentes -->
+        <div class="table-wrap" style="margin-top:12px">
+          <table class="data-table" id="adm-crons-table">
+            <thead>
+              <tr>
+                <th>Título</th>
+                <th>Regra</th>
+                <th>Frequência</th>
+                <th>Último envio</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="adm-crons-tbody"></tbody>
+          </table>
+          <div id="adm-crons-empty" class="empty-state hidden">Nenhuma cron configurada ainda.</div>
         </div>
       </div>
 
@@ -853,6 +848,79 @@
       <button class="btn btn-danger" id="modal-rec-apenas-este">Excluir apenas este</button>
       <button class="btn btn-danger btn-outline-danger" id="modal-rec-todos">Excluir todos os recorrentes</button>
       <button class="btn btn-secondary" id="modal-rec-desistir">Desistir</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Nova/Editar Cron -->
+<div class="modal-overlay hidden" id="modal-cron">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3 id="modal-cron-titulo-header">Nova Cron</h3>
+      <button class="modal-close" onclick="fecharModalCron()">✕</button>
+    </div>
+    <input type="hidden" id="adm-cron-edit-id" value="" />
+
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Título</label>
+      <input type="text" id="adm-cron-titulo" class="input" placeholder="Ex: Lembrete de trial expirando" />
+    </div>
+
+    <div style="display:flex;gap:12px;margin-bottom:16px">
+      <div class="form-group" style="flex:1">
+        <label style="color:var(--text-muted);font-size:13px">Frequência</label>
+        <select id="adm-cron-frequencia" class="input">
+          <option value="cada_30min">A cada 30 min</option>
+          <option value="cada_1h">A cada 1 hora</option>
+          <option value="cada_2h">A cada 2 horas</option>
+          <option value="cada_4h">A cada 4 horas</option>
+          <option value="cada_6h">A cada 6 horas</option>
+          <option value="cada_12h">A cada 12 horas</option>
+          <option value="todo_dia" selected>Todo dia</option>
+          <option value="cada_2dias">A cada 2 dias</option>
+          <option value="cada_3dias">A cada 3 dias</option>
+          <option value="semanal">Semanal</option>
+        </select>
+      </div>
+      <div class="form-group" id="adm-cron-horario-wrap" style="flex:0 0 100px">
+        <label style="color:var(--text-muted);font-size:13px">Horário</label>
+        <input type="time" id="adm-cron-horario" class="input" value="10:00" />
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-bottom:16px">
+      <div class="form-group" style="flex:1">
+        <label style="color:var(--text-muted);font-size:13px">Regra de público</label>
+        <select id="adm-cron-regra" class="input">
+          <option value="ativos_x_dias">Ativos nos últimos X dias</option>
+          <option value="inativos_x_dias">Inativos há X dias</option>
+          <option value="nao_pagantes">Todos não pagantes</option>
+          <option value="trial">Em período de teste</option>
+          <option value="expirados">Expirados</option>
+          <option value="graca">Em carência</option>
+          <option value="dias_apos_acesso">X dias após primeiro acesso</option>
+          <option value="manual">Seleção manual</option>
+        </select>
+      </div>
+      <div class="form-group" id="adm-cron-valor-wrap" style="flex:0 0 100px">
+        <label style="color:var(--text-muted);font-size:13px">Dias</label>
+        <input type="number" id="adm-cron-valor" class="input" min="1" value="7" />
+      </div>
+    </div>
+
+    <!-- Select2 para seleção manual -->
+    <div id="adm-cron-manual-wrap" class="hidden" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Selecionar usuários</label>
+      <select id="adm-cron-usuarios" multiple="multiple" style="width:100%"></select>
+    </div>
+
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Mensagem <span style="font-weight:400">— use {nome} para personalizar</span></label>
+      <textarea id="adm-cron-msg" rows="4" class="input" placeholder="Olá {nome}! Sabia que o Cronos pode te ajudar?..." style="resize:vertical;font-family:inherit"></textarea>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" id="adm-cron-salvar" style="flex:1">💾 Salvar</button>
     </div>
   </div>
 </div>

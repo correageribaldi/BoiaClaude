@@ -12,6 +12,7 @@ const { iniciarWebServer } = require('./webserver');
 const { connection } = require('./queue');
 const { criarWorkerReminders } = require('./worker-reminders');
 const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
+const { iniciarCronsAdmin } = require('./cron-admin');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
@@ -202,6 +203,7 @@ client.on('ready', async () => {
 
     // Iniciar sistema de lembretes financeiros (cron 10h/13h/20h)
     iniciarLembretes(client);
+    iniciarCronsAdmin(client);
 
     // Iniciar worker BullMQ para lembretes pontuais e recorrentes
     criarWorkerReminders(client, connection);
@@ -332,6 +334,12 @@ client.on('message', async (msg) => {
   // Ignorar mensagens de grupo e status
   if (msg.from.includes('@g.us')) return;
   if (msg.from === 'status@broadcast') return;
+
+  // Modo desenvolvimento: responder apenas ao dev
+  if (process.env.DEV_MODE === 'true' && msg.from !== process.env.DEV_WHATSAPP_ID) {
+    if (process.env.DEBUG === '1') console.log(`[DEV_MODE] Ignorando mensagem de ${msg.from}`);
+    return;
+  }
 
   let usuarioId = msg.from;
   let contato = null;

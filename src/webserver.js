@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('./database');
 const pagamento = require('./pagamento');
+const cronAdmin = require('./cron-admin');
 
 const EULA_PDF_PATH = path.join(__dirname, '../docs/cronos-eula.pdf');
 
@@ -1187,6 +1188,109 @@ app.post('/api/admin/enviar-individual', autenticarAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[ADMIN] /enviar-individual:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Crons Admin ───────────────────────────────────────────────────────────────
+
+app.get('/api/admin/crons', autenticarAdmin, async (req, res) => {
+  try {
+    const crons = await db.listarAdminCrons();
+    res.json(crons);
+  } catch (err) {
+    console.error('[CRON-ADMIN] GET /crons:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/admin/crons', autenticarAdmin, async (req, res) => {
+  try {
+    const { titulo, mensagem, frequencia, horario, regra, regra_valor, usuario_ids } = req.body || {};
+    if (!titulo?.trim() || !mensagem?.trim() || !regra || !frequencia) {
+      return res.status(400).json({ erro: 'titulo, mensagem, frequencia e regra são obrigatórios' });
+    }
+    if (!cronAdmin.FREQUENCIAS[frequencia]) {
+      return res.status(400).json({ erro: 'Frequência inválida' });
+    }
+    const novaCron = await db.criarAdminCron(
+      titulo.trim(), mensagem.trim(), frequencia, horario || null,
+      regra, regra_valor || null, usuario_ids || null
+    );
+    res.json(novaCron);
+  } catch (err) {
+    console.error('[CRON-ADMIN] POST /crons:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.put('/api/admin/crons/:id', autenticarAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const campos = {};
+    const permitidos = ['titulo', 'mensagem', 'frequencia', 'horario', 'regra', 'regra_valor', 'usuario_ids', 'ativo'];
+    for (const key of permitidos) {
+      if (req.body[key] !== undefined) campos[key] = req.body[key];
+    }
+    if (campos.frequencia && !cronAdmin.FREQUENCIAS[campos.frequencia]) {
+      return res.status(400).json({ erro: 'Frequência inválida' });
+    }
+    const atualizada = await db.atualizarAdminCron(id, campos);
+    if (!atualizada) return res.status(404).json({ erro: 'Cron não encontrada' });
+    res.json(atualizada);
+  } catch (err) {
+    console.error('[CRON-ADMIN] PUT /crons/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/admin/crons/:id', autenticarAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    await db.excluirAdminCron(id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[CRON-ADMIN] DELETE /crons/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/admin/crons/:id/executar', autenticarAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const c = await db.buscarAdminCron(id);
+    if (!c) return res.status(404).json({ erro: 'Cron não encontrada' });
+    const whatsappClient = app.get('whatsappClient');
+    if (!whatsappClient) return res.status(503).json({ erro: 'WhatsApp não disponível' });
+    // Executa em background
+    cronAdmin.executarCron(id, whatsappClient);
+    res.json({ ok: true, mensagem: 'Execução iniciada em background' });
+  } catch (err) {
+    console.error('[CRON-ADMIN] POST /crons/:id/executar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.get('/api/admin/crons/preview', autenticarAdmin, async (req, res) => {
+  try {
+    const { regra, valor } = req.query;
+    if (!regra) return res.status(400).json({ erro: 'regra é obrigatória' });
+    const usuarios = await cronAdmin.resolverDestinatarios(regra, parseInt(valor) || null, null);
+    res.json({ total: usuarios.length, usuarios });
+  } catch (err) {
+    console.error('[CRON-ADMIN] GET /crons/preview:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.get('/api/admin/crons/usuarios-busca', autenticarAdmin, async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+    const usuarios = await db.buscarUsuariosParaSelect(q);
+    res.json(usuarios.map(u => ({ id: u.usuario_id, text: u.nome ? `${u.nome} (${u.usuario_id})` : u.usuario_id })));
+  } catch (err) {
+    console.error('[CRON-ADMIN] GET /usuarios-busca:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
