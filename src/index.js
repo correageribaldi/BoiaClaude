@@ -13,6 +13,7 @@ const { connection } = require('./queue');
 const { criarWorkerReminders } = require('./worker-reminders');
 const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 const { iniciarCronsAdmin } = require('./cron-admin');
+const { iniciarWatchdog } = require('./utils/watchdog');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
   || '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
@@ -223,6 +224,8 @@ client.on('ready', async () => {
     // GC periódico: limpa Maps de estado expirados a cada 5 min
     setInterval(limparMapsExpirados, 5 * 60 * 1000);
     console.log('🧹 GC de Maps iniciado (5min).');
+
+    iniciarWatchdog(client);
   } else {
     console.log('🔄 Reconexão detectada — listeners já registrados, pulando duplicação.');
   }
@@ -603,16 +606,27 @@ process.on('uncaughtException', (err) => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Encerrando bot...');
+function gracefulShutdown(sinal) {
+  const m = process.memoryUsage();
+  console.log(JSON.stringify({
+    evento: 'SHUTDOWN',
+    sinal,
+    ts: new Date().toISOString(),
+    uptimeS: Math.round(process.uptime()),
+    reconnects: _reconnectAttempts,
+    mem: {
+      rss: Math.round(m.rss / 1024 / 1024) + 'MB',
+      heap: Math.round(m.heapUsed / 1024 / 1024) + 'MB',
+    },
+  }));
   if (_sweeperInterval) clearInterval(_sweeperInterval);
-  client.destroy();
-  process.exit(0);
+  client.destroy().catch(() => {}).finally(() => process.exit(0));
+}
+
+process.on('exit', (code) => {
+  console.log(`[EXIT] code=${code} uptime=${Math.round(process.uptime())}s ts=${new Date().toISOString()}`);
 });
 
-process.on('SIGTERM', () => {
-  console.log('\n🛑 Encerrando bot...');
-  if (_sweeperInterval) clearInterval(_sweeperInterval);
-  client.destroy();
-  process.exit(0);
-});
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGHUP',  () => gracefulShutdown('SIGHUP'));
