@@ -1295,6 +1295,41 @@ app.get('/api/admin/crons/usuarios-busca', autenticarAdmin, async (req, res) => 
   }
 });
 
+// ── Admin API (API Key — para N8N) ───────────────────────────────────────────
+app.post('/admin/send', async (req, res) => {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== process.env.ADMIN_API_KEY) {
+    return res.status(401).json({ ok: false, error: 'API key inválida' });
+  }
+
+  const { to, message, imageUrl } = req.body;
+  if (!to || !message) {
+    return res.status(400).json({ ok: false, error: 'Campos "to" e "message" são obrigatórios' });
+  }
+
+  const whatsappClient = app.get('whatsappClient');
+  if (!whatsappClient) {
+    return res.status(503).json({ ok: false, error: 'WhatsApp client não disponível' });
+  }
+
+  try {
+    let result;
+    if (imageUrl) {
+      const { MessageMedia } = require('whatsapp-web.js');
+      const media = await MessageMedia.fromUrl(imageUrl);
+      result = await whatsappClient.sendMessage(to, media, { caption: message });
+    } else {
+      result = await whatsappClient.sendMessage(to, message);
+    }
+
+    console.log(`📤 [ADMIN SEND] ${new Date().toISOString()} → ${to}: ${message.substring(0, 80)}`);
+    return res.json({ ok: true, id: result.id._serialized });
+  } catch (err) {
+    console.error('❌ [ADMIN SEND] Erro:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function iniciarWebServer(whatsappClient) {
   if (whatsappClient) {
