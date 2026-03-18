@@ -1297,40 +1297,55 @@ app.get('/api/admin/crons/usuarios-busca', autenticarAdmin, async (req, res) => 
 
 // ── Admin API (API Key — para N8N) ───────────────────────────────────────────
 app.post('/admin/send', async (req, res) => {
+  console.log(`📥 [ADMIN SEND] ${new Date().toISOString()} Requisição recebida — headers: x-admin-key=${req.headers['x-admin-key'] ? 'presente' : 'ausente'}`);
+  console.log(`📥 [ADMIN SEND] Body: to=${req.body?.to}, message=${req.body?.message?.substring(0, 50)}, imageUrl=${req.body?.imageUrl ? 'sim' : 'não'}`);
+
   const key = req.headers['x-admin-key'];
   if (!key || key !== process.env.ADMIN_API_KEY) {
+    console.log('🚫 [ADMIN SEND] API key inválida');
     return res.status(401).json({ ok: false, error: 'API key inválida' });
   }
 
   const { to, message, imageUrl } = req.body;
   if (!to || !message) {
+    console.log('🚫 [ADMIN SEND] Campos obrigatórios faltando');
     return res.status(400).json({ ok: false, error: 'Campos "to" e "message" são obrigatórios' });
   }
 
   const whatsappClient = app.get('whatsappClient');
   if (!whatsappClient) {
+    console.log('🚫 [ADMIN SEND] WhatsApp client não disponível');
     return res.status(503).json({ ok: false, error: 'WhatsApp client não disponível' });
   }
 
+  console.log('✅ [ADMIN SEND] Respondendo ok e iniciando envio em background');
   res.json({ ok: true });
 
   (async () => {
     try {
       const numberId = to.endsWith('@c.us') ? to.replace('@c.us', '') : to;
+      console.log(`🔍 [ADMIN SEND] Resolvendo número: ${numberId}`);
       const registrado = await whatsappClient.getNumberId(numberId);
-      if (!registrado) return;
+      if (!registrado) {
+        console.log(`🚫 [ADMIN SEND] Número ${numberId} não encontrado no WhatsApp`);
+        return;
+      }
       const chatId = registrado._serialized;
+      console.log(`🔍 [ADMIN SEND] Número resolvido → ${chatId}`);
 
       if (imageUrl) {
+        console.log(`🖼️ [ADMIN SEND] Baixando imagem: ${imageUrl.substring(0, 80)}...`);
         const { MessageMedia } = require('whatsapp-web.js');
         const media = await MessageMedia.fromUrl(imageUrl);
+        console.log(`🖼️ [ADMIN SEND] Imagem baixada (${media.data.length} bytes), enviando...`);
         await whatsappClient.sendMessage(chatId, media, { caption: message });
       } else {
         await whatsappClient.sendMessage(chatId, message);
       }
-      console.log(`📤 [ADMIN SEND] ${new Date().toISOString()} → ${chatId}: ${message.substring(0, 80)}`);
+      console.log(`📤 [ADMIN SEND] ${new Date().toISOString()} Enviado com sucesso → ${chatId}`);
     } catch (err) {
-      console.error('❌ [ADMIN SEND] Erro background:', err.message);
+      console.error(`❌ [ADMIN SEND] Erro background: ${err.message}`);
+      console.error(err.stack);
     }
   })();
 });
