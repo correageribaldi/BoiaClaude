@@ -512,6 +512,41 @@ client.on('message', async (msg) => {
       return;
     }
 
+    // Interceptar aprovação de posts Instagram (N8N)
+    if (process.env.N8N_APROVADOR_WEBHOOK) {
+      const acaoAprovador = /\b(aprovado|aprovar)\b/i.test(textoLower) ? 'aprovar'
+        : /\b(trocar? imagem|nova imagem)\b/i.test(textoLower) ? 'trocar_imagem'
+        : /\b(trocar? texto|novo texto)\b/i.test(textoLower) ? 'trocar_texto'
+        : null;
+
+      if (acaoAprovador) {
+        try {
+          const chat = await msg.getChat();
+          const mensagens = await chat.fetchMessages({ limit: 10 });
+          const enviadas = mensagens.filter(m => m.fromMe);
+          let notionId = null;
+          for (const m of enviadas.reverse()) {
+            const match = (m.body || '').match(/(?:notion_id|ID)[:\s]+([a-f0-9-]{32,36})/i);
+            if (match) { notionId = match[1]; break; }
+          }
+          if (notionId) {
+            const payload = { numero: usuarioId.replace('@c.us', ''), acao: acaoAprovador, notion_id: notionId };
+            console.log(`📋 [APROVADOR] ${acaoAprovador} → notion_id=${notionId}`);
+            fetch(process.env.N8N_APROVADOR_WEBHOOK, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }).catch(err => console.error('❌ [APROVADOR] Erro webhook:', err.message));
+            const respostas = { aprovar: '✅ Post aprovado! Vou agendar a publicação.', trocar_imagem: '🖼️ Entendido! Vou gerar uma nova imagem.', trocar_texto: '📝 Entendido! Vou gerar um novo texto.' };
+            await msg.reply(respostas[acaoAprovador]);
+            return;
+          }
+        } catch (err) {
+          console.error('❌ [APROVADOR] Erro:', err.message);
+        }
+      }
+    }
+
     // Enviar PDF de Termos de Uso sob demanda (disponível mesmo para usuários bloqueados)
     if (['termos', 'termos de uso', 'política', 'politica', 'privacidade', 'eula', 'contrato'].includes(textoLower)) {
       const eulaPath = path.join(__dirname, '../docs/cronos-eula.pdf');
