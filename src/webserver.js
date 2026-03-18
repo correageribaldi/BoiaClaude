@@ -23,6 +23,9 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
+const UPLOAD_DIR = '/home/cronos/public/images';
+app.use('/images', express.static(UPLOAD_DIR));
+
 function getJwt() { return require('jsonwebtoken'); }
 function getBcrypt() { return require('bcrypt'); }
 
@@ -1334,10 +1337,11 @@ app.post('/admin/send', async (req, res) => {
       const chatId = registrado._serialized;
       console.log(`🔍 [ADMIN SEND] Número resolvido → ${chatId}`);
 
-      if (imageUrl) {
-        console.log(`🖼️ [ADMIN SEND] Baixando imagem: ${imageUrl.substring(0, 80)}...`);
+      const cleanImageUrl = imageUrl ? imageUrl.replace(/^=/, '').trim() : null;
+      if (cleanImageUrl) {
+        console.log(`🖼️ [ADMIN SEND] Baixando imagem: ${cleanImageUrl.substring(0, 80)}...`);
         const { MessageMedia } = require('whatsapp-web.js');
-        const media = await MessageMedia.fromUrl(imageUrl, { unsafeMime: true });
+        const media = await MessageMedia.fromUrl(cleanImageUrl, { unsafeMime: true });
         console.log(`🖼️ [ADMIN SEND] Imagem baixada (${media.data.length} bytes), enviando...`);
         await whatsappClient.sendMessage(chatId, media, { caption: message });
       } else {
@@ -1349,6 +1353,40 @@ app.post('/admin/send', async (req, res) => {
       console.error(err.stack);
     }
   })();
+});
+
+app.post('/admin/upload-image', async (req, res) => {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== process.env.ADMIN_API_KEY) {
+    return res.status(401).json({ ok: false, error: 'API key inválida' });
+  }
+
+  const body = req.body || {};
+  const { b64, filename } = body;
+  if (!b64) {
+    return res.status(400).json({ ok: false, error: 'Campo "b64" é obrigatório' });
+  }
+
+  try {
+    if (!fs.existsSync(UPLOAD_DIR)) {
+      fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    }
+
+    const crypto = require('crypto');
+    const nome = filename || `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`;
+    const filePath = path.join(UPLOAD_DIR, nome);
+
+    fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+
+    const baseUrl = (process.env.PUBLIC_BASE_URL || 'https://seasy.host').replace(/\/$/, '');
+    const url = `${baseUrl}/images/${nome}`;
+
+    console.log(`🖼️ [UPLOAD] Imagem salva: ${filePath} → ${url}`);
+    return res.json({ ok: true, url });
+  } catch (err) {
+    console.error('❌ [UPLOAD] Erro:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
