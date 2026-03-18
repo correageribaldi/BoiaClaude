@@ -556,7 +556,7 @@ client.on('message', async (msg) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         }).catch(err => console.error('❌ [APROVADOR] Erro webhook:', err.message));
-        const respostas = { aprovar: '✅ Post aprovado! Vou agendar a publicação.', trocar_imagem: '🖼️ Entendido! Vou gerar uma nova imagem.', trocar_texto: '📝 Entendido! Vou gerar um novo texto.' };
+        const respostas = { aprovar: '⏳ Processando aprovação...', trocar_imagem: '⏳ Gerando nova imagem...', trocar_texto: '⏳ Gerando novo texto...' };
         await msg.reply(respostas[acaoAprovador]);
         return;
       }
