@@ -1312,30 +1312,27 @@ app.post('/admin/send', async (req, res) => {
     return res.status(503).json({ ok: false, error: 'WhatsApp client não disponível' });
   }
 
-  try {
-    // Resolver ID real do número (evita erro "No LID for user")
-    const numberId = to.endsWith('@c.us') ? to.replace('@c.us', '') : to;
-    const registrado = await whatsappClient.getNumberId(numberId);
-    if (!registrado) {
-      return res.status(400).json({ ok: false, error: `Número ${numberId} não encontrado no WhatsApp` });
-    }
-    const chatId = registrado._serialized;
+  res.json({ ok: true });
 
-    let result;
-    if (imageUrl) {
-      const { MessageMedia } = require('whatsapp-web.js');
-      const media = await MessageMedia.fromUrl(imageUrl);
-      result = await whatsappClient.sendMessage(chatId, media, { caption: message });
-    } else {
-      result = await whatsappClient.sendMessage(chatId, message);
-    }
+  (async () => {
+    try {
+      const numberId = to.endsWith('@c.us') ? to.replace('@c.us', '') : to;
+      const registrado = await whatsappClient.getNumberId(numberId);
+      if (!registrado) return;
+      const chatId = registrado._serialized;
 
-    console.log(`📤 [ADMIN SEND] ${new Date().toISOString()} → ${chatId}: ${message.substring(0, 80)}`);
-    return res.json({ ok: true, id: result.id._serialized });
-  } catch (err) {
-    console.error('❌ [ADMIN SEND] Erro:', err.message);
-    return res.status(500).json({ ok: false, error: err.message });
-  }
+      if (imageUrl) {
+        const { MessageMedia } = require('whatsapp-web.js');
+        const media = await MessageMedia.fromUrl(imageUrl);
+        await whatsappClient.sendMessage(chatId, media, { caption: message });
+      } else {
+        await whatsappClient.sendMessage(chatId, message);
+      }
+      console.log(`📤 [ADMIN SEND] ${new Date().toISOString()} → ${chatId}: ${message.substring(0, 80)}`);
+    } catch (err) {
+      console.error('❌ [ADMIN SEND] Erro background:', err.message);
+    }
+  })();
 });
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
