@@ -13,6 +13,8 @@ const { connection } = require('./queue');
 const { criarWorkerReminders } = require('./worker-reminders');
 const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 const { iniciarCronsAdmin } = require('./cron-admin');
+
+const pendingApprovals = new Map();
 const { iniciarWatchdog } = require('./utils/watchdog');
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH
@@ -333,6 +335,21 @@ async function responderMensagem(msg, usuarioId, resposta) {
   await msg.reply(resposta);
 }
 
+// Capturar mensagens enviadas pelo bot para salvar contexto de aprovação
+client.on('message_create', (msg) => {
+  if (!msg.fromMe) return;
+  const body = msg.body || '';
+  // Detectar mensagem de aprovação: contém "Responda:" e "aprovado"
+  if (/responda/i.test(body) && /aprovado/i.test(body)) {
+    const idMatch = body.match(/ID[=:\s]+([a-f0-9-]{8,36})/i);
+    if (idMatch) {
+      const destino = msg.to;
+      pendingApprovals.set(destino, idMatch[1]);
+      console.log(`📋 [APROVADOR] Contexto salvo: ${destino} → notion_id=${idMatch[1]}`);
+    }
+  }
+});
+
 client.on('message', async (msg) => {
   // Ignorar mensagens de grupo e status
   if (msg.from.includes('@g.us')) return;
@@ -513,46 +530,25 @@ client.on('message', async (msg) => {
     }
 
     // Interceptar aprovação de posts Instagram (N8N)
-    if (process.env.N8N_APROVADOR_WEBHOOK) {
+    if (process.env.N8N_APROVADOR_WEBHOOK && pendingApprovals.has(usuarioId)) {
       const acaoAprovador = /\b(aprovado|aprovar)\b/i.test(textoLower) ? 'aprovar'
         : /\b(trocar? imagem|nova imagem)\b/i.test(textoLower) ? 'trocar_imagem'
         : /\b(trocar? texto|novo texto)\b/i.test(textoLower) ? 'trocar_texto'
         : null;
 
       if (acaoAprovador) {
-        console.log(`📋 [APROVADOR] Ação detectada: ${acaoAprovador} de ${usuarioId}`);
-        try {
-          const chat = await msg.getChat();
-          const mensagens = await chat.fetchMessages({ limit: 10 });
-          const enviadas = mensagens.filter(m => m.fromMe);
-          let postOriginal = null;
-          for (const m of enviadas.reverse()) {
-            const body = m.body || '';
-            if (/pilar/i.test(body)) { postOriginal = body; break; }
-          }
-          if (postOriginal) {
-            // Extrair notion_id se existir, senão enviar sem
-            const idMatch = postOriginal.match(/(?:notion_id|ID)[=:\s]+([a-f0-9-]{8,36})/i);
-            const payload = {
-              numero: usuarioId.replace('@c.us', ''),
-              acao: acaoAprovador,
-              notion_id: idMatch ? idMatch[1] : null,
-              post_texto: postOriginal.substring(0, 500),
-            };
-            console.log(`📋 [APROVADOR] Enviando webhook: acao=${acaoAprovador}, notion_id=${payload.notion_id || 'N/A'}`);
-            fetch(process.env.N8N_APROVADOR_WEBHOOK, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            }).catch(err => console.error('❌ [APROVADOR] Erro webhook:', err.message));
-            const respostas = { aprovar: '✅ Post aprovado! Vou agendar a publicação.', trocar_imagem: '🖼️ Entendido! Vou gerar uma nova imagem.', trocar_texto: '📝 Entendido! Vou gerar um novo texto.' };
-            await msg.reply(respostas[acaoAprovador]);
-            return;
-          }
-          console.log('📋 [APROVADOR] Nenhuma mensagem com "Pilar" encontrada nas recentes');
-        } catch (err) {
-          console.error('❌ [APROVADOR] Erro:', err.message);
-        }
+        const notionId = pendingApprovals.get(usuarioId);
+        pendingApprovals.delete(usuarioId);
+        const payload = { numero: usuarioId.replace('@c.us', ''), acao: acaoAprovador, notion_id: notionId };
+        console.log(`📋 [APROVADOR] ${acaoAprovador} → notion_id=${notionId}`);
+        fetch(process.env.N8N_APROVADOR_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(err => console.error('❌ [APROVADOR] Erro webhook:', err.message));
+        const respostas = { aprovar: '✅ Post aprovado! Vou agendar a publicação.', trocar_imagem: '🖼️ Entendido! Vou gerar uma nova imagem.', trocar_texto: '📝 Entendido! Vou gerar um novo texto.' };
+        await msg.reply(respostas[acaoAprovador]);
+        return;
       }
     }
 
