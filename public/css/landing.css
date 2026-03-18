@@ -212,77 +212,16 @@ img { max-width: 100%; display: block; }
   align-items: center;
 }
 
-/* Phone mockup */
-.phone-mockup {
-  width: 280px;
-  background: #1a1a2e;
-  border-radius: 36px;
-  padding: 12px;
+/* Hero phone image */
+.hero-phone-img {
+  max-width: 480px;
+  width: 100%;
+  border-radius: 24px;
   box-shadow: var(--shadow-lg), 0 0 60px rgba(39,174,96,.15);
 }
 
-.phone-screen {
-  background: #075e54;
-  border-radius: 26px;
-  overflow: hidden;
-}
-
-.phone-header {
-  background: #075e54;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: white;
-  font-size: .85rem;
-  font-weight: 600;
-}
-
-.phone-avatar {
-  width: 36px;
-  height: 36px;
-  background: var(--primary-light);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: .9rem;
-}
-
-.phone-chat {
-  background: #ece5dd;
-  padding: 16px;
-  min-height: 320px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.chat-bubble {
-  max-width: 80%;
-  padding: 8px 14px;
-  border-radius: 12px;
-  font-size: .82rem;
-  line-height: 1.5;
-}
-
-.chat-bubble.sent {
-  background: #dcf8c6;
-  align-self: flex-end;
-  border-bottom-right-radius: 4px;
-}
-
-.chat-bubble.received {
-  background: white;
-  align-self: flex-start;
-  border-bottom-left-radius: 4px;
-}
-
-.chat-bubble .time {
-  font-size: .65rem;
-  color: #999;
-  text-align: right;
-  margin-top: 4px;
+@media (max-width: 768px) {
+  .hero-phone-img { max-width: 280px; }
 }
 
 /* ── Section Titles ───────────────────────────────────────────────────────── */
