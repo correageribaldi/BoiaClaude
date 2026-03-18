@@ -1389,12 +1389,16 @@ app.post('/admin/upload-image', async (req, res) => {
     const nome = filename || `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`;
     const filePath = path.join(UPLOAD_DIR, nome);
 
-    fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+    // Limpar prefixo data URL se presente (ex: "data:image/png;base64,iVBOR...")
+    const cleanB64 = b64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(cleanB64, 'base64');
+    console.log(`🖼️ [UPLOAD] Base64 recebido: ${b64.substring(0, 50)}... (${cleanB64.length} chars → ${buffer.length} bytes)`);
+    fs.writeFileSync(filePath, buffer);
 
     const baseUrl = (process.env.PUBLIC_BASE_URL || 'https://seasy.host').replace(/\/$/, '');
     const url = `${baseUrl}/images/${nome}`;
 
-    console.log(`🖼️ [UPLOAD] Imagem salva: ${filePath} → ${url}`);
+    console.log(`🖼️ [UPLOAD] Imagem salva: ${filePath} → ${url} (${buffer.length} bytes)`);
     return res.json({ ok: true, url });
   } catch (err) {
     console.error('❌ [UPLOAD] Erro:', err.message);
