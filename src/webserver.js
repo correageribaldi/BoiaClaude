@@ -1340,10 +1340,22 @@ app.post('/admin/send', async (req, res) => {
 
       const cleanImageUrl = imageUrl ? imageUrl.replace(/^=/, '').trim() : null;
       if (cleanImageUrl) {
-        console.log(`🖼️ [ADMIN SEND] Baixando imagem: ${cleanImageUrl.substring(0, 80)}...`);
         const { MessageMedia } = require('whatsapp-web.js');
-        const media = await MessageMedia.fromUrl(cleanImageUrl, { unsafeMime: true });
-        console.log(`🖼️ [ADMIN SEND] Imagem baixada (${media.data.length} bytes), enviando...`);
+        let media;
+
+        // Se a imagem é local (salva via /admin/upload-image), lê direto do disco
+        const baseUrl = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+        if (baseUrl && cleanImageUrl.startsWith(baseUrl + '/images/')) {
+          const filename = cleanImageUrl.split('/images/').pop();
+          const localPath = path.join(UPLOAD_DIR, filename);
+          console.log(`🖼️ [ADMIN SEND] Lendo imagem local: ${localPath}`);
+          media = MessageMedia.fromFilePath(localPath);
+        } else {
+          console.log(`🖼️ [ADMIN SEND] Baixando imagem: ${cleanImageUrl.substring(0, 80)}...`);
+          media = await MessageMedia.fromUrl(cleanImageUrl, { unsafeMime: true });
+        }
+
+        console.log(`🖼️ [ADMIN SEND] Imagem pronta (${media.data.length} bytes), enviando...`);
         await whatsappClient.sendMessage(chatId, media, { caption: message });
       } else {
         await whatsappClient.sendMessage(chatId, message);
