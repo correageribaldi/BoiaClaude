@@ -1390,7 +1390,7 @@ app.post('/admin/upload-image', async (req, res) => {
     const filePath = path.join(UPLOAD_DIR, nome);
 
     // Limpar prefixo data URL se presente (ex: "data:image/png;base64,iVBOR...")
-    const cleanB64 = b64.replace(/^data:image\/\w+;base64,/, '');
+    const cleanB64 = b64.replace(/^=/, '').replace(/^data:image\/\w+;base64,/, '');
     const buffer = Buffer.from(cleanB64, 'base64');
     console.log(`🖼️ [UPLOAD] Base64 recebido: ${b64.substring(0, 50)}... (${cleanB64.length} chars → ${buffer.length} bytes)`);
     fs.writeFileSync(filePath, buffer);
