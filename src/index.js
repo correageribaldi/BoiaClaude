@@ -336,16 +336,23 @@ async function responderMensagem(msg, usuarioId, resposta) {
 }
 
 // Capturar mensagens enviadas pelo bot para salvar contexto de aprovação
-client.on('message_create', (msg) => {
+client.on('message_create', async (msg) => {
   if (!msg.fromMe) return;
   const body = msg.body || '';
-  // Detectar mensagem de aprovação: contém "Responda:" e "aprovado"
   if (/responda/i.test(body) && /aprovado/i.test(body)) {
     const idMatch = body.match(/ID[=:\s]+([a-f0-9-]{8,36})/i);
     if (idMatch) {
-      const destino = msg.to;
-      pendingApprovals.set(destino, idMatch[1]);
-      console.log(`📋 [APROVADOR] Contexto salvo: ${destino} → notion_id=${idMatch[1]}`);
+      // Salvar com o ID raw (pode ser @lid)
+      pendingApprovals.set(msg.to, idMatch[1]);
+      // Também resolver e salvar com @c.us para garantir match
+      try {
+        const chat = await msg.getChat();
+        const contactId = chat.id?._serialized;
+        if (contactId && contactId !== msg.to) {
+          pendingApprovals.set(contactId, idMatch[1]);
+        }
+      } catch (_) {}
+      console.log(`📋 [APROVADOR] Contexto salvo: ${msg.to} → notion_id=${idMatch[1]}`);
     }
   }
 });
@@ -530,17 +537,20 @@ client.on('message', async (msg) => {
     }
 
     // Interceptar aprovação de posts Instagram (N8N)
-    if (process.env.N8N_APROVADOR_WEBHOOK && pendingApprovals.has(usuarioId)) {
+    const approvalKey = pendingApprovals.has(usuarioId) ? usuarioId
+      : pendingApprovals.has(msg.from) ? msg.from : null;
+    if (process.env.N8N_APROVADOR_WEBHOOK && approvalKey) {
       const acaoAprovador = /\b(aprovado|aprovar)\b/i.test(textoLower) ? 'aprovar'
         : /\b(trocar? imagem|nova imagem)\b/i.test(textoLower) ? 'trocar_imagem'
         : /\b(trocar? texto|novo texto)\b/i.test(textoLower) ? 'trocar_texto'
         : null;
 
       if (acaoAprovador) {
-        const notionId = pendingApprovals.get(usuarioId);
+        const notionId = pendingApprovals.get(approvalKey);
         pendingApprovals.delete(usuarioId);
+        pendingApprovals.delete(msg.from);
         const payload = { numero: usuarioId.replace('@c.us', ''), acao: acaoAprovador, notion_id: notionId };
-        console.log(`📋 [APROVADOR] ${acaoAprovador} → notion_id=${notionId}`);
+        console.log(`📋 [APROVADOR] ${acaoAprovador} → notion_id=${notionId} (key=${approvalKey})`);
         fetch(process.env.N8N_APROVADOR_WEBHOOK, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
