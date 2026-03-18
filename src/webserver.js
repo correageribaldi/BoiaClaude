@@ -24,7 +24,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
-const UPLOAD_DIR = '/home/cronos/public/images';
+const UPLOAD_DIR = path.join(__dirname, '../public/images');
 app.use('/images', express.static(UPLOAD_DIR));
 
 function getJwt() { return require('jsonwebtoken'); }
