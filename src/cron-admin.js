@@ -22,6 +22,10 @@ function iniciarCronsAdmin(whatsappClient) {
   // Verifica a cada 60 segundos se alguma cron precisa rodar
   _intervalo = setInterval(() => verificarCrons(), 60 * 1000);
   console.log('[CRON-ADMIN] Verificador iniciado (a cada 60s)');
+  // Recupera crons que ficaram presas em 'processando' antes do restart
+  recuperarCronsPendentes(whatsappClient).catch(err =>
+    console.error('[CRON-ADMIN] Erro no recovery de crons pendentes:', err.message)
+  );
 }
 
 async function verificarCrons() {
@@ -59,40 +63,71 @@ async function verificarCrons() {
 
 async function executarCron(cronId, whatsappClient) {
   const client = whatsappClient || _whatsappClient;
-  const c = await db.buscarAdminCron(cronId);
-  if (!c) return { enviados: 0, erros: 0 };
-
   if (!client) {
     console.error('[CRON-ADMIN] WhatsApp client não disponível');
     return { enviados: 0, erros: 0 };
   }
 
-  const usuarios = await resolverDestinatarios(c.regra, c.regra_valor, c.usuario_ids);
-  let enviados = 0;
-  let erros = 0;
-
-  for (let i = 0; i < usuarios.length; i++) {
-    const u = usuarios[i];
-    try {
-      const primeiroNome = (u.nome || '').split(' ')[0] || 'amigo(a)';
-      const msg = c.mensagem.replace(/\{nome\}/gi, primeiroNome);
-      await client.sendMessage(u.usuario_id, msg);
-      enviados++;
-    } catch (err) {
-      erros++;
-      console.error(`[CRON-ADMIN] Erro envio para ${u.usuario_id}:`, err.message);
-    }
-
-    // Delay 5-15s entre mensagens (exceto última)
-    if (i < usuarios.length - 1) {
-      const delay = Math.floor(5000 + Math.random() * 10000);
-      await new Promise(r => setTimeout(r, delay));
-    }
+  // Adquire lock SKIP LOCKED e cria registro de log atomicamente
+  const logId = await db.iniciarExecucaoCron(cronId);
+  if (!logId) {
+    console.log(`[CRON-ADMIN] cron #${cronId} já está sendo processada — pulando`);
+    return { enviados: 0, erros: 0 };
   }
 
-  await db.registrarEnvioAdminCron(cronId, enviados);
-  console.log(`[CRON-ADMIN] Cron #${cronId} finalizada — enviados: ${enviados}, erros: ${erros}`);
-  return { enviados, erros };
+  try {
+    const c = await db.buscarAdminCron(cronId);
+    if (!c) {
+      await db.finalizarLogAdminCron(logId, 'erro', 0, 0, 0);
+      return { enviados: 0, erros: 0 };
+    }
+
+    const usuarios = await resolverDestinatarios(c.regra, c.regra_valor, c.usuario_ids);
+    let enviados = 0;
+    let erros = 0;
+
+    for (let i = 0; i < usuarios.length; i++) {
+      const u = usuarios[i];
+      try {
+        const primeiroNome = (u.nome || '').split(' ')[0] || 'amigo(a)';
+        const msg = c.mensagem.replace(/\{nome\}/gi, primeiroNome);
+        await client.sendMessage(u.usuario_id, msg);
+        enviados++;
+      } catch (err) {
+        erros++;
+        console.error(`[CRON-ADMIN] Erro envio para ${u.usuario_id}:`, err.message);
+      }
+
+      // Delay 5-15s entre mensagens (exceto última)
+      if (i < usuarios.length - 1) {
+        const delay = Math.floor(5000 + Math.random() * 10000);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
+    await db.finalizarLogAdminCron(logId, 'finalizado', usuarios.length, enviados, erros);
+    await db.registrarEnvioAdminCron(cronId, enviados);
+    console.log(`[CRON-ADMIN] Cron #${cronId} finalizada — enviados: ${enviados}, erros: ${erros}`);
+    return { enviados, erros };
+  } catch (err) {
+    console.error(`[CRON-ADMIN] Erro não tratado na cron #${cronId}:`, err.message);
+    await db.finalizarLogAdminCron(logId, 'erro', 0, 0, 0).catch(() => {});
+    return { enviados: 0, erros: 0 };
+  }
+}
+
+async function recuperarCronsPendentes(whatsappClient) {
+  try {
+    const pendentes = await db.buscarLogsPendentes();
+    if (pendentes.length === 0) return;
+    console.log(`[CRON-ADMIN] ${pendentes.length} cron(s) pendente(s) encontradas — tentando reexecutar`);
+    for (const log of pendentes) {
+      await db.cancelarLogAdminCron(log.id);
+      await executarCron(log.cron_id, whatsappClient);
+    }
+  } catch (err) {
+    console.error('[CRON-ADMIN] Erro no recovery de crons pendentes:', err.message);
+  }
 }
 
 async function resolverDestinatarios(regra, valor, usuarioIds) {
@@ -109,4 +144,4 @@ async function resolverDestinatarios(regra, valor, usuarioIds) {
   }
 }
 
-module.exports = { iniciarCronsAdmin, executarCron, resolverDestinatarios, FREQUENCIAS };
+module.exports = { iniciarCronsAdmin, executarCron, resolverDestinatarios, recuperarCronsPendentes, FREQUENCIAS };

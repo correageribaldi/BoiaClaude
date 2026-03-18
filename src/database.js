@@ -637,6 +637,19 @@ async function initTables() {
       END IF;
     END$$;
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_crons_log (
+      id            SERIAL PRIMARY KEY,
+      cron_id       INTEGER NOT NULL REFERENCES admin_crons(id) ON DELETE CASCADE,
+      status        TEXT NOT NULL DEFAULT 'processando',
+      total         INTEGER NOT NULL DEFAULT 0,
+      enviados      INTEGER NOT NULL DEFAULT 0,
+      erros         INTEGER NOT NULL DEFAULT 0,
+      iniciado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finalizado_em TIMESTAMPTZ
+    );
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -2975,6 +2988,83 @@ async function registrarEnvioAdminCron(id, totalEnviados) {
   );
 }
 
+/**
+ * Tenta adquirir lock exclusivo na linha da cron (SKIP LOCKED) e cria o log.
+ * Retorna o logId se conseguiu, ou null se a cron já está sendo processada.
+ */
+async function iniciarExecucaoCron(cronId) {
+  const pgClient = await pool.connect();
+  try {
+    await pgClient.query('BEGIN');
+
+    // SKIP LOCKED: se outro processo tiver a linha locked, retorna vazio imediatamente
+    const lock = await pgClient.query(
+      'SELECT id FROM admin_crons WHERE id = $1 FOR UPDATE SKIP LOCKED',
+      [cronId]
+    );
+    if (lock.rows.length === 0) {
+      await pgClient.query('ROLLBACK');
+      return null;
+    }
+
+    // Verificar se já existe log processando recente (< 10 min) — guarda de segurança extra
+    const existing = await pgClient.query(
+      `SELECT id FROM admin_crons_log
+       WHERE cron_id = $1 AND status = 'processando' AND iniciado_em > NOW() - INTERVAL '10 minutes'`,
+      [cronId]
+    );
+    if (existing.rows.length > 0) {
+      await pgClient.query('ROLLBACK');
+      return null;
+    }
+
+    // Criar log e atualizar ultimo_envio atomicamente (evita re-trigger do verificarCrons)
+    const log = await pgClient.query(
+      'INSERT INTO admin_crons_log (cron_id) VALUES ($1) RETURNING id',
+      [cronId]
+    );
+    await pgClient.query(
+      'UPDATE admin_crons SET ultimo_envio = NOW() WHERE id = $1',
+      [cronId]
+    );
+
+    await pgClient.query('COMMIT');
+    return log.rows[0].id;
+  } catch (err) {
+    await pgClient.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    pgClient.release();
+  }
+}
+
+async function finalizarLogAdminCron(logId, status, total, enviados, erros) {
+  await pool.query(
+    `UPDATE admin_crons_log
+     SET status = $2, total = $3, enviados = $4, erros = $5, finalizado_em = NOW()
+     WHERE id = $1`,
+    [logId, status, total, enviados, erros]
+  );
+}
+
+async function buscarLogsPendentes() {
+  const result = await pool.query(`
+    SELECT l.*, c.id AS cron_id
+    FROM admin_crons_log l
+    JOIN admin_crons c ON c.id = l.cron_id
+    WHERE l.status = 'processando'
+      AND l.iniciado_em < NOW() - INTERVAL '10 minutes'
+  `);
+  return result.rows;
+}
+
+async function cancelarLogAdminCron(logId) {
+  await pool.query(
+    `UPDATE admin_crons_log SET status = 'erro', finalizado_em = NOW() WHERE id = $1`,
+    [logId]
+  );
+}
+
 async function listarUsuariosAtivos(dias) {
   const result = await pool.query(`
     SELECT DISTINCT u.usuario_id, u.nome FROM usuarios u
@@ -3161,6 +3251,10 @@ module.exports = {
   atualizarAdminCron,
   excluirAdminCron,
   registrarEnvioAdminCron,
+  iniciarExecucaoCron,
+  finalizarLogAdminCron,
+  buscarLogsPendentes,
+  cancelarLogAdminCron,
   listarUsuariosAtivos,
   listarUsuariosInativos,
   buscarUsuariosPorIds,
