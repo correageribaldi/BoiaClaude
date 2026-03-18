@@ -520,18 +520,23 @@ client.on('message', async (msg) => {
         : null;
 
       if (acaoAprovador) {
+        console.log(`📋 [APROVADOR] Ação detectada: ${acaoAprovador} de ${usuarioId}`);
         try {
           const chat = await msg.getChat();
           const mensagens = await chat.fetchMessages({ limit: 10 });
           const enviadas = mensagens.filter(m => m.fromMe);
+          console.log(`📋 [APROVADOR] ${enviadas.length} mensagens enviadas encontradas`);
           let notionId = null;
           for (const m of enviadas.reverse()) {
-            const match = (m.body || '').match(/(?:notion_id|ID)[:\s]+([a-f0-9-]{32,36})/i);
+            const body = m.body || '';
+            // Regex flexível: aceita notion_id, ID, id seguido de : ou = e qualquer string alfanumérica com hífens
+            const match = body.match(/(?:notion_id|ID)[=:\s]+([a-f0-9-]{8,36})/i);
             if (match) { notionId = match[1]; break; }
+            console.log(`📋 [APROVADOR] Msg analisada (sem match): ${body.substring(0, 100)}`);
           }
           if (notionId) {
             const payload = { numero: usuarioId.replace('@c.us', ''), acao: acaoAprovador, notion_id: notionId };
-            console.log(`📋 [APROVADOR] ${acaoAprovador} → notion_id=${notionId}`);
+            console.log(`📋 [APROVADOR] Enviando webhook: ${JSON.stringify(payload)}`);
             fetch(process.env.N8N_APROVADOR_WEBHOOK, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -541,6 +546,7 @@ client.on('message', async (msg) => {
             await msg.reply(respostas[acaoAprovador]);
             return;
           }
+          console.log('📋 [APROVADOR] notion_id não encontrado nas mensagens recentes');
         } catch (err) {
           console.error('❌ [APROVADOR] Erro:', err.message);
         }
