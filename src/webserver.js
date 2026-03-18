@@ -1306,9 +1306,10 @@ app.post('/admin/send', async (req, res) => {
     return res.status(401).json({ ok: false, error: 'API key inválida' });
   }
 
-  const { to, message, imageUrl } = req.body;
+  const body = req.body || {};
+  const { to, message, imageUrl } = body;
   if (!to || !message) {
-    console.log('🚫 [ADMIN SEND] Campos obrigatórios faltando');
+    console.log(`🚫 [ADMIN SEND] Campos obrigatórios faltando — body type: ${typeof req.body}, raw: ${JSON.stringify(req.body)}`);
     return res.status(400).json({ ok: false, error: 'Campos "to" e "message" são obrigatórios' });
   }
 
@@ -1336,7 +1337,7 @@ app.post('/admin/send', async (req, res) => {
       if (imageUrl) {
         console.log(`🖼️ [ADMIN SEND] Baixando imagem: ${imageUrl.substring(0, 80)}...`);
         const { MessageMedia } = require('whatsapp-web.js');
-        const media = await MessageMedia.fromUrl(imageUrl);
+        const media = await MessageMedia.fromUrl(imageUrl, { unsafeMime: true });
         console.log(`🖼️ [ADMIN SEND] Imagem baixada (${media.data.length} bytes), enviando...`);
         await whatsappClient.sendMessage(chatId, media, { caption: message });
       } else {
