@@ -525,18 +525,21 @@ client.on('message', async (msg) => {
           const chat = await msg.getChat();
           const mensagens = await chat.fetchMessages({ limit: 10 });
           const enviadas = mensagens.filter(m => m.fromMe);
-          console.log(`📋 [APROVADOR] ${enviadas.length} mensagens enviadas encontradas`);
-          let notionId = null;
+          let postOriginal = null;
           for (const m of enviadas.reverse()) {
             const body = m.body || '';
-            // Regex flexível: aceita notion_id, ID, id seguido de : ou = e qualquer string alfanumérica com hífens
-            const match = body.match(/(?:notion_id|ID)[=:\s]+([a-f0-9-]{8,36})/i);
-            if (match) { notionId = match[1]; break; }
-            console.log(`📋 [APROVADOR] Msg analisada (sem match): ${body.substring(0, 100)}`);
+            if (/pilar/i.test(body)) { postOriginal = body; break; }
           }
-          if (notionId) {
-            const payload = { numero: usuarioId.replace('@c.us', ''), acao: acaoAprovador, notion_id: notionId };
-            console.log(`📋 [APROVADOR] Enviando webhook: ${JSON.stringify(payload)}`);
+          if (postOriginal) {
+            // Extrair notion_id se existir, senão enviar sem
+            const idMatch = postOriginal.match(/(?:notion_id|ID)[=:\s]+([a-f0-9-]{8,36})/i);
+            const payload = {
+              numero: usuarioId.replace('@c.us', ''),
+              acao: acaoAprovador,
+              notion_id: idMatch ? idMatch[1] : null,
+              post_texto: postOriginal.substring(0, 500),
+            };
+            console.log(`📋 [APROVADOR] Enviando webhook: acao=${acaoAprovador}, notion_id=${payload.notion_id || 'N/A'}`);
             fetch(process.env.N8N_APROVADOR_WEBHOOK, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -546,7 +549,7 @@ client.on('message', async (msg) => {
             await msg.reply(respostas[acaoAprovador]);
             return;
           }
-          console.log('📋 [APROVADOR] notion_id não encontrado nas mensagens recentes');
+          console.log('📋 [APROVADOR] Nenhuma mensagem com "Pilar" encontrada nas recentes');
         } catch (err) {
           console.error('❌ [APROVADOR] Erro:', err.message);
         }
