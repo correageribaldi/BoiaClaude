@@ -962,6 +962,34 @@ app.post('/api/admin/link', autenticarAdmin, async (req, res) => {
   }
 });
 
+// Pausa o bot para um usuário específico (admin pode conversar sem interferência)
+app.post('/api/admin/pausar', autenticarAdmin, async (req, res) => {
+  try {
+    const { usuarioId } = req.body || {};
+    if (!usuarioId) return res.status(400).json({ erro: 'usuarioId obrigatório' });
+    await db.pausarUsuario(usuarioId);
+    console.log(`[ADMIN] Bot pausado para ${usuarioId}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/pausar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Retoma o bot para um usuário específico
+app.post('/api/admin/retomar', autenticarAdmin, async (req, res) => {
+  try {
+    const { usuarioId } = req.body || {};
+    if (!usuarioId) return res.status(400).json({ erro: 'usuarioId obrigatório' });
+    await db.retomarUsuario(usuarioId);
+    console.log(`[ADMIN] Bot retomado para ${usuarioId}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/retomar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Cria um cupom de desconto ou dias grátis
 app.post('/api/admin/cupom', autenticarAdmin, async (req, res) => {
   try {

@@ -1002,7 +1002,7 @@ function renderEnvioIndividual() {
       <div class="adm-ind-info">
         <span class="adm-ind-nome">${esc(nome)}</span>
         <span class="adm-ind-num">${esc(numero)}</span>
-        <span class="adm-ind-status">${statusLabel(u.status)}</span>
+        <span class="adm-ind-status">${statusLabel(u.status, u.pausado)}</span>
       </div>
       <button class="btn btn-sm btn-blue adm-ind-btn-abrir" onclick="toggleEnvioIndForm('${esc(uid)}')">✉️ Enviar</button>
       <div class="adm-ind-form hidden" id="adm-ind-form-${esc(uid)}">
@@ -1071,7 +1071,8 @@ async function enviarIndividual(usuarioId, nome, btn) {
 
 let admUsuarios = [];
 
-function statusLabel(status) {
+function statusLabel(status, pausado) {
+  if (pausado) return '⏸️ Pausado';
   const map = { trial: '🟡 Trial', ativo: '🟢 Ativo', graca: '🟠 Carência', expirado: '🔴 Expirado' };
   return map[status] || status || '—';
 }
@@ -1411,13 +1412,17 @@ function renderAdminUsuarios(lista) {
         <div style="font-weight:600;font-size:12px">${esc(u.nome || '—')}</div>
         <div style="font-size:11px;color:var(--text-muted)">${esc(u.usuario_id)}</div>
       </td>
-      <td>${statusLabel(u.status)}</td>
+      <td>${statusLabel(u.status, u.pausado)}</td>
       <td style="font-size:12px">${fmtValidade(u)}</td>
       <td style="font-size:11px;color:var(--text-muted)">${u.primeiro_contato ? fmtData(u.primeiro_contato.slice(0, 10)) : '—'}</td>
       <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm btn-green" onclick="adminAtivar('${esc(u.usuario_id)}')">✅ Ativar</button>
           <button class="btn btn-sm btn-blue" onclick="adminLink('${esc(u.usuario_id)}', this)">🔗 Link</button>
+          ${u.pausado
+            ? `<button class="btn btn-sm btn-green" onclick="adminRetomar('${esc(u.usuario_id)}')">▶️ Retomar</button>`
+            : `<button class="btn btn-sm" style="background:#e67e22;color:white" onclick="adminPausar('${esc(u.usuario_id)}')">⏸️ Pausar</button>`
+          }
         </div>
       </td>
     </tr>
@@ -1456,6 +1461,34 @@ async function adminLink(usuarioId, btn) {
   } finally {
     btn.disabled = false;
     btn.textContent = '🔗 Link';
+  }
+}
+
+async function adminPausar(usuarioId) {
+  if (!confirm(`Pausar o bot para:\n${usuarioId}?\n\nO Cronos não responderá mensagens deste usuário até você retomar.`)) return;
+  try {
+    await api('/api/admin/pausar', {
+      method: 'POST',
+      body: JSON.stringify({ usuarioId }),
+    });
+    toast('⏸️ Bot pausado para este usuário', 'success');
+    carregarAdminUsuarios();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function adminRetomar(usuarioId) {
+  if (!confirm(`Retomar o bot para:\n${usuarioId}?`)) return;
+  try {
+    await api('/api/admin/retomar', {
+      method: 'POST',
+      body: JSON.stringify({ usuarioId }),
+    });
+    toast('▶️ Bot retomado para este usuário', 'success');
+    carregarAdminUsuarios();
+  } catch (err) {
+    toast(err.message, 'error');
   }
 }
 

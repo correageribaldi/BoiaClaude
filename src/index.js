@@ -579,6 +579,9 @@ client.on('message', async (msg) => {
     const acesso = await pagamento.verificarAcesso(usuarioId);
 
     if (!acesso.permitido) {
+      // Bot pausado pelo admin — ignorar silenciosamente para permitir conversa manual
+      if (acesso.status === 'pausado') return;
+
       const usuario = await db.buscarUsuario(usuarioId);
       const msgBloqueio = await pagamento.gerarMensagemBloqueio(usuarioId, usuario?.nome);
       await msg.reply(msgBloqueio);

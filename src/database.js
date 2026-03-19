@@ -424,6 +424,11 @@ async function initTables() {
       WHERE order_nsu IS NOT NULL;
   `);
 
+  // Migração: coluna pausado para pausar bot em usuário específico
+  await pool.query(`
+    ALTER TABLE assinaturas ADD COLUMN IF NOT EXISTS pausado BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
   // Migração: criar assinaturas para usuários existentes que ainda não têm registro
   // trial_fim = NOW() → já expirado, entram em carência de 5 dias para assinar
   await pool.query(`
@@ -2345,11 +2350,25 @@ async function criarAssinatura(usuarioId, trialDias = 30) {
 async function buscarAssinatura(usuarioId) {
   const result = await pool.query(
     `SELECT id, usuario_id, status, trial_fim, pago_ate::text as pago_ate,
-            order_nsu, link_pagamento, link_criado_em, avisos_enviados
+            order_nsu, link_pagamento, link_criado_em, avisos_enviados, pausado
      FROM assinaturas WHERE usuario_id = $1`,
     [usuarioId]
   );
   return result.rows[0] || null;
+}
+
+async function pausarUsuario(usuarioId) {
+  await pool.query(
+    `UPDATE assinaturas SET pausado = TRUE, atualizado_em = NOW() WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+}
+
+async function retomarUsuario(usuarioId) {
+  await pool.query(
+    `UPDATE assinaturas SET pausado = FALSE, atualizado_em = NOW() WHERE usuario_id = $1`,
+    [usuarioId]
+  );
 }
 
 async function buscarAssinaturasPendentes() {
@@ -2451,7 +2470,8 @@ async function atualizarNomeUsuario(usuarioId, nome) {
 async function listarUsuariosAdmin() {
   const result = await pool.query(`
     SELECT u.usuario_id, u.nome, u.primeiro_contato,
-           a.status, a.trial_fim, a.pago_ate, a.order_nsu, a.atualizado_em
+           a.status, a.trial_fim, a.pago_ate, a.order_nsu, a.atualizado_em,
+           COALESCE(a.pausado, FALSE) as pausado
     FROM usuarios u
     LEFT JOIN assinaturas a ON a.usuario_id = u.usuario_id
     ORDER BY u.primeiro_contato DESC
@@ -3197,6 +3217,8 @@ module.exports = {
   atualizarNomeUsuario,
   listarUsuariosNaoPagantes,
   listarUsuariosAdmin,
+  pausarUsuario,
+  retomarUsuario,
   criarCupom,
   buscarCupom,
   incrementarUsoCupom,

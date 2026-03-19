@@ -172,6 +172,11 @@ async function verificarAcesso(usuarioId) {
 
   let assinatura = await db.buscarAssinatura(usuarioId);
 
+  // Bot pausado pelo admin para este usuário — ignorar mensagem silenciosamente
+  if (assinatura?.pausado) {
+    return { permitido: false, status: 'pausado' };
+  }
+
   if (!assinatura) {
     await db.criarAssinatura(usuarioId, DIAS_TRIAL);
     return { permitido: true, ehPrimeiraVez: true, status: 'trial' };
