@@ -259,6 +259,28 @@
         </div>
       </div>
 
+      <!-- Últimas transações + Próximos lembretes -->
+      <div class="dash-lists-row">
+        <div class="dash-list-card">
+          <div class="dash-list-header">
+            <h3>Últimas Transações</h3>
+            <button class="btn-link" onclick="ativarTab('transactions')">Ver todas</button>
+          </div>
+          <div id="dash-ultimas-tx" class="dash-list-body">
+            <p class="empty-hint">Carregando...</p>
+          </div>
+        </div>
+        <div class="dash-list-card">
+          <div class="dash-list-header">
+            <h3>Próximos Lembretes</h3>
+            <button class="btn-link" onclick="ativarTab('agenda')">Ver agenda</button>
+          </div>
+          <div id="dash-proximos-lembretes" class="dash-list-body">
+            <p class="empty-hint">Carregando...</p>
+          </div>
+        </div>
+      </div>
+
       <div class="charts-row">
         <div class="chart-card">
           <h3>Despesas por Categoria</h3>
@@ -598,6 +620,31 @@
         <button class="btn btn-google" disabled>🗓 Conectar com Google</button>
       </div>
     </div>
+  </div>
+
+  <!-- ── FAB Speed Dial ─────────────────────────────────────────────────── -->
+  <div class="fab-container" id="fab-container">
+    <div class="fab-menu hidden" id="fab-menu">
+      <button class="fab-item" onclick="abrirModalNovaTx(); fecharFab();" title="Nova Despesa">
+        <span class="fab-item-icon">💳</span>
+        <span class="fab-item-label">Despesa / Receita</span>
+      </button>
+      <button class="fab-item" onclick="abrirModalNovoCartao(); fecharFab();" title="Novo Cartão">
+        <span class="fab-item-icon">💳</span>
+        <span class="fab-item-label">Cartão de Crédito</span>
+      </button>
+      <button class="fab-item" onclick="abrirModalNovaCaixinha(); fecharFab();" title="Nova Carteira">
+        <span class="fab-item-icon">👛</span>
+        <span class="fab-item-label">Carteira / Caixinha</span>
+      </button>
+      <button class="fab-item" onclick="abrirModalNovoLembrete(); fecharFab();" title="Novo Lembrete">
+        <span class="fab-item-icon">🔔</span>
+        <span class="fab-item-label">Lembrete</span>
+      </button>
+    </div>
+    <button class="fab-btn" id="fab-btn" onclick="toggleFab()">
+      <span class="fab-icon">+</span>
+    </button>
   </div>
 
 </div>

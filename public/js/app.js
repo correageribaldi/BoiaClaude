@@ -421,6 +421,85 @@ async function carregarDashboard() {
 
   renderChartCategorias(resumo.porCategoria || []);
   await renderChartMensal();
+
+  // Carregar cards auxiliares em paralelo
+  carregarUltimasTx();
+  carregarProximosLembretes();
+}
+
+// ── Dashboard: últimas transações ────────────────────────────────────────────
+async function carregarUltimasTx() {
+  const el = document.getElementById('dash-ultimas-tx');
+  if (!el) return;
+  try {
+    const { mes, ano } = estado.dash;
+    const mesStr = String(mes).padStart(2, '0');
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    const dataInicio = `${ano}-${mesStr}-01`;
+    const dataFim = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
+    const txs = await api(`/api/transactions?dataInicio=${dataInicio}&dataFim=${dataFim}&limite=5`);
+    if (!txs || txs.length === 0) {
+      el.innerHTML = '<p class="empty-hint">Nenhuma transação no mês.</p>';
+      return;
+    }
+    el.innerHTML = txs.slice(0, 5).map(t => {
+      const icon = t.tipo === 'despesa' ? '↓' : '↑';
+      return `<div class="dash-tx-item">
+        <div class="dash-tx-icon ${t.tipo}">${icon}</div>
+        <div class="dash-tx-info">
+          <div class="dash-tx-desc">${t.descricao || '—'}</div>
+          <div class="dash-tx-meta">${fmtData(t.data)}${t.categoria ? ' · ' + t.categoria : ''}</div>
+        </div>
+        <div class="dash-tx-valor ${t.tipo}">${fmtMoeda(t.valor)}</div>
+      </div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = '<p class="empty-hint">Erro ao carregar.</p>';
+  }
+}
+
+// ── Dashboard: próximos lembretes ────────────────────────────────────────────
+async function carregarProximosLembretes() {
+  const el = document.getElementById('dash-proximos-lembretes');
+  if (!el) return;
+  try {
+    const agora = new Date();
+    const mes = agora.getMonth() + 1;
+    const ano = agora.getFullYear();
+    const itens = await api(`/api/agenda?mes=${mes}&ano=${ano}`);
+    // Filtrar apenas futuros ou de hoje
+    const hoje = agora.toISOString().substring(0, 10);
+    const proximos = (itens || []).filter(i => (i.data_disparo || '') >= hoje).slice(0, 5);
+    if (proximos.length === 0) {
+      el.innerHTML = '<p class="empty-hint">Nenhum lembrete próximo.</p>';
+      return;
+    }
+    el.innerHTML = proximos.map(l => {
+      const data = l.data_disparo ? fmtData(l.data_disparo) : '—';
+      const hora = l.hora ? l.hora.substring(0, 5) : '';
+      return `<div class="dash-lem-item">
+        <div class="dash-lem-icon">🔔</div>
+        <div class="dash-lem-info">
+          <div class="dash-lem-msg">${l.mensagem || l.descricao || '—'}</div>
+          <div class="dash-lem-data">${data}${hora ? ' às ' + hora : ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = '<p class="empty-hint">Erro ao carregar.</p>';
+  }
+}
+
+// ── FAB Speed Dial ──────────────────────────────────────────────────────────
+function toggleFab() {
+  const menu = document.getElementById('fab-menu');
+  const btn = document.getElementById('fab-btn');
+  menu.classList.toggle('hidden');
+  btn.classList.toggle('open');
+}
+function fecharFab() {
+  document.getElementById('fab-menu')?.classList.add('hidden');
+  document.getElementById('fab-btn')?.classList.remove('open');
 }
 
 // ── Transações ────────────────────────────────────────────────────────────────
@@ -1631,7 +1710,12 @@ function inicializar() {
     e.stopPropagation();
     dropdown?.classList.toggle('hidden');
   });
-  document.addEventListener('click', () => dropdown?.classList.add('hidden'));
+  document.addEventListener('click', (e) => {
+    dropdown?.classList.add('hidden');
+    // Fechar FAB se clicar fora
+    const fabContainer = document.getElementById('fab-container');
+    if (fabContainer && !fabContainer.contains(e.target)) fecharFab();
+  });
 
   document.getElementById('avatar-dd-sair')?.addEventListener('click', logout);
 
