@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cronos — Painel Financeiro</title>
+  <script>
+    // Aplicar tema salvo antes do CSS carregar (evita flash)
+    (function(){var t=localStorage.getItem('cronos_theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');})();
+  </script>
   <link rel="stylesheet" href="/css/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
@@ -82,6 +86,23 @@
       flex-wrap: wrap;
       padding: 0;
     }
+    /* Select2 — tema claro */
+    [data-theme="light"] .select2-container--default .select2-selection--multiple {
+      background: #ffffff; border-color: #d8d8e4;
+    }
+    [data-theme="light"] .select2-container--default .select2-selection--multiple .select2-selection__choice {
+      background: #eeeef4; border-color: #d8d8e4; color: #1a1a2e;
+    }
+    [data-theme="light"] .select2-container--default .select2-selection--multiple .select2-selection__choice__remove { color: #6b6b85; }
+    [data-theme="light"] .select2-container--default .select2-selection--multiple .select2-selection__placeholder { color: #6b6b85; }
+    [data-theme="light"] .select2-dropdown {
+      background: #ffffff; border-color: #d8d8e4; color: #1a1a2e;
+      box-shadow: 0 4px 20px rgba(0,0,0,.1);
+    }
+    [data-theme="light"] .select2-container--default .select2-results__option { color: #1a1a2e; }
+    [data-theme="light"] .select2-container--default .select2-results__option--highlighted[aria-selected] { background: #eeeef4; color: #1a1a2e; }
+    [data-theme="light"] .select2-container--default .select2-results__option[aria-selected=true] { background: #e0f0fc; color: #2a6fa8; }
+    [data-theme="light"] .select2-search--dropdown .select2-search__field { background: #f4f4f8; border-color: #d8d8e4; color: #1a1a2e; }
   </style>
 </head>
 <body>
@@ -553,6 +574,18 @@
           <input type="email" id="settings-input-email" placeholder="seu@email.com" />
         </div>
         <button class="btn btn-primary" id="btn-settings-salvar">Salvar alterações</button>
+      </div>
+
+      <!-- Aparência -->
+      <div class="settings-section">
+        <div class="settings-section-title">Aparência</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <label style="color:var(--text-muted);font-size:13px;">Tema</label>
+          <div class="toggle-bar" id="theme-toggle-bar" style="max-width:200px;">
+            <button class="toggle-btn" data-theme-val="light" type="button">☀️ Claro</button>
+            <button class="toggle-btn active" data-theme-val="dark" type="button">🌙 Escuro</button>
+          </div>
+        </div>
       </div>
 
       <!-- Google Calendar (em desenvolvimento) -->

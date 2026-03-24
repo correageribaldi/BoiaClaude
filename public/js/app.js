@@ -13,6 +13,26 @@ let _saldoOculto = false;
 let _saldoAtual = null;
 let _meNome = '';
 
+// ── Tema claro / escuro ────────────────────────────────────────────────────
+function getTheme() { return localStorage.getItem('cronos_theme') || 'dark'; }
+function setTheme(theme) {
+  if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('cronos_theme', theme);
+  _syncThemeToggle();
+}
+function _syncThemeToggle() {
+  const bar = document.getElementById('theme-toggle-bar');
+  if (!bar) return;
+  const tema = getTheme();
+  bar.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.themeVal === tema);
+  });
+}
+
 // ── Helpers de avatar / settings ──────────────────────────────────────────────
 let _avatarData = null; // data URL da foto vinda do servidor
 
@@ -1593,6 +1613,7 @@ function abrirSettings() {
   const inputEmail = document.getElementById('settings-input-email');
   if (inputEmail) inputEmail.value = email;
   _aplicarAvatar(_meNome);
+  _syncThemeToggle();
   document.getElementById('modal-settings')?.classList.remove('hidden');
 }
 
@@ -1642,6 +1663,11 @@ function inicializar() {
   // Desktop top-nav avatar → abre settings
   document.getElementById('nav-avatar')?.addEventListener('click', () => {
     abrirSettings();
+  });
+
+  // Toggle tema claro / escuro
+  document.getElementById('theme-toggle-bar')?.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => setTheme(btn.dataset.themeVal));
   });
 
   document.getElementById('btn-settings-close')?.addEventListener('click', () => {

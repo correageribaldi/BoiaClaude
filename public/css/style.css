@@ -21,6 +21,67 @@
   --nav-h: 64px;
 }
 
+/* ── Tema claro ─────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --green-light: #e8f8ef;
+  --red-light: #fdeaea;
+  --orange-light: #fef5e0;
+  --blue-light: #e0f0fc;
+  --text: #1a1a2e;
+  --text-muted: #6b6b85;
+  --bg: #f4f4f8;
+  --card-bg: #ffffff;
+  --border: #d8d8e4;
+  --shadow: 0 2px 12px rgba(0,0,0,.08);
+}
+
+/* Overrides de cores hardcoded no tema claro */
+[data-theme="light"] #tela-login,
+[data-theme="light"] #tela-loading {
+  background: linear-gradient(135deg, #c8d6f0 0%, #a8bde0 60%, #7ea3d0 100%) !important;
+}
+[data-theme="light"] .dash-hero {
+  background: linear-gradient(145deg, #c8d6f0 0%, #a8bde0 55%, #7ea3d0 100%);
+}
+[data-theme="light"] .dash-hero,
+[data-theme="light"] .dash-hero * { color: #1a1a2e; }
+[data-theme="light"] .dash-avatar {
+  background: rgba(0,0,0,.08);
+  border-color: rgba(0,0,0,.15);
+}
+[data-theme="light"] .dash-nav-btn {
+  background: rgba(0,0,0,.08);
+  color: rgba(0,0,0,.7);
+}
+[data-theme="light"] .dash-nav-btn:hover { background: rgba(0,0,0,.14); }
+[data-theme="light"] .dash-hero-saldo-label { color: rgba(0,0,0,.5); }
+[data-theme="light"] .dash-eye-btn { color: rgba(0,0,0,.35); }
+[data-theme="light"] .dash-eye-btn:hover { color: rgba(0,0,0,.8); }
+[data-theme="light"] .dash-hero-bottom { border-top-color: rgba(0,0,0,.1); }
+[data-theme="light"] .dash-hero-divider { background: rgba(0,0,0,.1); }
+[data-theme="light"] .dash-item-label { color: rgba(0,0,0,.5); }
+[data-theme="light"] .dash-green { color: #1e8e4e; }
+[data-theme="light"] .dash-red { color: #d43c2c; }
+[data-theme="light"] .data-table thead th { background: #eeeef4; }
+[data-theme="light"] .data-table tbody tr:hover { background: #f0f0f6; }
+[data-theme="light"] .card-alert { background: #fef5e0; border-color: #e0c54a; }
+[data-theme="light"] .card-alert:hover { background: #fef9ec; }
+[data-theme="light"] .badge-projetado { background: #e0f0fc; color: #2a6fa8; border-color: #7eb8e8; }
+[data-theme="light"] .ag-badge-rec { background: #e0f0fc; color: #2a6fa8; }
+[data-theme="light"] .accordion-header:hover { background: rgba(0,0,0,.04); }
+[data-theme="light"] .accordion-header-active { background: rgba(0,0,0,.06); }
+[data-theme="light"] .nav-avatar {
+  background: rgba(0,0,0,.08);
+  border-color: rgba(0,0,0,.15);
+}
+[data-theme="light"] .nav-btn:hover { background: rgba(0,0,0,.06); }
+[data-theme="light"] .nav-btn.active { background: rgba(74,158,221,.12); }
+[data-theme="light"] .login-box { color: var(--text); }
+[data-theme="light"] #tela-loading div[style*="border:3px"] {
+  border-color: #d8d8e4 !important;
+  border-top-color: #4a9edd !important;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
