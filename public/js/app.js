@@ -54,64 +54,74 @@ function _comprimirImagem(file, callback) {
   reader.readAsDataURL(file);
 }
 
+let _inicializado = false;
+
 async function verificarAuth(tentativa = 1) {
   const jwt = getJwt();
   if (!jwt) { esconderLoading(); mostrarLogin(); return; }
 
-  try {
-    const me = await apiDirect('/api/auth/me');
-    _isAdmin = !!me.isAdmin;
-    _avatarData = me.avatarData || null;
-    _aplicarAvatar(me.nome || me.username || '?');
-    _meNome = me.nome || me.username || '';
-    if (_isAdmin) {
-      document.getElementById('nav-admin').classList.remove('hidden');
-    }
-    esconderLoading();
-    document.getElementById('app').classList.remove('hidden');
-    inicializar();
-    // Restaurar aba ativa salva no localStorage
-    const abaSalva = localStorage.getItem('cronos_tab_ativa');
-    if (abaSalva && document.getElementById('tab-' + abaSalva)) {
-      ativarTab(abaSalva);
-    }
-  } catch (err) {
-    // Distinguir erro de rede (retry) vs token inválido (logout)
-    if (err.message === 'auth_invalido') {
-      clearJwt();
-      esconderLoading();
-      mostrarLogin();
-    } else if (tentativa < 3) {
-      // Erro de rede — tentar novamente após 2s
-      console.warn(`[AUTH] Tentativa ${tentativa} falhou (rede), retentando...`);
-      await new Promise(r => setTimeout(r, 2000));
-      return verificarAuth(tentativa + 1);
-    } else {
-      // 3 tentativas falharam — mostrar login com aviso
-      console.error('[AUTH] 3 tentativas falharam, exibindo login');
-      esconderLoading();
-      mostrarLogin();
-    }
-  }
-}
-
-// Chamada direta ao /api/auth/me sem usar api() (evita loop de logout)
-async function apiDirect(path) {
-  const jwt = getJwt() || '';
-  const headers = { 'Content-Type': 'application/json' };
-  if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
-
   let res;
   try {
-    res = await fetch(path, { headers });
+    const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + jwt };
+    res = await fetch('/api/auth/me', { headers });
   } catch {
-    throw new Error('network_error');
+    // Erro de rede (offline, DNS, timeout)
+    if (tentativa < 3) {
+      console.warn(`[AUTH] Tentativa ${tentativa} falhou (rede), retentando em 2s...`);
+      await new Promise(r => setTimeout(r, 2000));
+      return verificarAuth(tentativa + 1);
+    }
+    // 3 falhas de rede: mostra app offline se possível, senão login
+    console.error('[AUTH] 3 tentativas de rede falharam');
+    esconderLoading();
+    mostrarLogin();
+    return;
   }
 
-  if (res.status === 401) throw new Error('auth_invalido');
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.erro || 'Erro ' + res.status);
-  return data;
+  // Token inválido ou expirado → logout
+  if (res.status === 401) {
+    clearJwt();
+    esconderLoading();
+    mostrarLogin();
+    return;
+  }
+
+  // Servidor retornou erro (500, etc) → retry sem limpar token
+  if (!res.ok) {
+    if (tentativa < 3) {
+      console.warn(`[AUTH] /api/auth/me retornou ${res.status}, retentando...`);
+      await new Promise(r => setTimeout(r, 2000));
+      return verificarAuth(tentativa + 1);
+    }
+    console.error('[AUTH] /api/auth/me falhou 3 vezes com status', res.status);
+    esconderLoading();
+    mostrarLogin();
+    return;
+  }
+
+  const me = await res.json().catch(() => ({}));
+  _isAdmin = !!me.isAdmin;
+  _avatarData = me.avatarData || null;
+  _aplicarAvatar(me.nome || me.username || '?');
+  _meNome = me.nome || me.username || '';
+  if (_isAdmin) {
+    document.getElementById('nav-admin').classList.remove('hidden');
+  }
+  esconderLoading();
+  document.getElementById('app').classList.remove('hidden');
+
+  if (!_inicializado) {
+    _inicializado = true;
+    inicializar();
+  }
+
+  // Restaurar aba ativa salva no localStorage
+  const abaSalva = localStorage.getItem('cronos_tab_ativa');
+  if (abaSalva && document.getElementById('tab-' + abaSalva)) {
+    ativarTab(abaSalva);
+  } else {
+    ativarTab('dashboard');
+  }
 }
 
 function esconderLoading() {
@@ -1818,8 +1828,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (loginOk) {
       document.getElementById('tela-login').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
-      inicializar();
+      verificarAuth();
     }
   });
 
