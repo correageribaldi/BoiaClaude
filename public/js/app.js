@@ -1662,10 +1662,10 @@ function inicializar() {
   });
 
   // Dashboard nav
-  document.getElementById('dash-prev').addEventListener('click', () => {
+  document.getElementById('dash-prev')?.addEventListener('click', () => {
     const e = estado.dash; e.mes--; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarDashboard();
   });
-  document.getElementById('dash-next').addEventListener('click', () => {
+  document.getElementById('dash-next')?.addEventListener('click', () => {
     const e = estado.dash; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarDashboard();
   });
 
@@ -1684,10 +1684,10 @@ function inicializar() {
   });
 
   // Transações nav
-  document.getElementById('tx-prev').addEventListener('click', () => {
+  document.getElementById('tx-prev')?.addEventListener('click', () => {
     const e = estado.tx; e.mes--; e.pagina = 1; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarTransacoes();
   });
-  document.getElementById('tx-next').addEventListener('click', () => {
+  document.getElementById('tx-next')?.addEventListener('click', () => {
     const e = estado.tx; e.mes++; e.pagina = 1; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarTransacoes();
   });
 
@@ -1704,7 +1704,7 @@ function inicializar() {
   });
 
   let buscaTimer;
-  document.getElementById('tx-search').addEventListener('input', e => {
+  document.getElementById('tx-search')?.addEventListener('input', e => {
     clearTimeout(buscaTimer);
     buscaTimer = setTimeout(() => { estado.tx.busca = e.target.value.trim(); estado.tx.pagina = 1; carregarTransacoes(); }, 350);
   });
@@ -1716,16 +1716,16 @@ function inicializar() {
   });
 
   // Criar subcategoria
-  document.getElementById('sub-criar').addEventListener('click', criarSubcategoria);
-  document.getElementById('sub-nova-nome').addEventListener('keydown', e => {
+  document.getElementById('sub-criar')?.addEventListener('click', criarSubcategoria);
+  document.getElementById('sub-nova-nome')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') criarSubcategoria();
   });
 
   // Agenda nav
-  document.getElementById('ag-prev').addEventListener('click', () => {
+  document.getElementById('ag-prev')?.addEventListener('click', () => {
     const e = estado.ag; e.mes--; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarAgenda();
   });
-  document.getElementById('ag-next').addEventListener('click', () => {
+  document.getElementById('ag-next')?.addEventListener('click', () => {
     const e = estado.ag; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarAgenda();
   });
 
@@ -1734,7 +1734,7 @@ function inicializar() {
     inicializarCronAdmin();
 
     // Criar cupom
-    document.getElementById('adm-cupom-criar').addEventListener('click', async () => {
+    document.getElementById('adm-cupom-criar')?.addEventListener('click', async () => {
       const codigo = document.getElementById('adm-cupom-codigo').value.trim().toUpperCase();
       const tipo = document.getElementById('adm-cupom-tipo').value;
       const valor = document.getElementById('adm-cupom-valor').value;
@@ -1757,16 +1757,16 @@ function inicializar() {
     });
 
     // Admin: envio individual
-    document.getElementById('adm-ind-busca').addEventListener('input', e => {
+    document.getElementById('adm-ind-busca')?.addEventListener('input', e => {
       admInd.busca = e.target.value.toLowerCase().trim();
       admInd.pagina = 1;
       renderEnvioIndividual();
     });
 
-    document.getElementById('adm-fb-todos').addEventListener('change', (e) => fbToggleTodos(e.target.checked));
+    document.getElementById('adm-fb-todos')?.addEventListener('change', (e) => fbToggleTodos(e.target.checked));
 
     // Admin: busca de usuários
-    document.getElementById('adm-busca').addEventListener('input', e => {
+    document.getElementById('adm-busca')?.addEventListener('input', e => {
       const q = e.target.value.toLowerCase();
       const filtrado = admUsuarios.filter(u =>
         (u.nome || '').toLowerCase().includes(q) ||
@@ -1776,7 +1776,7 @@ function inicializar() {
     });
   }
 
-  carregarDashboard();
+  // Dashboard é carregado via ativarTab() chamado no verificarAuth()
 }
 
 // ── Login form ────────────────────────────────────────────────────────────────
