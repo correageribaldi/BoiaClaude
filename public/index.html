@@ -86,6 +86,19 @@
 </head>
 <body>
 
+<!-- ── Loading (exibido enquanto valida token no F5) ──────────────────── -->
+<div id="tela-loading">
+  <div class="login-box" style="text-align:center;">
+    <div class="login-logo">💸</div>
+    <h1>Cronos Financeiro</h1>
+    <p class="login-sub" style="margin-top:12px;">Carregando...</p>
+    <div style="margin-top:20px;">
+      <div style="width:32px;height:32px;border:3px solid #2a2a36;border-top-color:#4a9edd;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto;"></div>
+    </div>
+  </div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
 <!-- ── Tela de login ─────────────────────────────────────────────────────── -->
 <div id="tela-login" class="hidden">
   <div class="login-box">

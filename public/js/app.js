@@ -54,30 +54,73 @@ function _comprimirImagem(file, callback) {
   reader.readAsDataURL(file);
 }
 
-async function verificarAuth() {
+async function verificarAuth(tentativa = 1) {
   const jwt = getJwt();
-  if (!jwt) { mostrarLogin(); return; }
+  if (!jwt) { esconderLoading(); mostrarLogin(); return; }
 
   try {
-    const me = await api('/api/auth/me');
+    const me = await apiDirect('/api/auth/me');
     _isAdmin = !!me.isAdmin;
-    // Avatar do servidor
     _avatarData = me.avatarData || null;
     _aplicarAvatar(me.nome || me.username || '?');
-    // Nome na tela de settings
     _meNome = me.nome || me.username || '';
     if (_isAdmin) {
       document.getElementById('nav-admin').classList.remove('hidden');
     }
+    esconderLoading();
     document.getElementById('app').classList.remove('hidden');
     inicializar();
-  } catch {
-    clearJwt();
-    mostrarLogin();
+    // Restaurar aba ativa salva no localStorage
+    const abaSalva = localStorage.getItem('cronos_tab_ativa');
+    if (abaSalva && document.getElementById('tab-' + abaSalva)) {
+      ativarTab(abaSalva);
+    }
+  } catch (err) {
+    // Distinguir erro de rede (retry) vs token inválido (logout)
+    if (err.message === 'auth_invalido') {
+      clearJwt();
+      esconderLoading();
+      mostrarLogin();
+    } else if (tentativa < 3) {
+      // Erro de rede — tentar novamente após 2s
+      console.warn(`[AUTH] Tentativa ${tentativa} falhou (rede), retentando...`);
+      await new Promise(r => setTimeout(r, 2000));
+      return verificarAuth(tentativa + 1);
+    } else {
+      // 3 tentativas falharam — mostrar login com aviso
+      console.error('[AUTH] 3 tentativas falharam, exibindo login');
+      esconderLoading();
+      mostrarLogin();
+    }
   }
 }
 
+// Chamada direta ao /api/auth/me sem usar api() (evita loop de logout)
+async function apiDirect(path) {
+  const jwt = getJwt() || '';
+  const headers = { 'Content-Type': 'application/json' };
+  if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
+
+  let res;
+  try {
+    res = await fetch(path, { headers });
+  } catch {
+    throw new Error('network_error');
+  }
+
+  if (res.status === 401) throw new Error('auth_invalido');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.erro || 'Erro ' + res.status);
+  return data;
+}
+
+function esconderLoading() {
+  const el = document.getElementById('tela-loading');
+  if (el) el.classList.add('hidden');
+}
+
 function mostrarLogin() {
+  esconderLoading();
   document.getElementById('tela-login').classList.remove('hidden');
   document.getElementById('app').classList.add('hidden');
   setTimeout(() => document.getElementById('login-user')?.focus(), 50);
@@ -85,6 +128,7 @@ function mostrarLogin() {
 
 function logout() {
   clearJwt();
+  localStorage.removeItem('cronos_tab_ativa');
   document.getElementById('app').classList.add('hidden');
   document.getElementById('tela-login').classList.remove('hidden');
   document.getElementById('login-user').value = '';
@@ -98,7 +142,13 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
 
-  const res = await fetch(path, { headers, ...opts });
+  let res;
+  try {
+    res = await fetch(path, { headers, ...opts });
+  } catch {
+    throw new Error('Erro de conexão. Verifique sua internet.');
+  }
+
   const data = await res.json().catch(() => ({}));
 
   if (res.status === 401) { clearJwt(); mostrarLogin(); throw new Error('Sessão expirada'); }
@@ -1497,6 +1547,7 @@ let tabAtual = 'dashboard';
 
 function ativarTab(tab) {
   tabAtual = tab;
+  localStorage.setItem('cronos_tab_ativa', tab);
   document.querySelectorAll('.tab-content').forEach(s => s.classList.add('hidden'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.remove('hidden');
