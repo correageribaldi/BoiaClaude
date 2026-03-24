@@ -120,6 +120,15 @@ async function executarRodada(client, rodada) {
     const porUsuario = agruparPorUsuario(pendentes);
 
     for (const [usuarioId, transacoes] of Object.entries(porUsuario)) {
+      // Pular usuários churned (saíram da base ativa)
+      try {
+        const churned = await db.isChurned(usuarioId);
+        if (churned) {
+          console.log(`[LEMBRETE] Pulando ${usuarioId} (churned)`);
+          continue;
+        }
+      } catch (_) {}
+
       // Filtrar só as que ainda estão pendentes (pode ter pago entre rodadas)
       const aindaPendentes = [];
       for (const t of transacoes) {
@@ -168,6 +177,13 @@ async function verificarLembretesRecorrentes(client) {
 
     for (const l of lembretes) {
       try {
+        // Pular usuários churned
+        const churned = await db.isChurned(l.usuario_id);
+        if (churned) {
+          console.log(`[RECORRENTE] Pulando ${l.usuario_id} (churned)`);
+          continue;
+        }
+
         const msg = `🔄 *Lembrete recorrente!*\n\nEi, passando pra te lembrar: *${l.mensagem}*\n\nBora lá! 💪`;
         await client.sendMessage(l.usuario_id, msg);
         await db.marcarRecorrenteEnviado(l.id);

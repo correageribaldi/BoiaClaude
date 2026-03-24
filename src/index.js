@@ -14,6 +14,7 @@ const { connection } = require('./queue');
 const { criarWorkerReminders } = require('./worker-reminders');
 const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 const { iniciarCronsAdmin } = require('./cron-admin');
+const { iniciarReativacao } = require('./reativacao');
 
 const pendingApprovals = new Map();
 const { iniciarWatchdog } = require('./utils/watchdog');
@@ -208,6 +209,7 @@ client.on('ready', async () => {
     // Iniciar sistema de lembretes financeiros (cron 10h/13h/20h)
     iniciarLembretes(client);
     iniciarCronsAdmin(client);
+    iniciarReativacao(client);
 
     // Iniciar worker BullMQ para lembretes pontuais e recorrentes
     criarWorkerReminders(client, connection);
@@ -399,6 +401,18 @@ client.on('message', async (msg) => {
     }
   } catch (error) {
     console.error('[USUARIO] Erro ao verificar primeiro contato:', error.message);
+  }
+
+  // Atualizar última interação e reativar se churned
+  try {
+    await db.atualizarUltimaInteracao(usuarioId);
+    const churned = await db.isChurned(usuarioId);
+    if (churned) {
+      await db.reativarUsuario(usuarioId);
+      console.log(`[REATIVACAO] Usuário ${usuarioId} reativado (mandou mensagem após churn)`);
+    }
+  } catch (err) {
+    console.error('[INTERACAO] Erro ao atualizar ultima_interacao:', err.message);
   }
 
   let texto = null;

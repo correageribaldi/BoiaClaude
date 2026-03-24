@@ -655,6 +655,25 @@ async function initTables() {
       finalizado_em TIMESTAMPTZ
     );
   `);
+
+  // Migração: coluna ultima_interacao e churned em usuarios (sistema de reativação)
+  await pool.query(`
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultima_interacao TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS churned BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
+  // Tabela de log de reativação (controle de etapas enviadas)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reativacao_log (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      etapa INTEGER NOT NULL,
+      enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(usuario_id, etapa)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reativacao_log_usuario
+      ON reativacao_log(usuario_id);
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -3127,6 +3146,70 @@ async function buscarUsuariosParaSelect(q) {
   return result.rows;
 }
 
+// ─── Reativação (drip campaign para usuários inativos) ────────────────────────
+
+async function atualizarUltimaInteracao(usuarioId) {
+  await pool.query(
+    `UPDATE usuarios SET ultima_interacao = NOW() WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+}
+
+async function marcarChurned(usuarioId) {
+  await pool.query(
+    `UPDATE usuarios SET churned = TRUE WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+}
+
+async function reativarUsuario(usuarioId) {
+  await pool.query(
+    `UPDATE usuarios SET churned = FALSE WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+  await pool.query(
+    `DELETE FROM reativacao_log WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+}
+
+async function isChurned(usuarioId) {
+  const result = await pool.query(
+    `SELECT churned FROM usuarios WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+  return result.rows[0]?.churned === true;
+}
+
+async function buscarUsuariosParaReativacao(diasInativo) {
+  const result = await pool.query(`
+    SELECT u.usuario_id, u.nome, u.ultima_interacao,
+           EXTRACT(DAY FROM NOW() - COALESCE(u.ultima_interacao, u.primeiro_contato))::int AS dias_inativo
+    FROM usuarios u
+    WHERE u.usuario_id NOT LIKE '%@lid'
+      AND u.churned = FALSE
+      AND COALESCE(u.ultima_interacao, u.primeiro_contato) <= NOW() - MAKE_INTERVAL(days => $1)
+  `, [diasInativo]);
+  return result.rows;
+}
+
+async function jaEnviouReativacao(usuarioId, etapa) {
+  const result = await pool.query(
+    `SELECT 1 FROM reativacao_log WHERE usuario_id = $1 AND etapa = $2 LIMIT 1`,
+    [usuarioId, etapa]
+  );
+  return result.rows.length > 0;
+}
+
+async function registrarReativacao(usuarioId, etapa) {
+  await pool.query(
+    `INSERT INTO reativacao_log (usuario_id, etapa)
+     VALUES ($1, $2)
+     ON CONFLICT (usuario_id, etapa) DO NOTHING`,
+    [usuarioId, etapa]
+  );
+}
+
 module.exports = {
   pool,
   initTables,
@@ -3281,4 +3364,11 @@ module.exports = {
   listarUsuariosInativos,
   buscarUsuariosPorIds,
   buscarUsuariosParaSelect,
+  atualizarUltimaInteracao,
+  marcarChurned,
+  reativarUsuario,
+  isChurned,
+  buscarUsuariosParaReativacao,
+  jaEnviouReativacao,
+  registrarReativacao,
 };

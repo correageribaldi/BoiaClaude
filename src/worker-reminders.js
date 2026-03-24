@@ -11,6 +11,13 @@ function criarWorkerReminders(client, connection) {
         // Já foi enviado, cancelado ou claimed por outro worker
         return;
       }
+      // Pular usuários churned
+      const churned = await db.isChurned(claimed.usuario_id);
+      if (churned) {
+        console.log(`[WORKER] Pulando lembrete para ${claimed.usuario_id} (churned)`);
+        await db.markReminderSent(reminderId); // marca como enviado para não retentar
+        return;
+      }
       try {
         const msg = `🔔 *Lembrete!*\n\nEi, passando pra te lembrar: *${claimed.mensagem}*\n\nBora lá! 💪`;
         await client.sendMessage(claimed.usuario_id, msg);
@@ -26,6 +33,13 @@ function criarWorkerReminders(client, connection) {
     if (tipo === 'recurrente') {
       const regra = await db.buscarLembreteRecorrentePorId(lembreteRecorrenteId);
       if (!regra || !regra.ativo) return;
+
+      // Pular usuários churned
+      const churnedRec = await db.isChurned(regra.usuario_id);
+      if (churnedRec) {
+        console.log(`[WORKER] Pulando recorrente para ${regra.usuario_id} (churned)`);
+        return;
+      }
 
       // Guard de idempotência: se já enviou hoje, pula
       const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(runAt));
