@@ -403,11 +403,8 @@ body {
 /* ── Charts ──────────────────────────────────────────────────────────────── */
 .charts-row {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   gap: 16px;
-}
-@media (min-width: 700px) {
-  .charts-row { grid-template-columns: 1fr 1fr; }
 }
 .chart-card {
   background: var(--card-bg);
