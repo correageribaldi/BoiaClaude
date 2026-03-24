@@ -686,6 +686,15 @@ body {
   font-size: 13px;
   vertical-align: middle;
 }
+.tx-icon-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  vertical-align: middle;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
 .text-right { text-align: right !important; }
 .valor-positivo { color: var(--green); font-weight: 600; }
 .valor-negativo { color: var(--red); font-weight: 600; }

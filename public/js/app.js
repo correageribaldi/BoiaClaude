@@ -257,6 +257,128 @@ function fmtData(s) {
   return d + '/' + m + '/' + y;
 }
 
+// ── Ícones inteligentes de transações ─────────────────────────────────────────
+const ICON_MAP = [
+  // Streaming / entretenimento
+  { re: /netflix/i, domain: 'netflix.com' },
+  { re: /spotify/i, domain: 'spotify.com' },
+  { re: /disney|disney\+/i, domain: 'disneyplus.com' },
+  { re: /hbo|max/i, domain: 'max.com' },
+  { re: /prime\s?video|amazon\s?prime/i, domain: 'primevideo.com' },
+  { re: /apple\s?(tv|music)/i, domain: 'apple.com' },
+  { re: /youtube|yt\s?premium/i, domain: 'youtube.com' },
+  { re: /crunchyroll/i, domain: 'crunchyroll.com' },
+  { re: /globoplay/i, domain: 'globoplay.globo.com' },
+  { re: /deezer/i, domain: 'deezer.com' },
+  { re: /twitch/i, domain: 'twitch.tv' },
+  { re: /steam/i, domain: 'store.steampowered.com' },
+  { re: /playstation|psn|ps\+/i, domain: 'playstation.com' },
+  { re: /xbox|game\s?pass/i, domain: 'xbox.com' },
+  // Delivery / alimentação
+  { re: /ifood|i-food/i, domain: 'ifood.com.br' },
+  { re: /rappi/i, domain: 'rappi.com.br' },
+  { re: /uber\s?eats/i, domain: 'ubereats.com' },
+  { re: /zé\s?delivery|ze\s?delivery/i, domain: 'ze.delivery' },
+  { re: /mc\s?donald|mcdonald|mc\s?donalds/i, domain: 'mcdonalds.com.br' },
+  { re: /burger\s?king/i, domain: 'burgerking.com.br' },
+  { re: /starbucks/i, domain: 'starbucks.com.br' },
+  { re: /subway/i, domain: 'subway.com' },
+  { re: /habib/i, domain: 'habibs.com.br' },
+  // Transporte
+  { re: /uber(?!\s?eat)/i, domain: 'uber.com' },
+  { re: /99|99\s?taxi|99pop/i, domain: '99app.com' },
+  { re: /cabify/i, domain: 'cabify.com' },
+  // Telecom / internet
+  { re: /vivo/i, domain: 'vivo.com.br' },
+  { re: /claro/i, domain: 'claro.com.br' },
+  { re: /tim\b/i, domain: 'tim.com.br' },
+  { re: /oi\b/i, domain: 'oi.com.br' },
+  // Serviços / tech
+  { re: /google/i, domain: 'google.com' },
+  { re: /microsoft|office\s?365/i, domain: 'microsoft.com' },
+  { re: /amazon(?!\s?prime)/i, domain: 'amazon.com.br' },
+  { re: /mercado\s?livre/i, domain: 'mercadolivre.com.br' },
+  { re: /shopee/i, domain: 'shopee.com.br' },
+  { re: /shein/i, domain: 'shein.com' },
+  { re: /aliexpress/i, domain: 'aliexpress.com' },
+  { re: /magalu|magazine\s?luiza/i, domain: 'magazineluiza.com.br' },
+  { re: /casas\s?bahia/i, domain: 'casasbahia.com.br' },
+  { re: /americanas/i, domain: 'americanas.com.br' },
+  // Saúde / farmácia
+  { re: /drogasil/i, domain: 'drogasil.com.br' },
+  { re: /droga\s?raia/i, domain: 'drogaraia.com.br' },
+  { re: /pacheco/i, domain: 'dfrfrr.com.br' },
+  // Supermercado
+  { re: /carrefour/i, domain: 'carrefour.com.br' },
+  { re: /pão\s?de\s?açúcar|pao\s?de\s?acucar/i, domain: 'paodeacucar.com' },
+  { re: /extra\b/i, domain: 'extra.com.br' },
+  // Financeiro / bancos
+  { re: /nubank/i, domain: 'nubank.com.br' },
+  { re: /inter\b/i, domain: 'bancointer.com.br' },
+  { re: /itaú|itau/i, domain: 'itau.com.br' },
+  { re: /bradesco/i, domain: 'bradesco.com.br' },
+  { re: /santander/i, domain: 'santander.com.br' },
+  { re: /caixa/i, domain: 'caixa.gov.br' },
+  { re: /bb\b|banco\s?do\s?brasil/i, domain: 'bb.com.br' },
+  { re: /c6\s?bank/i, domain: 'c6bank.com.br' },
+  { re: /picpay/i, domain: 'picpay.com' },
+  { re: /mercado\s?pago/i, domain: 'mercadopago.com.br' },
+  // Educação
+  { re: /duolingo/i, domain: 'duolingo.com' },
+  { re: /udemy/i, domain: 'udemy.com' },
+  { re: /coursera/i, domain: 'coursera.org' },
+  { re: /alura/i, domain: 'alura.com.br' },
+  // Moradia / serviços
+  { re: /enel|eletropaulo|light\b|cemig|cpfl|energisa/i, emoji: '⚡' },
+  { re: /sabesp|copasa|água|agua/i, emoji: '💧' },
+  { re: /comgas|comgás|gás|gas\b/i, emoji: '🔥' },
+  { re: /aluguel|condomínio|condominio|iptu/i, emoji: '🏠' },
+  { re: /seguro/i, emoji: '🛡️' },
+  { re: /academia|gym|smart\s?fit/i, domain: 'smartfit.com.br' },
+];
+
+const CATEGORIA_EMOJI = {
+  'alimentação': '🍽️', 'alimentacao': '🍽️', 'comida': '🍽️', 'restaurante': '🍽️',
+  'transporte': '🚗', 'combustível': '⛽', 'combustivel': '⛽',
+  'moradia': '🏠', 'casa': '🏠', 'aluguel': '🏠',
+  'saúde': '💊', 'saude': '💊', 'farmácia': '💊', 'farmacia': '💊',
+  'educação': '📚', 'educacao': '📚',
+  'lazer': '🎮', 'entretenimento': '🎬',
+  'compras': '🛒', 'shopping': '🛒',
+  'salário': '💰', 'salario': '💰', 'renda': '💰',
+  'investimento': '📈', 'investimentos': '📈',
+  'pet': '🐾', 'animal': '🐾',
+  'beleza': '💇', 'estética': '💇', 'estetica': '💇',
+  'viagem': '✈️', 'viagens': '✈️',
+  'comunicação': '📱', 'comunicacao': '📱', 'telefone': '📱',
+  'assinatura': '📦', 'assinaturas': '📦',
+  'impostos': '📋', 'imposto': '📋', 'taxa': '📋',
+  'doação': '❤️', 'doacao': '❤️',
+  'vestuário': '👕', 'vestuario': '👕', 'roupa': '👕', 'roupas': '👕',
+};
+
+/**
+ * Retorna HTML do ícone para uma transação.
+ * Prioridade: marca conhecida (favicon) → categoria (emoji) → tipo (seta).
+ */
+function iconeTx(descricao, categoria, tipo) {
+  const desc = (descricao || '').toLowerCase();
+  // 1. Tentar match de marca
+  for (const entry of ICON_MAP) {
+    if (entry.re.test(desc)) {
+      if (entry.domain) {
+        return `<img src="https://www.google.com/s2/favicons?domain=${entry.domain}&sz=32" alt="" style="width:20px;height:20px;border-radius:4px;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span style="display:none;width:20px;height:20px;align-items:center;justify-content:center;font-size:14px">${tipo === 'receita' ? '↑' : '↓'}</span>`;
+      }
+      return entry.emoji;
+    }
+  }
+  // 2. Tentar match de categoria
+  const cat = (categoria || '').toLowerCase();
+  if (CATEGORIA_EMOJI[cat]) return CATEGORIA_EMOJI[cat];
+  // 3. Fallback tipo
+  return tipo === 'receita' ? '↑' : '↓';
+}
+
 // ── Estado global ─────────────────────────────────────────────────────────────
 const estado = {
   dash: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear() },
@@ -443,9 +565,8 @@ async function carregarUltimasTx() {
       return;
     }
     el.innerHTML = txs.slice(0, 5).map(t => {
-      const icon = t.tipo === 'despesa' ? '↓' : '↑';
       return `<div class="dash-tx-item">
-        <div class="dash-tx-icon ${t.tipo}">${icon}</div>
+        <div class="dash-tx-icon ${t.tipo}">${iconeTx(t.descricao, t.categoria, t.tipo)}</div>
         <div class="dash-tx-info">
           <div class="dash-tx-desc">${t.descricao || '—'}</div>
           <div class="dash-tx-meta">${fmtData(t.data)}${t.categoria ? ' · ' + t.categoria : ''}</div>
@@ -546,7 +667,7 @@ function renderTabelaTransacoes(transacoes) {
     const isReceita = t.tipo === 'receita';
     tr.innerHTML = `
       <td>${fmtData(t.data)}</td>
-      <td><strong>${esc(t.descricao)}</strong></td>
+      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(t.descricao)}</strong></td>
       <td><span style="font-size:12px;color:var(--text-muted)">${esc(t.categoria || '—')}</span></td>
       <td class="text-right ${isReceita ? 'valor-positivo' : 'valor-negativo'}">${isReceita ? '+' : '-'}${fmtMoeda(t.valor)}</td>
       <td>${t.projetado
