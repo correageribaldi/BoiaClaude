@@ -588,9 +588,18 @@ async function carregarProximosLembretes() {
     const mes = agora.getMonth() + 1;
     const ano = agora.getFullYear();
     const itens = await api(`/api/agenda?mes=${mes}&ano=${ano}`);
-    // Filtrar apenas futuros ou de hoje
+    // Filtrar apenas futuros ou de hoje, deduplicar recorrentes (só o próximo)
     const hoje = agora.toISOString().substring(0, 10);
-    const proximos = (itens || []).filter(i => (i.data_disparo || '') >= hoje).slice(0, 5);
+    const futuros = (itens || []).filter(i => (i.data_disparo || '') >= hoje);
+    const vistos = new Set();
+    const proximos = [];
+    for (const i of futuros) {
+      const chave = (i.recorrente_id ? 'rec_' + i.recorrente_id : 'avulso_' + (i.id || i.mensagem));
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      proximos.push(i);
+      if (proximos.length >= 5) break;
+    }
     if (proximos.length === 0) {
       el.innerHTML = '<p class="empty-hint">Nenhum lembrete próximo.</p>';
       return;
