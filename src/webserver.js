@@ -58,9 +58,15 @@ async function autenticar(req, res, next) {
   }
 }
 
-// ── Painel SPA ────────────────────────────────────────────────────────────────
+// ── Páginas públicas ──────────────────────────────────────────────────────────
 app.get('/painel', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+app.get('/privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/privacidade.html'));
+});
+app.get('/termos', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/termos.html'));
 });
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
