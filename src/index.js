@@ -403,7 +403,7 @@ client.on('message', async (msg) => {
     console.error('[USUARIO] Erro ao verificar primeiro contato:', error.message);
   }
 
-  // Atualizar última interação e reativar se churned
+  // Atualizar última interação e reativar se churned (ver reativacao.js para detalhes do sistema)
   try {
     await db.atualizarUltimaInteracao(usuarioId);
     const churned = await db.isChurned(usuarioId);

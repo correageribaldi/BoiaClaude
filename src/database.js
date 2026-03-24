@@ -3146,7 +3146,7 @@ async function buscarUsuariosParaSelect(q) {
   return result.rows;
 }
 
-// ─── Reativação (drip campaign para usuários inativos) ────────────────────────
+// ─── Reativação (drip campaign para usuários inativos — ver reativacao.js) ────
 
 async function atualizarUltimaInteracao(usuarioId) {
   await pool.query(

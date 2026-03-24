@@ -120,7 +120,7 @@ async function executarRodada(client, rodada) {
     const porUsuario = agruparPorUsuario(pendentes);
 
     for (const [usuarioId, transacoes] of Object.entries(porUsuario)) {
-      // Pular usuários churned (saíram da base ativa)
+      // Pular usuários churned — sistema de reativação (ver reativacao.js)
       try {
         const churned = await db.isChurned(usuarioId);
         if (churned) {

@@ -1,3 +1,33 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// reativacao.js — Sistema automático de reativação de usuários inativos
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// COMO FUNCIONA:
+//   Cron fixo que roda todo dia às 10:00 (horário de Brasília).
+//   Detecta usuários inativos (sem interação) e envia mensagens escalonadas:
+//
+//   Dia 3  → Mensagem leve de reconexão
+//   Dia 7  → Dica de funcionalidade (áudio, foto de boleto, CSV)
+//   Dia 14 → Incentivo a registrar pelo menos 1 despesa
+//   Dia 30 → Despedida respeitosa + marca como "churned" (para todos os envios)
+//
+// REATIVAÇÃO:
+//   Se um usuário churned mandar qualquer mensagem, ele é reativado
+//   automaticamente (lógica em index.js, evento 'message').
+//
+// DEPENDÊNCIAS NO BANCO (database.js):
+//   - Coluna `usuarios.ultima_interacao` — atualizada a cada mensagem recebida
+//   - Coluna `usuarios.churned` — flag que para todos os envios
+//   - Tabela `reativacao_log` — controla quais etapas já foram enviadas
+//
+// INTEGRAÇÃO COM LEMBRETES:
+//   lembretes.js e worker-reminders.js verificam `churned` antes de enviar.
+//   Usuários churned não recebem nenhum tipo de notificação.
+//
+// ESTE CRON NÃO APARECE NO PAINEL ADMIN — é fixo no código.
+// Para desativar, comentar a linha `iniciarReativacao(client)` em index.js.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const cron = require('node-cron');
 const db = require('./database');
 
