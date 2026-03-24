@@ -178,9 +178,15 @@ body {
   background: var(--card-bg);
   border-top: 1px solid var(--border);
   display: flex;
+  align-items: center;
   box-shadow: 0 -2px 8px rgba(0,0,0,.06);
   z-index: 100;
 }
+/* Mobile: wrappers transparentes */
+.nav-brand { display: none; }
+.nav-user  { display: none; }
+.nav-links { display: contents; }
+
 .nav-btn {
   flex: 1;
   border: none;
@@ -1076,3 +1082,100 @@ select.input { cursor: pointer; }
 .rec-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
 .rec-nome { font-size: 15px; font-weight: 600; }
 .rec-meta { font-size: 12px; color: var(--text-muted); }
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* ── Desktop: top nav ─────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 769px) {
+  /* Nav → topo */
+  .bottom-nav {
+    top: 0; bottom: auto;
+    border-top: none;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    padding: 0 24px;
+    gap: 0;
+  }
+
+  /* Brand à esquerda */
+  .nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 24px;
+    flex-shrink: 0;
+  }
+  .nav-brand-icon { font-size: 24px; }
+  .nav-brand-text {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -.3px;
+  }
+
+  /* Links horizontais */
+  .nav-links {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+  }
+  .nav-btn {
+    flex: unset;
+    flex-direction: row;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    transition: color .15s, background .15s;
+  }
+  .nav-btn:hover { background: rgba(255,255,255,.06); }
+  .nav-btn.active {
+    color: var(--blue);
+    background: rgba(74,158,221,.1);
+  }
+  .nav-icon { font-size: 16px; }
+  .nav-label { font-size: 13px; }
+
+  /* Avatar à direita */
+  .nav-user {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .nav-avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.12);
+    border: 2px solid rgba(255,255,255,.2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+    transition: opacity .15s;
+    text-transform: uppercase;
+    user-select: none;
+    overflow: hidden;
+  }
+  .nav-avatar:hover { opacity: .8; }
+
+  /* Main content: padding-top para compensar top nav, full width */
+  .main-content {
+    padding: calc(var(--nav-h) + 16px) 24px 32px;
+    max-width: 1400px;
+  }
+
+  /* Hero: compensar o padding-top */
+  .dash-hero {
+    margin: calc(-1 * (var(--nav-h) + 16px)) -24px 16px;
+    padding: calc(var(--nav-h) + 20px) 24px 22px;
+    border-radius: 0 0 24px 24px;
+  }
+
+  /* Avatar do hero: esconder no desktop (já aparece na top nav) */
+  .dash-hero .dash-avatar-wrap { display: none; }
+
+  /* Toast: sem compensar bottom nav */
+  .toast { bottom: 24px; }
+}

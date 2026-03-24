@@ -126,6 +126,38 @@
 <!-- ── App principal ─────────────────────────────────────────────────────── -->
 <div id="app" class="hidden">
 
+  <nav class="bottom-nav">
+    <div class="nav-brand">
+      <span class="nav-brand-icon">💸</span>
+      <span class="nav-brand-text">Cronos</span>
+    </div>
+    <div class="nav-links">
+      <button class="nav-btn active" data-tab="dashboard">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Visão Geral</span>
+      </button>
+      <button class="nav-btn" data-tab="transactions">
+        <span class="nav-icon">💳</span>
+        <span class="nav-label">Transações</span>
+      </button>
+      <button class="nav-btn" data-tab="categories">
+        <span class="nav-icon">🏷️</span>
+        <span class="nav-label">Categorias</span>
+      </button>
+      <button class="nav-btn" data-tab="agenda">
+        <span class="nav-icon">📅</span>
+        <span class="nav-label">Agenda</span>
+      </button>
+      <button class="nav-btn hidden" data-tab="admin" id="nav-admin">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Admin</span>
+      </button>
+    </div>
+    <div class="nav-user">
+      <div class="nav-avatar" id="nav-avatar">?</div>
+    </div>
+  </nav>
+
   <main class="main-content">
 
     <!-- ── Visão Geral ─────────────────────────────────────────────────── -->
@@ -534,29 +566,6 @@
       </div>
     </div>
   </div>
-
-  <nav class="bottom-nav">
-    <button class="nav-btn active" data-tab="dashboard">
-      <span class="nav-icon">📊</span>
-      <span class="nav-label">Visão Geral</span>
-    </button>
-    <button class="nav-btn" data-tab="transactions">
-      <span class="nav-icon">💳</span>
-      <span class="nav-label">Transações</span>
-    </button>
-    <button class="nav-btn" data-tab="categories">
-      <span class="nav-icon">🏷️</span>
-      <span class="nav-label">Categorias</span>
-    </button>
-    <button class="nav-btn" data-tab="agenda">
-      <span class="nav-icon">📅</span>
-      <span class="nav-label">Agenda</span>
-    </button>
-    <button class="nav-btn hidden" data-tab="admin" id="nav-admin">
-      <span class="nav-icon">⚙️</span>
-      <span class="nav-label">Admin</span>
-    </button>
-  </nav>
 
 </div>
 

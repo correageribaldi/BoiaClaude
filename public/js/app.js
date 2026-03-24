@@ -19,6 +19,7 @@ let _avatarData = null; // data URL da foto vinda do servidor
 function _aplicarAvatar(nomeBase) {
   const avatarEl   = document.getElementById('dash-avatar');
   const settingsEl = document.getElementById('settings-avatar-preview');
+  const navEl      = document.getElementById('nav-avatar');
   if (avatarEl) {
     if (_avatarData) {
       avatarEl.innerHTML = `<img src="${_avatarData}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;pointer-events:none;display:block;">`;
@@ -32,6 +33,14 @@ function _aplicarAvatar(nomeBase) {
       settingsEl.innerHTML = `<img src="${_avatarData}" alt="foto">`;
     } else {
       settingsEl.textContent = (nomeBase[0] || '?').toUpperCase();
+    }
+  }
+  if (navEl) {
+    if (_avatarData) {
+      navEl.innerHTML = `<img src="${_avatarData}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;pointer-events:none;display:block;">`;
+    } else {
+      navEl.innerHTML = '';
+      navEl.textContent = (nomeBase[0] || '?').toUpperCase();
     }
   }
 }
@@ -1627,6 +1636,11 @@ function inicializar() {
 
   document.getElementById('avatar-dd-config')?.addEventListener('click', () => {
     dropdown?.classList.add('hidden');
+    abrirSettings();
+  });
+
+  // Desktop top-nav avatar → abre settings
+  document.getElementById('nav-avatar')?.addEventListener('click', () => {
     abrirSettings();
   });
 
