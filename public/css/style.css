@@ -1113,19 +1113,20 @@ select.input { cursor: pointer; }
     letter-spacing: -.3px;
   }
 
-  /* Links horizontais */
+  /* Links horizontais — distribuídos */
   .nav-links {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+    gap: 8px;
     flex: 1;
   }
   .nav-btn {
     flex: unset;
     flex-direction: row;
     gap: 6px;
-    padding: 8px 14px;
+    padding: 10px 24px;
     border-radius: 8px;
     transition: color .15s, background .15s;
   }
