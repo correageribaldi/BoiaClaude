@@ -541,10 +541,6 @@ async function carregarDashboard() {
     }
   }
 
-  // Carregar cards auxiliares em paralelo (antes dos charts para não bloquear)
-  carregarUltimasTx();
-  carregarProximosLembretes();
-
   renderChartCategorias(resumo.porCategoria || []);
   try { await renderChartMensal(); } catch (e) { console.error('[CHART]', e); }
 }
@@ -552,7 +548,7 @@ async function carregarDashboard() {
 // ── Dashboard: últimas transações ────────────────────────────────────────────
 async function carregarUltimasTx() {
   const el = document.getElementById('dash-ultimas-tx');
-  if (!el) return;
+  if (!el) { console.warn('[DASH] #dash-ultimas-tx não encontrado'); return; }
   try {
     const { mes, ano } = estado.dash;
     const mesStr = String(mes).padStart(2, '0');
@@ -560,11 +556,12 @@ async function carregarUltimasTx() {
     const dataInicio = `${ano}-${mesStr}-01`;
     const dataFim = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
     const txs = await api(`/api/transactions?dataInicio=${dataInicio}&dataFim=${dataFim}&limite=5`);
-    if (!txs || txs.length === 0) {
+    const lista = Array.isArray(txs) ? txs : [];
+    if (lista.length === 0) {
       el.innerHTML = '<p class="empty-hint">Nenhuma transação no mês.</p>';
       return;
     }
-    el.innerHTML = txs.slice(0, 5).map(t => {
+    el.innerHTML = lista.slice(0, 5).map(t => {
       return `<div class="dash-tx-item">
         <div class="dash-tx-icon ${t.tipo}">${iconeTx(t.descricao, t.categoria, t.tipo)}</div>
         <div class="dash-tx-info">
@@ -574,7 +571,8 @@ async function carregarUltimasTx() {
         <div class="dash-tx-valor ${t.tipo}">${fmtMoeda(t.valor)}</div>
       </div>`;
     }).join('');
-  } catch {
+  } catch (err) {
+    console.error('[DASH] Erro carregarUltimasTx:', err);
     el.innerHTML = '<p class="empty-hint">Erro ao carregar.</p>';
   }
 }
@@ -582,7 +580,7 @@ async function carregarUltimasTx() {
 // ── Dashboard: próximos lembretes ────────────────────────────────────────────
 async function carregarProximosLembretes() {
   const el = document.getElementById('dash-proximos-lembretes');
-  if (!el) return;
+  if (!el) { console.warn('[DASH] #dash-proximos-lembretes não encontrado'); return; }
   try {
     const agora = new Date();
     const mes = agora.getMonth() + 1;
@@ -615,7 +613,8 @@ async function carregarProximosLembretes() {
         </div>
       </div>`;
     }).join('');
-  } catch {
+  } catch (err) {
+    console.error('[DASH] Erro carregarProximosLembretes:', err);
     el.innerHTML = '<p class="empty-hint">Erro ao carregar.</p>';
   }
 }
@@ -1805,7 +1804,11 @@ function ativarTab(tab) {
   document.getElementById('tab-' + tab).classList.remove('hidden');
   document.querySelector(`.nav-btn[data-tab="${tab}"]`).classList.add('active');
 
-  if (tab === 'dashboard') carregarDashboard();
+  if (tab === 'dashboard') {
+    carregarDashboard();
+    carregarUltimasTx();
+    carregarProximosLembretes();
+  }
   if (tab === 'transactions') carregarTransacoes();
   if (tab === 'categories') carregarCategorias();
   if (tab === 'agenda') carregarAgenda();
