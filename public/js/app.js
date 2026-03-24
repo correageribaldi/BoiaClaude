@@ -541,12 +541,12 @@ async function carregarDashboard() {
     }
   }
 
-  renderChartCategorias(resumo.porCategoria || []);
-  await renderChartMensal();
-
-  // Carregar cards auxiliares em paralelo
+  // Carregar cards auxiliares em paralelo (antes dos charts para não bloquear)
   carregarUltimasTx();
   carregarProximosLembretes();
+
+  renderChartCategorias(resumo.porCategoria || []);
+  try { await renderChartMensal(); } catch (e) { console.error('[CHART]', e); }
 }
 
 // ── Dashboard: últimas transações ────────────────────────────────────────────
