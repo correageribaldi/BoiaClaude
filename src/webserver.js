@@ -4,6 +4,7 @@ const fs = require('fs');
 const db = require('./database');
 const pagamento = require('./pagamento');
 const cronAdmin = require('./cron-admin');
+const gcal = require('./google-calendar');
 
 const EULA_PDF_PATH = path.join(__dirname, '../docs/cronos-eula.pdf');
 
@@ -637,6 +638,60 @@ app.post('/api/caixinhas/:id/deposito', autenticar, async (req, res) => {
   }
 });
 
+// ── Google Calendar OAuth ────────────────────────────────────────────────────
+
+app.get('/auth/google/start', (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID) return res.status(503).send('Google Calendar não configurado');
+  const token = req.query.token;
+  if (!token) return res.status(400).send('Token ausente');
+  // Codifica o JWT no state para recuperar após callback
+  const state = Buffer.from(JSON.stringify({ token })).toString('base64url');
+  const url = gcal.getAuthUrl(state);
+  res.redirect(url);
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    if (!code || !state) return res.status(400).send('Parâmetros inválidos');
+
+    // Decodificar JWT do state
+    const decoded = JSON.parse(Buffer.from(state, 'base64url').toString());
+    const payload = getJwt().verify(decoded.token, jwtSecret());
+    const usuarioId = payload.usuarioId;
+
+    // Trocar code por tokens e salvar
+    const tokens = await gcal.exchangeCode(code);
+    await db.salvarGoogleTokens(usuarioId, tokens);
+    console.log(`[GCAL] Usuário ${usuarioId} conectou Google Calendar`);
+
+    // Redirecionar de volta ao painel com flag de sucesso
+    const base = process.env.PAINEL_BASE_URL || '';
+    res.redirect(`${base}/painel#google-connected`);
+  } catch (err) {
+    console.error('[GCAL] Erro no callback:', err.message);
+    res.status(500).send('Erro ao conectar Google Calendar. Tente novamente.');
+  }
+});
+
+app.get('/api/google/status', autenticar, async (req, res) => {
+  try {
+    const conectado = await gcal.isConectado(req.usuarioId);
+    res.json({ conectado });
+  } catch (err) {
+    res.json({ conectado: false });
+  }
+});
+
+app.post('/api/google/disconnect', autenticar, async (req, res) => {
+  try {
+    await db.removerGoogleTokens(req.usuarioId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Lembretes ────────────────────────────────────────────────────────────────
 app.post('/api/lembretes', autenticar, async (req, res) => {
   try {
@@ -644,6 +699,8 @@ app.post('/api/lembretes', autenticar, async (req, res) => {
     if (!mensagem || !mensagem.trim()) return res.status(400).json({ erro: 'Mensagem obrigatória' });
     if (!dispara_em) return res.status(400).json({ erro: 'Data/hora obrigatória' });
     const resultado = await db.criarLembreteGeral(req.usuarioId, mensagem.trim(), dispara_em);
+    // Sync Google Calendar (fire-and-forget)
+    gcal.sincronizarLembreteAvulso(req.usuarioId, resultado.id, mensagem.trim(), dispara_em).catch(() => {});
     res.json(resultado);
   } catch (err) {
     console.error('[WEB] POST /api/lembretes:', err.message);
@@ -664,6 +721,11 @@ app.post('/api/lembretes/recorrente', autenticar, async (req, res) => {
       data_fim || null,
       false
     );
+    // Sync Google Calendar (fire-and-forget)
+    gcal.sincronizarLembreteRecorrente(
+      req.usuarioId, resultado.id, mensagem.trim(), horario, frequencia,
+      dia_semana, dia_mes, data_fim || null
+    ).catch(() => {});
     res.json(resultado);
   } catch (err) {
     console.error('[WEB] POST /api/lembretes/recorrente:', err.message);
@@ -675,6 +737,9 @@ app.delete('/api/lembretes/:id', autenticar, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    // Remover do Google Calendar antes de deletar
+    const eventId = await db.buscarGoogleEventId('lembretes_gerais', id);
+    if (eventId) gcal.removerEvento(req.usuarioId, eventId).catch(() => {});
     await db.cancelReminder(id, req.usuarioId);
     res.json({ ok: true });
   } catch (err) {
@@ -687,6 +752,9 @@ app.delete('/api/lembretes/recorrente/:id', autenticar, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    // Remover do Google Calendar antes de deletar
+    const eventId = await db.buscarGoogleEventId('lembretes_recorrentes', id);
+    if (eventId) gcal.removerEvento(req.usuarioId, eventId).catch(() => {});
     await db.cancelarLembreteRecorrente(req.usuarioId, id);
     res.json({ ok: true });
   } catch (err) {

@@ -674,6 +674,23 @@ async function initTables() {
     CREATE INDEX IF NOT EXISTS idx_reativacao_log_usuario
       ON reativacao_log(usuario_id);
   `);
+
+  // Tabela de tokens Google Calendar (OAuth 2.0)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS google_tokens (
+      usuario_id TEXT PRIMARY KEY,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      expiry_date BIGINT,
+      conectado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  // Coluna para vincular lembretes ao evento no Google Calendar
+  await pool.query(`
+    ALTER TABLE lembretes_gerais ADD COLUMN IF NOT EXISTS google_event_id TEXT;
+    ALTER TABLE lembretes_recorrentes ADD COLUMN IF NOT EXISTS google_event_id TEXT;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -3210,6 +3227,36 @@ async function registrarReativacao(usuarioId, etapa) {
   );
 }
 
+// ─── Google Calendar tokens ──────────────────────────────────────────────────
+
+async function salvarGoogleTokens(usuarioId, tokens) {
+  await pool.query(
+    `INSERT INTO google_tokens (usuario_id, access_token, refresh_token, expiry_date)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (usuario_id) DO UPDATE SET
+       access_token = $2, refresh_token = $3, expiry_date = $4, conectado_em = NOW()`,
+    [usuarioId, tokens.access_token, tokens.refresh_token, tokens.expiry_date || null]
+  );
+}
+
+async function buscarGoogleTokens(usuarioId) {
+  const r = await pool.query('SELECT * FROM google_tokens WHERE usuario_id = $1', [usuarioId]);
+  return r.rows[0] || null;
+}
+
+async function removerGoogleTokens(usuarioId) {
+  await pool.query('DELETE FROM google_tokens WHERE usuario_id = $1', [usuarioId]);
+}
+
+async function salvarGoogleEventId(tabela, id, googleEventId) {
+  await pool.query(`UPDATE ${tabela} SET google_event_id = $1 WHERE id = $2`, [googleEventId, id]);
+}
+
+async function buscarGoogleEventId(tabela, id) {
+  const r = await pool.query(`SELECT google_event_id FROM ${tabela} WHERE id = $1`, [id]);
+  return r.rows[0]?.google_event_id || null;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -3371,4 +3418,9 @@ module.exports = {
   buscarUsuariosParaReativacao,
   jaEnviouReativacao,
   registrarReativacao,
+  salvarGoogleTokens,
+  buscarGoogleTokens,
+  removerGoogleTokens,
+  salvarGoogleEventId,
+  buscarGoogleEventId,
 };

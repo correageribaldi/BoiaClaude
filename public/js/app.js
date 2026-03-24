@@ -153,6 +153,12 @@ async function verificarAuth(tentativa = 1) {
   } else {
     ativarTab('dashboard');
   }
+
+  // Detectar retorno do OAuth Google
+  if (window.location.hash === '#google-connected') {
+    toast('✅ Google Calendar conectado!', 'success');
+    window.history.replaceState(null, '', window.location.pathname);
+  }
 }
 
 function esconderLoading() {
@@ -1826,7 +1832,26 @@ function abrirSettings() {
   if (inputEmail) inputEmail.value = email;
   _aplicarAvatar(_meNome);
   _syncThemeToggle();
+  verificarGoogleStatus();
   document.getElementById('modal-settings')?.classList.remove('hidden');
+}
+
+// ── Google Calendar ───────────────────────────────────────────────────────────
+async function verificarGoogleStatus() {
+  try {
+    const data = await api('/api/google/status');
+    const on = document.getElementById('google-status-conectado');
+    const off = document.getElementById('google-status-desconectado');
+    if (data.conectado) {
+      on?.classList.remove('hidden');
+      off?.classList.add('hidden');
+    } else {
+      on?.classList.add('hidden');
+      off?.classList.remove('hidden');
+    }
+  } catch {
+    // Se falhar, mostra botão de conectar
+  }
 }
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -1889,6 +1914,20 @@ function inicializar() {
 
   document.getElementById('btn-settings-close')?.addEventListener('click', () => {
     document.getElementById('modal-settings')?.classList.add('hidden');
+  });
+
+  // Google Calendar connect/disconnect
+  document.getElementById('btn-google-connect')?.addEventListener('click', () => {
+    window.location = '/auth/google/start?token=' + encodeURIComponent(getJwt());
+  });
+  document.getElementById('btn-google-disconnect')?.addEventListener('click', async () => {
+    try {
+      await api('/api/google/disconnect', { method: 'POST' });
+      toast('Google Calendar desconectado', 'success');
+      verificarGoogleStatus();
+    } catch (err) {
+      toast('Erro ao desconectar: ' + err.message, 'error');
+    }
   });
   document.getElementById('modal-settings')?.addEventListener('click', (e) => {
     if (e.target === document.getElementById('modal-settings'))

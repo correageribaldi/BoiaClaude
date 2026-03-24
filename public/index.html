@@ -610,14 +610,17 @@
         </div>
       </div>
 
-      <!-- Google Calendar (em desenvolvimento) -->
-      <div class="settings-section settings-section-disabled">
-        <div class="settings-section-header">
-          <div class="settings-section-title" style="margin-bottom:0">Google Calendar</div>
-          <span class="badge-dev">Em desenvolvimento</span>
+      <!-- Google Calendar -->
+      <div class="settings-section" id="settings-google">
+        <div class="settings-section-title">Google Calendar</div>
+        <p class="settings-hint">Sincronize seus lembretes do Cronos com o Google Calendar automaticamente.</p>
+        <div id="google-status-desconectado">
+          <button class="btn btn-google" id="btn-google-connect">🗓 Conectar com Google</button>
         </div>
-        <p class="settings-hint">Sincronize sua agenda do Google com o Cronos para visualizar compromissos integrados.</p>
-        <button class="btn btn-google" disabled>🗓 Conectar com Google</button>
+        <div id="google-status-conectado" class="hidden">
+          <p style="color:var(--green);font-size:13px;margin-bottom:8px;">✅ Conectado ao Google Calendar</p>
+          <button class="btn btn-sm" id="btn-google-disconnect" style="font-size:12px;">Desconectar</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1027,6 +1030,6 @@
   </div>
 </div>
 
-<script src="/js/app.js?v=20260324"></script>
+<script src="/js/app.js?v=20260324b"></script>
 </body>
 </html>
