@@ -112,7 +112,9 @@ async function verificarAuth(tentativa = 1) {
 
   if (!_inicializado) {
     _inicializado = true;
-    inicializar();
+    try { inicializar(); } catch (err) {
+      console.error('[INIT] Erro em inicializar():', err);
+    }
   }
 
   // Restaurar aba ativa salva no localStorage
@@ -1416,45 +1418,47 @@ function fecharModalCron() {
 
 function inicializarCronAdmin() {
   // Novo
-  document.getElementById('adm-cron-novo').addEventListener('click', abrirModalCron);
+  document.getElementById('adm-cron-novo')?.addEventListener('click', abrirModalCron);
 
   // Salvar e Preview
-  document.getElementById('adm-cron-salvar').addEventListener('click', cronSalvar);
+  document.getElementById('adm-cron-salvar')?.addEventListener('click', cronSalvar);
   // Toggle campos conforme regra selecionada
-  document.getElementById('adm-cron-regra').addEventListener('change', (e) => {
+  document.getElementById('adm-cron-regra')?.addEventListener('change', (e) => {
     cronAtualizarCamposRegra(e.target.value);
   });
 
   // Toggle horário conforme frequência selecionada
-  document.getElementById('adm-cron-frequencia').addEventListener('change', (e) => {
+  document.getElementById('adm-cron-frequencia')?.addEventListener('change', (e) => {
     cronAtualizarHorario(e.target.value);
   });
 
   // Select2 para seleção manual
-  $('#adm-cron-usuarios').select2({
-    placeholder: 'Buscar por nome ou número...',
-    allowClear: true,
-    minimumInputLength: 2,
-    dropdownParent: $('#modal-cron .modal-box'),
-    width: '100%',
-    ajax: {
-      url: '/api/admin/crons/usuarios-busca',
-      dataType: 'json',
-      delay: 300,
-      headers: { 'Authorization': 'Bearer ' + (getJwt() || '') },
-      data: function(params) { return { q: params.term }; },
-      processResults: function(data) { return { results: data }; },
-    },
-  });
+  try {
+    $('#adm-cron-usuarios').select2({
+      placeholder: 'Buscar por nome ou número...',
+      allowClear: true,
+      minimumInputLength: 2,
+      dropdownParent: $('#modal-cron .modal-box'),
+      width: '100%',
+      ajax: {
+        url: '/api/admin/crons/usuarios-busca',
+        dataType: 'json',
+        delay: 300,
+        headers: { 'Authorization': 'Bearer ' + (getJwt() || '') },
+        data: function(params) { return { q: params.term }; },
+        processResults: function(data) { return { results: data }; },
+      },
+    });
+  } catch (_) {}
 
   // Fechar modal ao clicar fora
-  document.getElementById('modal-cron').addEventListener('click', (e) => {
+  document.getElementById('modal-cron')?.addEventListener('click', (e) => {
     if (e.target.id === 'modal-cron') fecharModalCron();
   });
 
   // Estado inicial dos campos
-  cronAtualizarCamposRegra(document.getElementById('adm-cron-regra').value);
-  cronAtualizarHorario(document.getElementById('adm-cron-frequencia').value);
+  cronAtualizarCamposRegra(document.getElementById('adm-cron-regra')?.value);
+  cronAtualizarHorario(document.getElementById('adm-cron-frequencia')?.value);
 }
 
 function renderAdminUsuarios(lista) {
