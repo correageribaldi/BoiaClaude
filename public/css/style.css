@@ -13,9 +13,10 @@
   --text: #e8e8f0;
   --text-muted: #8888aa;
   --bg: #0f0f13;
-  --card-bg: #1c1c24;
-  --border: #2a2a36;
-  --shadow: 0 2px 12px rgba(0,0,0,.4);
+  --card-bg: rgba(255,255,255,.05);
+  --card-border: rgba(255,255,255,.08);
+  --border: rgba(255,255,255,.08);
+  --shadow: 0 4px 24px rgba(0,0,0,.3);
   --radius: 12px;
   --header-h: 56px;
   --nav-h: 64px;
@@ -95,9 +96,9 @@ body {
 /* Fundo premium escuro */
 html:not([data-theme="light"]) body {
   background:
-    radial-gradient(ellipse 100% 80% at 50% -30%, rgba(30,90,180,.18) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 50% at 85% 20%, rgba(40,120,220,.08) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 40% at 10% 80%, rgba(60,140,255,.05) 0%, transparent 50%),
+    radial-gradient(ellipse 120% 80% at 50% -20%, rgba(25,80,180,.22) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 30%, rgba(40,100,200,.10) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 50% at 5% 70%, rgba(80,60,180,.08) 0%, transparent 50%),
     linear-gradient(170deg, #131318 0%, #0f0f13 35%, #0d0d11 100%);
   background-attachment: fixed;
 }
@@ -127,6 +128,18 @@ html:not([data-theme="light"]) body {
     radial-gradient(circle 2px at 18% 19%, rgba(160,170,190,.20) 0%, transparent 1px);
 }
 [data-theme="light"] body > * { position: relative; z-index: 1; }
+
+/* ── Glassmorphism (tema escuro) ──────────────────────────────────────── */
+html:not([data-theme="light"]) .card,
+html:not([data-theme="light"]) .dash-list-card,
+html:not([data-theme="light"]) .admin-card,
+html:not([data-theme="light"]) .login-box,
+html:not([data-theme="light"]) .modal-box {
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 4px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.05);
+}
 
 .hidden { display: none !important; }
 
