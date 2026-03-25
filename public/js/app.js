@@ -2048,7 +2048,7 @@ function inicializar() {
         });
         const resp = await fetch('/api/admin/favicon', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + _token },
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (getJwt() || '') },
           body: JSON.stringify({ b64 })
         });
         const data = await resp.json();
