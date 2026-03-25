@@ -991,6 +991,29 @@ async function autenticarAdmin(req, res, next) {
   }
 }
 
+// Upload de logo (admin)
+app.post('/api/admin/logo', autenticarAdmin, async (req, res) => {
+  try {
+    const { b64 } = req.body || {};
+    if (!b64 || !b64.startsWith('data:image/')) {
+      return res.status(400).json({ erro: 'Imagem inválida' });
+    }
+    if (b64.length > 700000) {
+      return res.status(400).json({ erro: 'Imagem muito grande (máx 500KB)' });
+    }
+    const imgDir = path.join(__dirname, '../public/img');
+    if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
+    const cleanB64 = b64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(cleanB64, 'base64');
+    fs.writeFileSync(path.join(imgDir, 'logo.png'), buffer);
+    console.log(`[ADMIN] Logo atualizado (${buffer.length} bytes)`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/logo:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Upload de favicon (admin)
 app.post('/api/admin/favicon', autenticarAdmin, async (req, res) => {
   try {

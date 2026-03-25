@@ -2074,6 +2074,46 @@ function inicializar() {
       }
     });
 
+    // Logo upload
+    document.getElementById('adm-logo-input')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const status = document.getElementById('adm-logo-status');
+      status.textContent = 'Enviando...';
+      status.style.color = 'var(--text-muted)';
+      try {
+        const b64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        });
+        const resp = await fetch('/api/admin/logo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (getJwt() || '') },
+          body: JSON.stringify({ b64 })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          status.textContent = 'Logo atualizado!';
+          status.style.color = 'var(--green)';
+          const ts = Date.now();
+          const img = document.getElementById('adm-logo-img');
+          img.src = '/img/logo.png?v=' + ts;
+          img.style.display = 'block';
+          document.getElementById('adm-logo-placeholder').style.display = 'none';
+          // Atualizar logo na navbar
+          const navLogo = document.getElementById('nav-brand-logo');
+          if (navLogo) { navLogo.src = '/img/logo.png?v=' + ts; navLogo.style.display = ''; }
+        } else {
+          status.textContent = data.erro || 'Erro ao enviar';
+          status.style.color = 'var(--red)';
+        }
+      } catch (err) {
+        status.textContent = 'Erro: ' + err.message;
+        status.style.color = 'var(--red)';
+      }
+    });
+
     // Criar cupom
     document.getElementById('adm-cupom-criar')?.addEventListener('click', async () => {
       const codigo = document.getElementById('adm-cupom-codigo').value.trim().toUpperCase();

@@ -1409,6 +1409,11 @@ select.input { cursor: pointer; }
     margin-right: 24px;
     flex-shrink: 0;
   }
+  .nav-brand-logo {
+    height: 32px;
+    max-width: 140px;
+    object-fit: contain;
+  }
   .nav-brand-icon { font-size: 24px; }
   .nav-brand-text {
     font-size: 18px;
