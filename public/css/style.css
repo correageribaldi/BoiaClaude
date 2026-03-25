@@ -287,12 +287,16 @@ html:not([data-theme="light"]) .modal-box {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   height: var(--nav-h);
-  background: var(--card-bg);
-  border-top: 1px solid var(--border);
+  background: #1c1c24;
+  border-top: 1px solid rgba(255,255,255,.08);
   display: flex;
   align-items: center;
   box-shadow: 0 -2px 8px rgba(0,0,0,.06);
   z-index: 100;
+}
+[data-theme="light"] .bottom-nav {
+  background: #ffffff;
+  border-top-color: #d8d8e4;
 }
 /* Mobile: wrappers transparentes */
 .nav-brand { display: none; }
