@@ -127,7 +127,7 @@ html:not([data-theme="light"]) body {
     radial-gradient(circle 2px at 32% 20%, rgba(160,170,190,.18) 0%, transparent 1px),
     radial-gradient(circle 2px at 18% 19%, rgba(160,170,190,.20) 0%, transparent 1px);
 }
-[data-theme="light"] body > * { position: relative; z-index: 1; }
+[data-theme="light"] body > *:not(.modal-overlay) { position: relative; z-index: 1; }
 
 /* ── Glassmorphism (tema escuro) ──────────────────────────────────────── */
 html:not([data-theme="light"]) .card,
