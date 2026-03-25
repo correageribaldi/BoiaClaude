@@ -91,13 +91,23 @@ body {
   min-height: 100dvh;
 }
 
-/* Fundo premium escuro — gradiente sutil com glow */
+/* Fundo premium escuro */
 html:not([data-theme="light"]) body {
   background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(74,158,221,.08) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 40% at 80% 100%, rgba(39,174,96,.06) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 50% at 10% 60%, rgba(142,68,230,.05) 0%, transparent 50%),
-    var(--bg);
+    radial-gradient(ellipse 120% 60% at 50% -20%, rgba(74,158,221,.15) 0%, transparent 55%),
+    radial-gradient(ellipse 80% 50% at 90% 110%, rgba(39,174,96,.12) 0%, transparent 50%),
+    radial-gradient(ellipse 70% 60% at 0% 50%, rgba(142,68,230,.10) 0%, transparent 50%),
+    linear-gradient(180deg, #10101a 0%, #0c0c10 40%, #0e0e16 100%);
+  background-attachment: fixed;
+}
+
+/* Fundo premium claro */
+[data-theme="light"] body {
+  background:
+    radial-gradient(ellipse 120% 60% at 50% -20%, rgba(74,158,221,.10) 0%, transparent 55%),
+    radial-gradient(ellipse 80% 50% at 90% 110%, rgba(39,174,96,.07) 0%, transparent 50%),
+    radial-gradient(ellipse 70% 60% at 0% 50%, rgba(142,68,230,.06) 0%, transparent 50%),
+    linear-gradient(180deg, #eef2f9 0%, #f4f4f8 40%, #f0f0f6 100%);
   background-attachment: fixed;
 }
 
