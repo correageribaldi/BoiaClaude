@@ -2033,6 +2033,45 @@ function inicializar() {
   if (_isAdmin) {
     inicializarCronAdmin();
 
+    // Favicon upload
+    document.getElementById('adm-favicon-input')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const status = document.getElementById('adm-favicon-status');
+      status.textContent = 'Enviando...';
+      status.style.color = 'var(--text-muted)';
+      try {
+        const b64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        });
+        const resp = await fetch('/api/admin/favicon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + _token },
+          body: JSON.stringify({ b64 })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          status.textContent = 'Favicon atualizado!';
+          status.style.color = 'var(--green)';
+          const img = document.getElementById('adm-favicon-img');
+          img.src = '/img/favicon.png?v=' + Date.now();
+          img.style.display = 'block';
+          document.getElementById('adm-favicon-placeholder').style.display = 'none';
+          // Atualizar favicon no browser
+          let link = document.querySelector("link[rel~='icon']");
+          if (link) link.href = '/img/favicon.png?v=' + Date.now();
+        } else {
+          status.textContent = data.erro || 'Erro ao enviar';
+          status.style.color = 'var(--red)';
+        }
+      } catch (err) {
+        status.textContent = 'Erro: ' + err.message;
+        status.style.color = 'var(--red)';
+      }
+    });
+
     // Criar cupom
     document.getElementById('adm-cupom-criar')?.addEventListener('click', async () => {
       const codigo = document.getElementById('adm-cupom-codigo').value.trim().toUpperCase();

@@ -990,6 +990,29 @@ async function autenticarAdmin(req, res, next) {
   }
 }
 
+// Upload de favicon (admin)
+app.post('/api/admin/favicon', autenticarAdmin, async (req, res) => {
+  try {
+    const { b64 } = req.body || {};
+    if (!b64 || !b64.startsWith('data:image/')) {
+      return res.status(400).json({ erro: 'Imagem inválida' });
+    }
+    if (b64.length > 500000) {
+      return res.status(400).json({ erro: 'Imagem muito grande (máx ~350KB)' });
+    }
+    const imgDir = path.join(__dirname, '../public/img');
+    if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
+    const cleanB64 = b64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(cleanB64, 'base64');
+    fs.writeFileSync(path.join(imgDir, 'favicon.png'), buffer);
+    console.log(`[ADMIN] Favicon atualizado (${buffer.length} bytes)`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[ADMIN] /api/admin/favicon:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Lista todos os usuários com status de assinatura
 app.get('/api/admin/usuarios', autenticarAdmin, async (req, res) => {
   try {
