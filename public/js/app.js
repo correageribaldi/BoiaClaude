@@ -389,7 +389,7 @@ function iconeTx(descricao, categoria, tipo) {
 const estado = {
   dash: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear() },
   tx: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear(),
-        filtroStatus: '', filtroTipo: '', busca: '', pagina: 1 },
+        filtroStatus: '', filtroTipo: '', filtroRecorrente: false, busca: '', pagina: 1 },
   ag: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear() },
   charts: {},
 };
@@ -651,6 +651,7 @@ async function carregarTransacoes() {
   if (e.filtroStatus) params.set('status', e.filtroStatus);
   if (e.filtroTipo) params.set('tipo', e.filtroTipo);
   if (e.busca) params.set('descricao', e.busca);
+  if (e.filtroRecorrente) params.set('recorrente', '1');
 
   let transacoes;
   try { transacoes = await api('/api/transactions?' + params); }
@@ -681,7 +682,7 @@ function renderTabelaTransacoes(transacoes) {
     const isReceita = t.tipo === 'receita';
     tr.innerHTML = `
       <td>${fmtData(t.data)}</td>
-      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(t.descricao)}</strong></td>
+      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(t.descricao)}</strong>${t.recorrencia_id ? ' <span title="Recorrente" style="font-size:11px;opacity:.6">🔄</span>' : ''}</td>
       <td><span style="font-size:12px;color:var(--text-muted)">${esc(t.categoria || '—')}</span></td>
       <td class="text-right ${isReceita ? 'valor-positivo' : 'valor-negativo'}">${isReceita ? '+' : '-'}${fmtMoeda(t.valor)}</td>
       <td>${t.projetado
@@ -869,7 +870,7 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  await Promise.all([carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarRecorrencias()]);
+  await Promise.all([carregarCartoes(), carregarOrcamento(), carregarCaixinhas()]);
 }
 
 async function carregarCartoes() {
@@ -1998,6 +1999,7 @@ function inicializar() {
       btn.classList.add('active');
       estado.tx.filtroStatus = btn.dataset.filter ?? '';
       estado.tx.filtroTipo = btn.dataset.filterTipo ?? '';
+      estado.tx.filtroRecorrente = btn.dataset.filterRecorrente === '1';
       estado.tx.pagina = 1;
       carregarTransacoes();
     });
@@ -2194,6 +2196,22 @@ function toggleNovaTxStatus(btn) {
   _novaTxStatus = btn.dataset.val;
 }
 
+let _recDuracao = 'indeterminado';
+
+function toggleRecorrenciaFields() {
+  const checked = document.getElementById('nova-tx-recorrente').checked;
+  document.getElementById('nova-tx-rec-fields').classList.toggle('hidden', !checked);
+  // Parcelas e recorrência são mutuamente exclusivos
+  document.getElementById('nova-tx-parcelas').closest('.form-group').classList.toggle('hidden', checked);
+}
+
+function toggleRecDuracao(btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _recDuracao = btn.dataset.val;
+  document.getElementById('nova-tx-rec-vezes-wrap').classList.toggle('hidden', _recDuracao !== 'vezes');
+}
+
 async function _carregarCartoesSelect() {
   if (!_cartoesCache) {
     try { _cartoesCache = await api('/api/cartoes'); } catch { _cartoesCache = []; }
@@ -2226,6 +2244,18 @@ async function abrirModalNovaTx() {
   document.querySelectorAll('#nova-tx-status-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'pendente'));
   document.getElementById('nova-tx-cartao-wrap').classList.remove('hidden');
 
+  // Reset recurrence fields
+  const recCheck = document.getElementById('nova-tx-recorrente');
+  if (recCheck) recCheck.checked = false;
+  const recFields = document.getElementById('nova-tx-rec-fields');
+  if (recFields) recFields.classList.add('hidden');
+  const recVezesWrap = document.getElementById('nova-tx-rec-vezes-wrap');
+  if (recVezesWrap) recVezesWrap.classList.add('hidden');
+  _recDuracao = 'indeterminado';
+  document.querySelectorAll('#nova-tx-rec-duracao-bar .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'indeterminado'));
+  const parcelasGroup = document.getElementById('nova-tx-parcelas')?.closest('.form-group');
+  if (parcelasGroup) parcelasGroup.classList.remove('hidden');
+
   document.getElementById('modal-nova-tx').classList.remove('hidden');
 }
 
@@ -2240,26 +2270,57 @@ async function salvarNovaTx() {
   const data = document.getElementById('nova-tx-data').value;
   const cartao_id = document.getElementById('nova-tx-cartao').value || null;
   const parcelas = parseInt(document.getElementById('nova-tx-parcelas').value) || 1;
+  const isRecorrente = document.getElementById('nova-tx-recorrente')?.checked;
 
   if (!descricao) { toast('Preencha a descrição', 'error'); return; }
   if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
   if (!data) { toast('Selecione uma data', 'error'); return; }
 
   try {
-    await api('/api/transactions', {
-      method: 'POST',
-      body: JSON.stringify({
+    if (isRecorrente) {
+      // Build recurrence payload
+      const freq = document.getElementById('nova-tx-rec-freq').value; // mensal | semanal
+      const dt = new Date(data + 'T12:00:00');
+      const body = {
         tipo: _novaTxTipo,
         valor,
         descricao,
         categoria: categoria || null,
-        data,
-        status: _novaTxStatus,
-        cartao_id: cartao_id ? parseInt(cartao_id) : null,
-        parcelas,
-      }),
-    });
-    toast('Transação criada!', 'success');
+        frequencia: freq,
+        data_inicio: data,
+        data_fim: null,
+      };
+      if (freq === 'mensal') body.dia_mes = dt.getDate();
+      if (freq === 'semanal') body.dia_semana = dt.getDay();
+
+      if (_recDuracao === 'vezes') {
+        const vezes = parseInt(document.getElementById('nova-tx-rec-vezes').value);
+        if (!vezes || vezes < 2) { toast('Número de repetições inválido (mínimo 2)', 'error'); return; }
+        // Calculate data_fim based on vezes
+        const fim = new Date(dt);
+        if (freq === 'mensal') fim.setMonth(fim.getMonth() + (vezes - 1));
+        else if (freq === 'semanal') fim.setDate(fim.getDate() + (vezes - 1) * 7);
+        body.data_fim = fim.toISOString().substring(0, 10);
+      }
+
+      await api('/api/recorrencias', { method: 'POST', body: JSON.stringify(body) });
+      toast('Recorrência criada!', 'success');
+    } else {
+      await api('/api/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          tipo: _novaTxTipo,
+          valor,
+          descricao,
+          categoria: categoria || null,
+          data,
+          status: _novaTxStatus,
+          cartao_id: cartao_id ? parseInt(cartao_id) : null,
+          parcelas,
+        }),
+      });
+      toast('Transação criada!', 'success');
+    }
     fecharModalNovaTx();
     _categoriasCache = null; // Invalidate cache
     carregarTransacoes();
@@ -2610,6 +2671,7 @@ async function carregarRecorrencias() {
   catch { return; }
 
   const list = document.getElementById('recorrencias-list');
+  if (!list) return;
   const empty = document.getElementById('recorrencias-empty');
   list.innerHTML = '';
 

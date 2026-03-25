@@ -1069,7 +1069,7 @@ async function excluirTransacao(usuarioId, numeroUsuario) {
 
 async function consultarTransacoes(usuarioId, filtros = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const { tipo, categoria, dataInicio, dataFim, descricao, status, limite } = filtros;
+  const { tipo, categoria, dataInicio, dataFim, descricao, status, limite, recorrente } = filtros;
   const dataInicioValida = normalizarDataISO(dataInicio);
   const dataFimValida = normalizarDataISO(dataFim);
 
@@ -1111,6 +1111,9 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   if (status) {
     query += ` AND status = $${idx++}`;
     params.push(status);
+  }
+  if (recorrente) {
+    query += ` AND recorrencia_id IS NOT NULL`;
   }
 
   query += ` ORDER BY data DESC, id DESC LIMIT $${idx}`;

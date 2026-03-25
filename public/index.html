@@ -318,6 +318,7 @@
           <button class="filter-tab" data-filter="pago" data-filter-tipo="receita">Recebidas</button>
           <button class="filter-tab" data-filter="pendente" data-filter-tipo="despesa">A Pagar</button>
           <button class="filter-tab" data-filter="pendente" data-filter-tipo="receita">A Receber</button>
+          <button class="filter-tab" data-filter="" data-filter-tipo="" data-filter-recorrente="1">🔄 Recorrentes</button>
         </div>
         <input class="search-input" id="tx-search" type="text" placeholder="Buscar por descrição..." />
       </div>
@@ -390,18 +391,6 @@
                 <button class="btn btn-primary" id="sub-criar">+ Criar</button>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div class="accordion-item">
-          <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span>🔄 Recorrências</span>
-            <span class="accordion-icon">›</span>
-          </button>
-          <div class="accordion-body hidden">
-            <div id="recorrencias-list"></div>
-            <div id="recorrencias-empty" class="empty-state hidden">Nenhuma recorrência ativa.</div>
-            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaRecorrencia()">+ Nova Recorrência</button>
           </div>
         </div>
 
@@ -715,6 +704,32 @@
     <div id="nova-tx-cartao-wrap" class="form-group" style="margin-bottom:16px">
       <label style="color:var(--text-muted);font-size:13px">Cartão (opcional)</label>
       <select id="nova-tx-cartao" class="input"><option value="">Nenhum</option></select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="nova-tx-recorrente" onchange="toggleRecorrenciaFields()">
+        🔄 Recorrente
+      </label>
+    </div>
+    <div id="nova-tx-rec-fields" class="hidden">
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Frequência</label>
+        <select id="nova-tx-rec-freq" class="input">
+          <option value="mensal">Mensal</option>
+          <option value="semanal">Semanal</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Duração</label>
+        <div class="toggle-bar" id="nova-tx-rec-duracao-bar">
+          <button class="toggle-btn active" type="button" data-val="indeterminado" onclick="toggleRecDuracao(this)">Por tempo indeterminado</button>
+          <button class="toggle-btn" type="button" data-val="vezes" onclick="toggleRecDuracao(this)">Por X vezes</button>
+        </div>
+      </div>
+      <div id="nova-tx-rec-vezes-wrap" class="form-group hidden" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Número de repetições</label>
+        <input type="number" id="nova-tx-rec-vezes" class="input" min="2" max="120" placeholder="Ex: 12">
+      </div>
     </div>
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="fecharModalNovaTx()">Cancelar</button>
@@ -1049,6 +1064,6 @@
   </div>
 </div>
 
-<script src="/js/app.js?v=20260324b"></script>
+<script src="/js/app.js?v=20260325a"></script>
 </body>
 </html>

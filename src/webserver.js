@@ -157,7 +157,7 @@ app.get('/api/resumo-anual', autenticar, async (req, res) => {
 // ── Transações ────────────────────────────────────────────────────────────────
 app.get('/api/transactions', autenticar, async (req, res) => {
   try {
-    const { tipo, status, dataInicio, dataFim, descricao, limite } = req.query;
+    const { tipo, status, dataInicio, dataFim, descricao, limite, recorrente } = req.query;
     const transacoes = await db.consultarTransacoes(req.usuarioId, {
       tipo: tipo || null,
       status: status || null,
@@ -165,6 +165,7 @@ app.get('/api/transactions', autenticar, async (req, res) => {
       dataFim: dataFim || null,
       descricao: descricao || null,
       limite: parseInt(limite) || 200,
+      recorrente: recorrente === '1' ? true : null,
     });
 
     // Adicionar projeções de recorrências quando não filtrando apenas por 'pago'
