@@ -997,8 +997,8 @@ app.post('/api/admin/favicon', autenticarAdmin, async (req, res) => {
     if (!b64 || !b64.startsWith('data:image/')) {
       return res.status(400).json({ erro: 'Imagem inválida' });
     }
-    if (b64.length > 500000) {
-      return res.status(400).json({ erro: 'Imagem muito grande (máx ~350KB)' });
+    if (b64.length > 700000) {
+      return res.status(400).json({ erro: 'Imagem muito grande (máx 500KB)' });
     }
     const imgDir = path.join(__dirname, '../public/img');
     if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
