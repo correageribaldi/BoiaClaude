@@ -214,14 +214,14 @@ html:not([data-theme="light"]) .modal-box {
 .modal-overlay {
   position: fixed; inset: 0;
   background: rgba(0,0,0,.5);
-  display: flex; align-items: flex-end; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   z-index: 400;
 }
 .modal-box {
   background: var(--card-bg);
-  border-radius: 20px 20px 0 0;
+  border-radius: 16px;
   padding: 24px 24px 32px;
-  width: 100%; max-width: 480px;
+  width: calc(100% - 32px); max-width: 480px;
   max-height: 90dvh; overflow-y: auto;
 }
 .modal-header {
@@ -1466,8 +1466,7 @@ select.input { cursor: pointer; }
   }
   .nav-avatar:hover { opacity: .8; }
 
-  /* Modals: centrados no desktop */
-  .modal-overlay { align-items: center; }
+  /* Modals: border-radius no desktop */
   .modal-box { border-radius: 16px; }
 
   /* Main content: padding-top para compensar top nav, full width */
