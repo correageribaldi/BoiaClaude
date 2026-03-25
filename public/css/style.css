@@ -303,6 +303,56 @@ html:not([data-theme="light"]) .modal-box {
 .nav-user  { display: none; }
 .nav-links { display: contents; }
 
+/* ── Theme switch (pill toggle) ──────────────────────────────────────────── */
+.theme-switch {
+  position: relative;
+  width: 56px; height: 28px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.08);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background .3s, border-color .3s;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+.theme-switch-icon {
+  font-size: 13px;
+  z-index: 1;
+  width: 24px;
+  text-align: center;
+  line-height: 28px;
+  transition: opacity .3s;
+}
+.theme-switch-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  transition: transform .3s ease;
+}
+/* Dark mode: thumb left (moon active) */
+.theme-switch-moon { opacity: 1; }
+.theme-switch-sun  { opacity: .4; }
+
+/* Light mode */
+[data-theme="light"] .theme-switch {
+  background: rgba(0,0,0,.06);
+  border-color: rgba(0,0,0,.12);
+}
+[data-theme="light"] .theme-switch-thumb {
+  transform: translateX(28px);
+  background: #ffd43b;
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+}
+[data-theme="light"] .theme-switch-moon { opacity: .4; }
+[data-theme="light"] .theme-switch-sun  { opacity: 1; }
+
 .nav-btn {
   flex: 1;
   border: none;
@@ -1396,6 +1446,7 @@ select.input { cursor: pointer; }
   .nav-user {
     display: flex;
     align-items: center;
+    gap: 4px;
     margin-left: auto;
     flex-shrink: 0;
   }
