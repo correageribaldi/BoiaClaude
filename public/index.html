@@ -16,10 +16,10 @@
   <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
   <style>
-    /* Select2 — tema escuro */
+    /* Select2 — tema escuro (usa variáveis CSS) */
     .select2-container--default .select2-selection--multiple {
-      background: #1c1c24;
-      border: 1.5px solid #2a2a36;
+      background: var(--card-bg);
+      border: 1.5px solid var(--border);
       border-radius: 8px;
       min-height: 42px;
       padding: 4px 6px;
@@ -29,16 +29,16 @@
       outline: none;
     }
     .select2-container--default .select2-selection--multiple .select2-selection__choice {
-      background: #2a2a3e;
-      border: 1px solid #3a3a52;
-      color: #e8e8f0;
+      background: rgba(74,158,221,.12);
+      border: 1px solid rgba(74,158,221,.25);
+      color: var(--text);
       border-radius: 6px;
       padding: 2px 8px;
       font-size: 12px;
       margin: 2px 4px 2px 0;
     }
     .select2-container--default .select2-selection--multiple .select2-selection__choice__remove {
-      color: #8888aa;
+      color: var(--text-muted);
       margin-right: 4px;
     }
     .select2-container--default .select2-selection--multiple .select2-selection__choice__remove:hover {
@@ -46,33 +46,33 @@
       background: transparent;
     }
     .select2-container--default .select2-selection--multiple .select2-selection__placeholder {
-      color: #8888aa;
+      color: var(--text-muted);
     }
     .select2-dropdown {
-      background: #1c1c24;
-      border: 1.5px solid #2a2a36;
+      background: var(--card-bg);
+      border: 1.5px solid var(--border);
       border-radius: 8px;
-      color: #e8e8f0;
+      color: var(--text);
       box-shadow: 0 4px 20px rgba(0,0,0,.5);
     }
     .select2-container--default .select2-results__option {
       padding: 8px 12px;
       font-size: 13px;
-      color: #e8e8f0;
+      color: var(--text);
     }
     .select2-container--default .select2-results__option--highlighted[aria-selected] {
-      background: #2a2a3e;
-      color: #e8e8f0;
+      background: rgba(74,158,221,.15);
+      color: var(--text);
     }
     .select2-container--default .select2-results__option[aria-selected=true] {
-      background: #0d1f2d;
+      background: rgba(74,158,221,.08);
       color: #4a9edd;
     }
     .select2-search--dropdown .select2-search__field {
-      background: #0f0f13;
-      border: 1px solid #2a2a36;
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 6px;
-      color: #e8e8f0;
+      color: var(--text);
       padding: 6px 10px;
       font-size: 13px;
     }
@@ -116,7 +116,7 @@
     <h1>Cronos Financeiro</h1>
     <p class="login-sub" style="margin-top:12px;">Carregando...</p>
     <div style="margin-top:20px;">
-      <div style="width:32px;height:32px;border:3px solid #2a2a36;border-top-color:#4a9edd;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto;"></div>
+      <div style="width:32px;height:32px;border:3px solid var(--border);border-top-color:#4a9edd;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto;"></div>
     </div>
   </div>
 </div>

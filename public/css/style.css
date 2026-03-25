@@ -12,10 +12,10 @@
   --blue-light: #0d1f2d;
   --text: #e8e8f0;
   --text-muted: #8888aa;
-  --bg: #0c0c10;
-  --card-bg: #1c1c24;
-  --border: #2a2a36;
-  --shadow: 0 2px 12px rgba(0,0,0,.4);
+  --bg: #080d1f;
+  --card-bg: #0f1630;
+  --border: #1a2548;
+  --shadow: 0 2px 16px rgba(0,0,0,.5);
   --radius: 12px;
   --header-h: 56px;
   --nav-h: 64px;
@@ -29,7 +29,7 @@
   --blue-light: #e0f0fc;
   --text: #1a1a2e;
   --text-muted: #6b6b85;
-  --bg: #f4f4f8;
+  --bg: #eef0f5;
   --card-bg: #ffffff;
   --border: #d8d8e4;
   --shadow: 0 2px 12px rgba(0,0,0,.08);
@@ -91,25 +91,41 @@ body {
   min-height: 100dvh;
 }
 
-/* Fundo premium escuro */
+/* Fundo premium escuro — navy com glow azul/ciano */
 html:not([data-theme="light"]) body {
   background:
-    radial-gradient(ellipse 120% 60% at 50% -20%, rgba(74,158,221,.15) 0%, transparent 55%),
-    radial-gradient(ellipse 80% 50% at 90% 110%, rgba(39,174,96,.12) 0%, transparent 50%),
-    radial-gradient(ellipse 70% 60% at 0% 50%, rgba(142,68,230,.10) 0%, transparent 50%),
-    linear-gradient(180deg, #10101a 0%, #0c0c10 40%, #0e0e16 100%);
+    radial-gradient(ellipse 100% 80% at 50% -30%, rgba(30,90,180,.30) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 85% 20%, rgba(40,120,220,.12) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 10% 80%, rgba(60,140,255,.08) 0%, transparent 50%),
+    linear-gradient(170deg, #0b1228 0%, #080d1f 35%, #060a18 100%);
   background-attachment: fixed;
 }
 
-/* Fundo premium claro */
+/* Fundo premium claro — formas geométricas decorativas */
 [data-theme="light"] body {
   background:
-    radial-gradient(ellipse 120% 60% at 50% -20%, rgba(74,158,221,.10) 0%, transparent 55%),
-    radial-gradient(ellipse 80% 50% at 90% 110%, rgba(39,174,96,.07) 0%, transparent 50%),
-    radial-gradient(ellipse 70% 60% at 0% 50%, rgba(142,68,230,.06) 0%, transparent 50%),
-    linear-gradient(180deg, #eef2f9 0%, #f4f4f8 40%, #f0f0f6 100%);
+    radial-gradient(ellipse 80% 60% at 70% -10%, rgba(180,200,230,.30) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 40% at 5% 90%, rgba(160,180,210,.15) 0%, transparent 50%),
+    linear-gradient(160deg, #e8ecf4 0%, #eef0f5 40%, #f0f2f7 100%);
   background-attachment: fixed;
 }
+[data-theme="light"] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(circle 2px at 20% 15%, rgba(160,170,190,.25) 0%, transparent 1px),
+    radial-gradient(circle 2px at 22% 17%, rgba(160,170,190,.20) 0%, transparent 1px),
+    radial-gradient(circle 2px at 24% 14%, rgba(160,170,190,.22) 0%, transparent 1px),
+    radial-gradient(circle 2px at 26% 18%, rgba(160,170,190,.18) 0%, transparent 1px),
+    radial-gradient(circle 2px at 28% 13%, rgba(160,170,190,.20) 0%, transparent 1px),
+    radial-gradient(circle 2px at 30% 16%, rgba(160,170,190,.22) 0%, transparent 1px),
+    radial-gradient(circle 2px at 32% 20%, rgba(160,170,190,.18) 0%, transparent 1px),
+    radial-gradient(circle 2px at 18% 19%, rgba(160,170,190,.20) 0%, transparent 1px);
+}
+[data-theme="light"] body > * { position: relative; z-index: 1; }
 
 .hidden { display: none !important; }
 
@@ -693,7 +709,7 @@ html:not([data-theme="light"]) body {
   text-transform: uppercase;
   letter-spacing: .3px;
   color: var(--text-muted);
-  background: #14141c;
+  background: rgba(0,0,0,.15);
   border-bottom: 1px solid var(--border);
 }
 .data-table tbody tr {
