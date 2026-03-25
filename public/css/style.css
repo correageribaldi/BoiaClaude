@@ -41,7 +41,8 @@
   background: linear-gradient(135deg, #c8d6f0 0%, #a8bde0 60%, #7ea3d0 100%) !important;
 }
 [data-theme="light"] .dash-hero {
-  background: linear-gradient(145deg, #c8d6f0 0%, #a8bde0 55%, #7ea3d0 100%);
+  background: linear-gradient(145deg, #f5f7fc 0%, #edf1fa 55%, #e6ebf5 100%);
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
 }
 [data-theme="light"] .dash-hero,
 [data-theme="light"] .dash-hero * { color: #1a1a2e; }
@@ -379,12 +380,12 @@ html:not([data-theme="light"]) body {
 
 /* ── Dashboard Hero ──────────────────────────────────────────────────────── */
 .dash-hero {
-  background: linear-gradient(145deg, #1a1a2e 0%, #16213e 55%, #0f3460 100%);
+  background: linear-gradient(145deg, #141830 0%, #182848 55%, #1a3a6a 100%);
   border-radius: 0 0 24px 24px;
   padding: 20px 20px 22px;
   margin: -16px -16px 16px;
   color: white;
-  box-shadow: 0 8px 32px rgba(15,52,96,.4);
+  box-shadow: none;
 }
 
 /* Linha superior */
