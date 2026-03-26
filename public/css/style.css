@@ -93,6 +93,10 @@ body {
   min-height: 100dvh;
 }
 
+/* Fundo base — evita flash branco em scroll/fullpage */
+html                              { background: #0d0d11; }
+[data-theme="light"]              { background: #f0f2f7; }
+
 /* Fundo premium escuro */
 html:not([data-theme="light"]) body {
   background:
