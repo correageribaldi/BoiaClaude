@@ -825,9 +825,9 @@ async function handleConfirmacaoNome(usuarioId, texto) {
   const lower = texto.trim().toLowerCase();
   const normalizado = normalizarTexto(lower);
 
-  // Confirmação: ok, sim, tudo bem, ta certo, isso, beleza, etc.
-  const CONFIRMA = ['ok', 'okay', 'sim', 'tudo bem', 'ta certo', 'ta bom', 'certo', 'isso', 'beleza', 'blz', 'pode ser', 'perfeito', 'bora', 'vamos', 'continua', 'seguir', 'confirmo', 'confirmado', 'show', 'top', 'massa', 'dale', 'feito'];
-  if (CONFIRMA.includes(normalizado)) {
+  // Confirmação: regex abrangente para capturar intenção de "sim/ok/avançar"
+  const isConfirma = /^(ok|okay|sim|s|tudo\s*bem|ta\s*(certo|bom)|certo|isso|beleza|blz|pode\s*ser|perfeito|bora|vamos|continua(r)?|seguir|confirmo|confirmado|show|top|massa|dale|feito|pronto|valeu|combinado|aprovado|fechou|firmeza|partiu|simbora|vamo|manda|segue|pode|vai|bora\s*la|prosseguir|adiante|ta\s*ok|esta\s*bom|correto|exato|eh\s*isso|e\s*isso|certinho|ta\s*certo|ta\s*otimo|otimo)$/i.test(normalizado);
+  if (isConfirma) {
     const usuario = await db.buscarUsuario(usuarioId);
     const nome = usuario?.nome || 'amigo(a)';
     setOnboardingState(usuarioId, 'aguardando_inicio');
@@ -1574,8 +1574,8 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
   const { transacaoIds, transacoesInfo } = estado;
 
   // 1. Confirmar TUDO
-  const CONFIRMA_TUDO = ['sim', 'paguei', 'paguei tudo', 'ja paguei', 'ja paguei', 'pago', 'ja pago', 'ja pago', 'tudo pago', 'tudo certo', 'confirmado', 'recebi tudo', 'ja recebi', 'ja recebi', 'recebido', 'foi', 'pronto', 'feito', 'ok', 'okay', 'realizado', 'efetuado'];
-  if (CONFIRMA_TUDO.includes(normalizado)) {
+  const isConfirmaTudo = /^(sim|s|paguei(\s*tudo)?|ja\s*paguei|pago|ja\s*pago|tudo\s*(pago|certo)|confirmado|confirmo|recebi(\s*tudo)?|ja\s*recebi|recebido|foi|pronto|feito|ok|okay|realizado|efetuado|certo|beleza|blz|show|top|valeu|combinado|fechou|pode|vai|certinho|ta\s*(certo|bom)|tudo\s*bem)$/i.test(normalizado);
+  if (isConfirmaTudo) {
     limparConfirmacaoLembrete(usuarioId);
     const { pagas, caixinhasAtualizadas } = await liquidarTransacoes(usuarioId, transacaoIds);
     if (pagas.length === 0) return `✅ Essas transações já estão marcadas como pagas. Tudo certo!`;
@@ -1583,8 +1583,8 @@ async function handleConfirmacaoLembrete(usuarioId, lower, estado) {
   }
 
   // 2. Negar TUDO
-  const NEGA_TUDO = ['nao', 'ainda nao', 'nenhuma', 'nao paguei', 'nao recebi'];
-  if (NEGA_TUDO.includes(normalizado)) {
+  const isNegaTudo = /^(nao|n|ainda\s*nao|nenhum(a)?|nada|nem|negativo|nope|nao\s*(paguei|recebi|fiz)|nenhum\s*deles|nenhuma\s*delas)$/i.test(normalizado);
+  if (isNegaTudo) {
     limparConfirmacaoLembrete(usuarioId);
     return '👍 Beleza, vou te lembrar de novo mais tarde!';
   }
@@ -1883,7 +1883,7 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
 
   // Comando: finanças em dia (texto direto)
-  if (lower === 'finanças em dia' || lower === 'financas em dia') {
+  if (/^(finan[cç]as?\s*em\s*dia|organizar\s*(finan[cç]as|tudo))$/i.test(lower)) {
     return await iniciarPontoZero(usuarioId);
   }
 
