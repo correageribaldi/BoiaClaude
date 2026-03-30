@@ -111,7 +111,7 @@ CONTEXTO FINANCEIRO ATUAL:
 ${contextText}
 
 REGRAS IMPORTANTES:
-1. Para registrar despesas/receitas, use a tool registrar_transacao diretamente sem pedir confirmação.
+1. Para registrar despesas/receitas, chame a tool registrar_transacao IMEDIATAMENTE sem dizer nada antes. NÃO escreva "vou registrar" ou "um momento" — apenas chame a tool direto. Sua resposta de texto deve vir DEPOIS que a tool retornar o resultado, confirmando o registro.
 2. Para ações mais impactantes (criar/remover limites, recorrências, excluir transações), DESCREVA o que vai fazer e peça confirmação antes de executar. Aguarde o usuário responder "sim" antes de chamar a tool.
 3. Quando gerar gráficos, envie junto com uma breve análise.
 4. Se o usuário mandar algo que não tem a ver com finanças, responda normalmente e tente conectar com funcionalidades do Cronos quando fizer sentido.
@@ -499,6 +499,7 @@ const TOOLS = [
 ];
 
 // Tools que requerem confirmação do usuário antes de executar
+// NOTA: registrar_transacao e liquidar_transacao NÃO estão aqui — executam direto
 const TOOLS_COM_CONFIRMACAO = new Set([
   'definir_limite', 'remover_limite',
   'criar_recorrencia', 'desativar_recorrencia',
@@ -766,20 +767,12 @@ async function processarMensagem(usuarioId, texto, chatFn) {
         let args;
         try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
-        // Se a tool requer confirmação, salvar e perguntar
+        // Se a tool requer confirmação, salvar e perguntar ao usuário
         if (TOOLS_COM_CONFIRMACAO.has(toolName)) {
-          // Registrar despesa/receita NÃO pede confirmação (regra especial)
-          if (toolName === 'registrar_transacao') {
-            // Executa direto
-          } else {
-            estado.pendingAction = { toolName, args, toolCallId: tc.id };
-            estado.conversationHistory.push({ role: 'user', content: texto });
-
-            // Gerar mensagem de confirmação
-            const descricao = descreverAcao(toolName, args);
-            salvarEstado(usuarioId, estado);
-            return { texto: `${descricao}\n\n*Confirma? (sim/não)*` };
-          }
+          estado.pendingAction = { toolName, args, toolCallId: tc.id };
+          const descricao = descreverAcao(toolName, args);
+          salvarEstado(usuarioId, estado);
+          return { texto: `${descricao}\n\n*Confirma? (sim/não)*` };
         }
 
         // Executar tool
@@ -794,7 +787,7 @@ async function processarMensagem(usuarioId, texto, chatFn) {
           });
 
           // Refresh contexto após ação de escrita
-          if (TOOLS_COM_CONFIRMACAO.has(toolName)) {
+          if (toolName === 'registrar_transacao' || toolName === 'liquidar_transacao') {
             const ctx = await buildFinancialContext(usuarioId);
             estado.contextSnapshot = ctx;
             estado.contextBuiltAt = Date.now();
