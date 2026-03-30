@@ -9,7 +9,7 @@ const fmt = require('./formatters');
 const search = require('./search');
 
 // Helper: formatarMoeda seguro (trata null/undefined)
-function moeda(v) { return moeda(Number(v) || 0); }
+function moeda(v) { return fmt.formatarMoeda(Number(v) || 0); }
 
 // ── Estado por usuário ───────────────────────────────────────────────────────
 
