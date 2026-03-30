@@ -1736,6 +1736,16 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleOnboardingInicio(usuarioId, msg);
   }
 
+  // Agente de crescimento / SEO (admin only) — comando /seo
+  const adminIds = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (adminIds.includes(usuarioId)) {
+    const crescimentoEstado = agenteCrescimento.obterEstadoCrescimento(usuarioId);
+    if (crescimentoEstado || /^\/(seo|ceo|crescimento|briefing|metricas)$/i.test(lower)) {
+      const resultado = await agenteCrescimento.processarMensagemCrescimento(usuarioId, msg, chatAgente);
+      return resultado.texto;
+    }
+  }
+
   // Verificar se está no fluxo Finanças em Dia — posição #2 para bloquear todos os outros estados
   const pontoZero = await obterPontoZero(usuarioId);
   if (pontoZero) {
@@ -2161,16 +2171,6 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     agente.limparEstado(usuarioId);
     setOnboardingState(usuarioId, 'aguardando_nome');
     return mensagemApresentacao();
-  }
-
-  // Agente de crescimento (admin only)
-  const adminsCrescimento = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (adminsCrescimento.includes(usuarioId)) {
-    const crescimentoEstado = agenteCrescimento.obterEstadoCrescimento(usuarioId);
-    if (crescimentoEstado || /^(crescimento|@ceo|ceo|briefing|metricas|métricas)/i.test(lower)) {
-      const resultado = await agenteCrescimento.processarMensagemCrescimento(usuarioId, msg, chatAgente);
-      return resultado.texto;
-    }
   }
 
   // Agente financeiro inteligente (substitui interpretarMensagem)

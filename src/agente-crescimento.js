@@ -449,7 +449,7 @@ async function processarMensagemCrescimento(adminId, texto, chatFn) {
 
   // Se é trigger de ativação, substituir por instrução clara para a IA
   let mensagemUsuario = texto;
-  if (isNovoSessao && /^(crescimento|@ceo|ceo|briefing|metricas|métricas)$/i.test(texto.trim())) {
+  if (isNovoSessao && /^\/?(seo|ceo|crescimento|briefing|metricas|métricas)$/i.test(texto.trim())) {
     mensagemUsuario = 'Me dê um panorama geral de como está o Cronos agora. Analise as métricas, identifique pontos de atenção e sugira 3 ações concretas prioritárias.';
   }
 
