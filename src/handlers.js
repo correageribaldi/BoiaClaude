@@ -1,7 +1,8 @@
 const db = require('./database');
 const fmt = require('./formatters');
 const pagamento = require('./pagamento');
-const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding } = require('./ai');
+const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding, chatAgente } = require('./ai');
+const agente = require('./agente-financeiro');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -2151,8 +2152,22 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     }
   }
 
-  // IA interpreta tudo: saudações, transações, consultas, etc. (incluindo reset)
-  return await handleMensagemIA(usuarioId, msg, enviarAck);
+  // Detectar reset ANTES do agente
+  const lowerReset = lower.replace(/[.,!?]+$/g, '');
+  if (lowerReset === 'resetar' || lowerReset.includes('começar do zero') || lowerReset.includes('comecar do zero') || lowerReset === 'limpar tudo' || lowerReset === 'zerar dados') {
+    await db.limparDadosUsuario(usuarioId);
+    limparPontoZero(usuarioId);
+    agente.limparEstado(usuarioId);
+    setOnboardingState(usuarioId, 'aguardando_nome');
+    return mensagemApresentacao();
+  }
+
+  // Agente financeiro inteligente (substitui interpretarMensagem)
+  const resultado = await agente.processarMensagem(usuarioId, msg, chatAgente);
+  if (resultado.grafico) {
+    return { texto: resultado.texto, grafico: resultado.grafico };
+  }
+  return resultado.texto;
 }
 
 async function handleTransacao(usuarioId, msg) {
@@ -8406,6 +8421,7 @@ function limparMapsExpirados() {
     lembretesPendentes, confirmacaoLembrete, pontoZeroEstados,
     analiseFinanceiraEstados, localizacaoUsuario, removerContatoPendente,
     onboardingEstados, cadastroPainelEstados,
+    agente.agenteEstados,
   ];
   for (const m of maps) {
     for (const [key, val] of m.entries()) {

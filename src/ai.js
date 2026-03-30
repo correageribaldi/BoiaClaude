@@ -1200,4 +1200,23 @@ async function extrairNomeOnboarding(texto) {
   }
 }
 
-module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding };
+// ── Chat do Agente Financeiro (function calling) ─────────────────────────────
+
+async function chatAgente(messages, tools) {
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages,
+      tools,
+      tool_choice: 'auto',
+      temperature: 0.5,
+      max_tokens: 800,
+    });
+    return response.choices[0]?.message || null;
+  } catch (err) {
+    console.error('[AGENTE] Erro OpenAI:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, transcreverAudio, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding, chatAgente };
