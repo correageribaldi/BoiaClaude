@@ -434,6 +434,7 @@ async function processarMensagemCrescimento(adminId, texto, chatFn) {
   }
 
   let estado = obterEstadoCrescimento(adminId);
+  const isNovoSessao = !estado;
 
   // Inicializar ou atualizar contexto
   if (!estado || (Date.now() - (estado.contextBuiltAt || 0)) > CONTEXT_REFRESH_MS) {
@@ -446,9 +447,15 @@ async function processarMensagemCrescimento(adminId, texto, chatFn) {
     };
   }
 
+  // Se é trigger de ativação, substituir por instrução clara para a IA
+  let mensagemUsuario = texto;
+  if (isNovoSessao && /^(crescimento|@ceo|ceo|briefing|metricas|métricas)$/i.test(texto.trim())) {
+    mensagemUsuario = 'Me dê um panorama geral de como está o Cronos agora. Analise as métricas, identifique pontos de atenção e sugira 3 ações concretas prioritárias.';
+  }
+
   // Montar mensagens
   const systemMsg = { role: 'system', content: buildSystemPrompt(estado.metricsSnapshot.text) };
-  estado.conversationHistory.push({ role: 'user', content: texto });
+  estado.conversationHistory.push({ role: 'user', content: mensagemUsuario });
 
   // Podar histórico
   while (estado.conversationHistory.length > MAX_HISTORY) {
