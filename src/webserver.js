@@ -24,9 +24,14 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ── Landing page pública ────────────────────────────────────────────────────
+// ── Página raiz — serve painel ou landing conforme o hostname ────────────────
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/landing.html'));
+  const host = req.hostname;
+  if (host === 'painel.cronosappai.com.br') {
+    res.sendFile(path.join(__dirname, '../public/index.html'));
+  } else {
+    res.sendFile(path.join(__dirname, '../public/landing.html'));
+  }
 });
 
 app.use(express.static(path.join(__dirname, '../public')));
@@ -60,7 +65,7 @@ async function autenticar(req, res, next) {
 
 // ── Páginas públicas ──────────────────────────────────────────────────────────
 app.get('/painel', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+  res.redirect(301, 'https://painel.cronosappai.com.br/');
 });
 app.get('/privacidade', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/privacidade.html'));
@@ -674,7 +679,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
     // Redirecionar de volta ao painel com flag de sucesso
     const base = process.env.PAINEL_BASE_URL || '';
-    res.redirect(`${base}/painel#google-connected`);
+    res.redirect(`${base}/#google-connected`);
   } catch (err) {
     console.error('[GCAL] Erro no callback:', err.message);
     res.status(500).send('Erro ao conectar Google Calendar. Tente novamente.');

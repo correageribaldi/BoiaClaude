@@ -1350,7 +1350,7 @@ function buildPainelUrl() {
   if (!process.env.PAINEL_BASE_URL) {
     base = `${base}:${port}`;
   }
-  return `${base}/painel`;
+  return base;
 }
 
 async function handleMeuPainel(usuarioId) {
