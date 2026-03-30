@@ -137,15 +137,24 @@ Data de hoje: ${dataHoje}
 
 ${contextText}
 
+CAPACIDADES:
+Você pode ANALISAR (consultar métricas, funil, churn, engajamento) e também AGIR:
+- Enviar mensagem individual para qualquer usuário
+- Enviar campanha em massa (por segmento: ativos, inativos, trial, etc.)
+- Criar campanha agendada (cron recorrente)
+- Ativar assinatura de usuário
+- Listar campanhas ativas
+
 REGRAS:
 1. Sempre basear sugestões em dados concretos das métricas
 2. Usar comparativos quando possível (semana passada vs esta, mês vs mês)
 3. Priorizar ações por impacto: retenção > aquisição > monetização
-4. Ser específico: "enviar campanha para os 3 usuários inativos há 5 dias" em vez de "melhorar retenção"
-5. Quando identificar problemas, já sugerir a solução
+4. Ser específico e quando o admin pedir para executar uma ação, EXECUTE usando as tools disponíveis
+5. Quando identificar problemas, sugerir a solução E oferecer executar na hora
 6. Se os dados são de base pequena (< 20 usuários), mencionar que tendências podem ser instáveis
 7. Use as ferramentas disponíveis para buscar dados adicionais quando necessário
-8. Responda "sair" ou "voltar" do admin significa encerrar sessão — confirme a saída`;
+8. Para campanhas em massa, SEMPRE confirme com o admin antes de enviar (mostre o texto e quantos receberão)
+9. Responda "sair" ou "voltar" do admin significa encerrar sessão`;
 }
 
 // ── Tools ───────────────────────────────────────────────────────────────────
@@ -273,6 +282,79 @@ const TOOLS = [
       },
     },
   },
+  // ── Tools de AÇÃO ─────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'enviar_mensagem_usuario',
+      description: 'Enviar mensagem para um usuário específico via WhatsApp. Use {nome} no texto para personalizar com o primeiro nome.',
+      parameters: {
+        type: 'object',
+        properties: {
+          usuario_id: { type: 'string', description: 'ID do usuário (ex: 5511999998888@c.us)' },
+          mensagem: { type: 'string', description: 'Texto da mensagem (suporta *negrito*, _itálico_, ~tachado~)' },
+        },
+        required: ['usuario_id', 'mensagem'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'enviar_campanha',
+      description: 'Enviar mensagem em massa para um grupo de usuários filtrado por regra. Use {nome} para personalizar. Delay automático de 5-15s entre envios.',
+      parameters: {
+        type: 'object',
+        properties: {
+          mensagem: { type: 'string', description: 'Texto da mensagem (suporta {nome} para personalizar)' },
+          regra: { type: 'string', enum: ['ativos_x_dias', 'inativos_x_dias', 'nao_pagantes', 'trial', 'expirados', 'graca'], description: 'Regra de segmentação dos destinatários' },
+          regra_valor: { type: 'integer', description: 'Valor da regra em dias (ex: 7 para inativos_x_dias=7)' },
+        },
+        required: ['mensagem', 'regra'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'criar_campanha_agendada',
+      description: 'Criar campanha agendada (cron) que envia mensagens automaticamente na frequência definida.',
+      parameters: {
+        type: 'object',
+        properties: {
+          titulo: { type: 'string', description: 'Nome da campanha' },
+          mensagem: { type: 'string', description: 'Texto da mensagem (suporta {nome})' },
+          frequencia: { type: 'string', enum: ['cada_30min', 'cada_1h', 'cada_2h', 'cada_4h', 'cada_6h', 'cada_12h', 'todo_dia', 'cada_2dias', 'cada_3dias', 'semanal'], description: 'Frequência de envio' },
+          horario: { type: 'string', description: 'Horário preferido para frequências diárias+ (formato HH:MM, ex: 09:00)' },
+          regra: { type: 'string', enum: ['ativos_x_dias', 'inativos_x_dias', 'nao_pagantes', 'trial', 'expirados', 'graca'], description: 'Regra de segmentação' },
+          regra_valor: { type: 'integer', description: 'Valor da regra em dias' },
+        },
+        required: ['titulo', 'mensagem', 'frequencia', 'regra'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ativar_assinatura',
+      description: 'Ativar manualmente a assinatura de um usuário por 30 dias.',
+      parameters: {
+        type: 'object',
+        properties: {
+          usuario_id: { type: 'string', description: 'ID do usuário (ex: 5511999998888@c.us)' },
+        },
+        required: ['usuario_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'listar_campanhas_ativas',
+      description: 'Listar todas as campanhas agendadas (crons) ativas no sistema.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
 ];
 
 // ── Executor de tools ───────────────────────────────────────────────────────
@@ -389,8 +471,82 @@ async function executeTool(toolName, args) {
       return { ok: true, msg: `Top ${top.length} usuários`, data: top };
     }
 
+    // ── Tools de AÇÃO ─────────────────────────────────────────────────────
+
+    case 'enviar_mensagem_usuario': {
+      if (!_whatsappClient) return { ok: false, msg: 'WhatsApp client não disponível' };
+      const usuario = await db.buscarUsuario(args.usuario_id);
+      const primeiroNome = (usuario?.nome || '').split(' ')[0] || 'amigo(a)';
+      const msgFinal = args.mensagem.replace(/\{nome\}/gi, primeiroNome);
+      await _whatsappClient.sendMessage(args.usuario_id, msgFinal);
+      return { ok: true, msg: `Mensagem enviada para ${primeiroNome} (${args.usuario_id})` };
+    }
+
+    case 'enviar_campanha': {
+      if (!_whatsappClient) return { ok: false, msg: 'WhatsApp client não disponível' };
+      const usuarios = await resolverDestinatarios(args.regra, args.regra_valor);
+      if (usuarios.length === 0) return { ok: true, msg: 'Nenhum usuário encontrado com esse filtro' };
+
+      let enviados = 0;
+      let erros = 0;
+      for (let i = 0; i < usuarios.length; i++) {
+        const u = usuarios[i];
+        try {
+          const primeiroNome = (u.nome || '').split(' ')[0] || 'amigo(a)';
+          const msgFinal = args.mensagem.replace(/\{nome\}/gi, primeiroNome);
+          await _whatsappClient.sendMessage(u.usuario_id, msgFinal);
+          enviados++;
+        } catch (err) {
+          erros++;
+          console.error(`[SEO-CAMPANHA] Erro envio para ${u.usuario_id}:`, err.message);
+        }
+        if (i < usuarios.length - 1) {
+          const delay = Math.floor(5000 + Math.random() * 10000);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      return { ok: true, msg: `Campanha finalizada: ${enviados} enviados, ${erros} erros (de ${usuarios.length} destinatários)` };
+    }
+
+    case 'criar_campanha_agendada': {
+      const cron = await db.criarAdminCron(
+        args.titulo, args.mensagem, args.frequencia,
+        args.horario || null, args.regra, args.regra_valor || null, null
+      );
+      return { ok: true, msg: `Campanha "${args.titulo}" criada (ID: ${cron.id}). Frequência: ${args.frequencia}, regra: ${args.regra}` };
+    }
+
+    case 'ativar_assinatura': {
+      await db.ativarAssinatura(args.usuario_id);
+      const assinatura = await db.buscarAssinatura(args.usuario_id);
+      if (_whatsappClient) {
+        const pagoAte = assinatura?.pago_ate ? new Date(assinatura.pago_ate).toLocaleDateString('pt-BR') : '30 dias';
+        await _whatsappClient.sendMessage(args.usuario_id, `✅ *Assinatura ativada!*\n\nSua assinatura do *Cronos* está ativa até *${pagoAte}*. 🚀`);
+      }
+      return { ok: true, msg: `Assinatura ativada para ${args.usuario_id}` };
+    }
+
+    case 'listar_campanhas_ativas': {
+      const crons = await db.listarAdminCrons();
+      const ativas = crons.filter(c => c.ativo);
+      return { ok: true, msg: `${ativas.length} campanha(s) ativa(s)`, data: ativas.map(c => ({ id: c.id, titulo: c.titulo, frequencia: c.frequencia, regra: c.regra, ultimo_envio: c.ultimo_envio })) };
+    }
+
     default:
       return { ok: false, msg: `Tool desconhecida: ${toolName}` };
+  }
+}
+
+// Helper: resolver destinatários por regra (mesmo padrão do cron-admin.js)
+async function resolverDestinatarios(regra, valor) {
+  switch (regra) {
+    case 'ativos_x_dias':    return db.listarUsuariosAtivos(valor || 7);
+    case 'inativos_x_dias':  return db.listarUsuariosInativos(valor || 7);
+    case 'nao_pagantes':     return db.listarUsuariosNaoPagantes('todos');
+    case 'trial':            return db.listarUsuariosNaoPagantes('trial');
+    case 'expirados':        return db.listarUsuariosNaoPagantes('expirado');
+    case 'graca':            return db.listarUsuariosNaoPagantes('graca');
+    default:                 return [];
   }
 }
 
