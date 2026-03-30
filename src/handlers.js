@@ -1737,10 +1737,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   }
 
   // Agente de crescimento / SEO (admin only) — comando /seo
-  const adminIds = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (adminIds.includes(usuarioId)) {
+  const adminIdsList = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  console.log(`[SEO-DEBUG] usuarioId="${usuarioId}" adminIds=${JSON.stringify(adminIdsList)} lower="${lower}"`);
+  if (adminIdsList.includes(usuarioId)) {
     const crescimentoEstado = agenteCrescimento.obterEstadoCrescimento(usuarioId);
     if (crescimentoEstado || /^\/(seo|ceo|crescimento|briefing|metricas)$/i.test(lower)) {
+      console.log('[SEO-DEBUG] ✅ Roteando para agente de crescimento');
       const resultado = await agenteCrescimento.processarMensagemCrescimento(usuarioId, msg, chatAgente);
       return resultado.texto;
     }
