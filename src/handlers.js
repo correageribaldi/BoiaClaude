@@ -8434,6 +8434,7 @@ function limparMapsExpirados() {
     onboardingEstados, cadastroPainelEstados,
     agente.agenteEstados,
     agenteCrescimento.estadosCrescimento,
+    agenteCrescimento.ofertasPendentes,
   ];
   for (const m of maps) {
     for (const [key, val] of m.entries()) {

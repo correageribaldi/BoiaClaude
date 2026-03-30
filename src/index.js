@@ -15,7 +15,7 @@ const { criarWorkerReminders } = require('./worker-reminders');
 const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 const { iniciarCronsAdmin } = require('./cron-admin');
 const { iniciarReativacao } = require('./reativacao');
-const { iniciarAgenteCrescimento } = require('./agente-crescimento');
+const { iniciarAgenteCrescimento, obterOferta, limparOferta } = require('./agente-crescimento');
 
 const pendingApprovals = new Map();
 const { iniciarWatchdog } = require('./utils/watchdog');
@@ -589,6 +589,25 @@ client.on('message', async (msg) => {
         await msg.reply('📄 Nossos Termos de Uso estão disponíveis pelo e-mail: *contato@cronosappai.com.br*');
       }
       return;
+    }
+
+    // Verificar se o usuário tem oferta pendente do agente SEO (promoção/dias grátis)
+    const ofertaSeo = obterOferta(usuarioId);
+    if (ofertaSeo) {
+      const textoLowerOferta = (texto || '').toLowerCase().trim();
+      const aceitou = /^(sim|s|quero|aceito|bora|vamos|ok|pode|claro|com\s*certeza|por\s*favor|partiu|fechou|topei|top)$/i.test(textoLowerOferta);
+      if (aceitou) {
+        const diasGratis = ofertaSeo.dias || 30;
+        const pagoAte = new Date();
+        pagoAte.setDate(pagoAte.getDate() + diasGratis);
+        const pagoAteStr = pagoAte.toISOString().split('T')[0];
+        await db.ativarAssinatura(usuarioId, pagoAteStr);
+        limparOferta(usuarioId);
+        const dataFmt = pagoAte.toLocaleDateString('pt-BR');
+        await msg.reply(`🎉 *Promoção ativada com sucesso!*\n\nVocê ganhou *${diasGratis} dias grátis* do Cronos! Sua conta está ativa até *${dataFmt}*.\n\nAproveite para organizar suas finanças! 🚀`);
+        console.log(`[SEO-OFERTA] Usuário ${usuarioId} aceitou oferta de ${diasGratis} dias grátis (até ${pagoAteStr})`);
+        return;
+      }
     }
 
     // Verificar acesso por assinatura

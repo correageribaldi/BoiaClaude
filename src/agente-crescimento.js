@@ -9,6 +9,24 @@ const db = require('./database');
 // Helper: formatarMoeda seguro
 function moeda(v) { return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 
+// ── Ofertas pendentes (promoções enviadas pelo SEO aguardando resposta) ──────
+
+const ofertasPendentes = new Map();
+const OFERTA_TTL = 48 * 60 * 60 * 1000; // 48 horas para aceitar
+
+function registrarOferta(usuarioId, tipo, dias) {
+  ofertasPendentes.set(usuarioId, { tipo, dias, expiraEm: Date.now() + OFERTA_TTL });
+}
+
+function obterOferta(usuarioId) {
+  const o = ofertasPendentes.get(usuarioId);
+  if (!o) return null;
+  if (Date.now() > o.expiraEm) { ofertasPendentes.delete(usuarioId); return null; }
+  return o;
+}
+
+function limparOferta(usuarioId) { ofertasPendentes.delete(usuarioId); }
+
 // ── Estado por admin ────────────────────────────────────────────────────────
 
 const estadosCrescimento = new Map();
@@ -302,13 +320,14 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'enviar_campanha',
-      description: 'Enviar mensagem em massa para um grupo de usuários filtrado por regra. Use {nome} para personalizar. Delay automático de 5-15s entre envios.',
+      description: 'Enviar mensagem em massa para um grupo de usuários filtrado por regra. Use {nome} para personalizar. Se incluir oferta_dias_gratis, os usuários podem responder "sim" para ganhar dias grátis automaticamente.',
       parameters: {
         type: 'object',
         properties: {
           mensagem: { type: 'string', description: 'Texto da mensagem (suporta {nome} para personalizar)' },
           regra: { type: 'string', enum: ['ativos_x_dias', 'inativos_x_dias', 'nao_pagantes', 'trial', 'expirados', 'graca'], description: 'Regra de segmentação dos destinatários' },
           regra_valor: { type: 'integer', description: 'Valor da regra em dias (ex: 7 para inativos_x_dias=7)' },
+          oferta_dias_gratis: { type: 'integer', description: 'Se informado, registra oferta de X dias grátis — usuário responde "sim" e ganha ativação automática' },
         },
         required: ['mensagem', 'regra'],
       },
@@ -487,6 +506,7 @@ async function executeTool(toolName, args) {
       const usuarios = await resolverDestinatarios(args.regra, args.regra_valor);
       if (usuarios.length === 0) return { ok: true, msg: 'Nenhum usuário encontrado com esse filtro' };
 
+      const diasGratis = args.oferta_dias_gratis || 0;
       let enviados = 0;
       let erros = 0;
       for (let i = 0; i < usuarios.length; i++) {
@@ -495,6 +515,10 @@ async function executeTool(toolName, args) {
           const primeiroNome = (u.nome || '').split(' ')[0] || 'amigo(a)';
           const msgFinal = args.mensagem.replace(/\{nome\}/gi, primeiroNome);
           await _whatsappClient.sendMessage(u.usuario_id, msgFinal);
+          // Se a campanha inclui oferta de dias grátis, registrar para aceite automático
+          if (diasGratis > 0) {
+            registrarOferta(u.usuario_id, 'dias_gratis', diasGratis);
+          }
           enviados++;
         } catch (err) {
           erros++;
@@ -505,7 +529,7 @@ async function executeTool(toolName, args) {
           await new Promise(r => setTimeout(r, delay));
         }
       }
-      return { ok: true, msg: `Campanha finalizada: ${enviados} enviados, ${erros} erros (de ${usuarios.length} destinatários)` };
+      return { ok: true, msg: `Campanha finalizada: ${enviados} enviados, ${erros} erros (de ${usuarios.length} destinatários)${diasGratis > 0 ? `. Oferta de ${diasGratis} dias grátis registrada — usuários podem responder "sim" para ativar.` : ''}` };
     }
 
     case 'criar_campanha_agendada': {
@@ -784,4 +808,7 @@ module.exports = {
   obterEstadoCrescimento,
   limparEstadoCrescimento,
   estadosCrescimento,
+  ofertasPendentes,
+  obterOferta,
+  limparOferta,
 };
