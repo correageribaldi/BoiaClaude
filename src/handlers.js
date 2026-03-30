@@ -3,6 +3,7 @@ const fmt = require('./formatters');
 const pagamento = require('./pagamento');
 const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding, chatAgente } = require('./ai');
 const agente = require('./agente-financeiro');
+const agenteCrescimento = require('./agente-crescimento');
 
 // Helper: converte Date para YYYY-MM-DD no timezone de São Paulo (evita bug UTC do toISOString)
 function dateParaISO(d) {
@@ -2160,6 +2161,16 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     agente.limparEstado(usuarioId);
     setOnboardingState(usuarioId, 'aguardando_nome');
     return mensagemApresentacao();
+  }
+
+  // Agente de crescimento (admin only)
+  const adminsCrescimento = (process.env.ADMIN_WHATSAPP_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (adminsCrescimento.includes(usuarioId)) {
+    const crescimentoEstado = agenteCrescimento.obterEstadoCrescimento(usuarioId);
+    if (crescimentoEstado || /^(crescimento|@ceo|ceo|briefing|metricas|métricas)/i.test(lower)) {
+      const resultado = await agenteCrescimento.processarMensagemCrescimento(usuarioId, msg, chatAgente);
+      return resultado.texto;
+    }
   }
 
   // Agente financeiro inteligente (substitui interpretarMensagem)
@@ -8422,6 +8433,7 @@ function limparMapsExpirados() {
     analiseFinanceiraEstados, localizacaoUsuario, removerContatoPendente,
     onboardingEstados, cadastroPainelEstados,
     agente.agenteEstados,
+    agenteCrescimento.estadosCrescimento,
   ];
   for (const m of maps) {
     for (const [key, val] of m.entries()) {

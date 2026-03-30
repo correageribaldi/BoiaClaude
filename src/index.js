@@ -15,6 +15,7 @@ const { criarWorkerReminders } = require('./worker-reminders');
 const { sweeperReminders, reEnqueueOnStartup } = require('./sweeper');
 const { iniciarCronsAdmin } = require('./cron-admin');
 const { iniciarReativacao } = require('./reativacao');
+const { iniciarAgenteCrescimento } = require('./agente-crescimento');
 
 const pendingApprovals = new Map();
 const { iniciarWatchdog } = require('./utils/watchdog');
@@ -210,6 +211,7 @@ client.on('ready', async () => {
     iniciarLembretes(client);
     iniciarCronsAdmin(client);
     iniciarReativacao(client);
+    iniciarAgenteCrescimento(client);
 
     // Iniciar worker BullMQ para lembretes pontuais e recorrentes
     criarWorkerReminders(client, connection);

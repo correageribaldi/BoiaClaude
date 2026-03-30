@@ -3260,6 +3260,161 @@ async function buscarGoogleEventId(tabela, id) {
   return r.rows[0]?.google_event_id || null;
 }
 
+// --- Métricas de Crescimento (agente-crescimento) ---
+
+async function contarUsuariosTotal() {
+  const r = await pool.query(
+    `SELECT COUNT(DISTINCT usuario_id)::int as total FROM usuarios WHERE usuario_id NOT LIKE '%@lid'`
+  );
+  return r.rows[0]?.total || 0;
+}
+
+async function contarUsuariosNovos(dias = 7) {
+  const r = await pool.query(
+    `SELECT COUNT(*)::int as total FROM usuarios
+     WHERE primeiro_contato >= NOW() - MAKE_INTERVAL(days => $1)
+       AND usuario_id NOT LIKE '%@lid'`,
+    [dias]
+  );
+  return r.rows[0]?.total || 0;
+}
+
+async function contarUsuariosChurned() {
+  const r = await pool.query(
+    `SELECT COUNT(*)::int as total FROM usuarios WHERE churned = TRUE AND usuario_id NOT LIKE '%@lid'`
+  );
+  return r.rows[0]?.total || 0;
+}
+
+async function metricsAssinaturasPorStatus() {
+  const r = await pool.query(
+    `SELECT COALESCE(a.status, 'sem_assinatura') as status, COUNT(*)::int as total
+     FROM usuarios u
+     LEFT JOIN assinaturas a ON a.usuario_id = u.usuario_id
+     WHERE u.usuario_id NOT LIKE '%@lid'
+     GROUP BY a.status`
+  );
+  return r.rows;
+}
+
+async function metricsTransacoesAgregadas(dias = 30) {
+  const r = await pool.query(
+    `SELECT
+       COUNT(*)::int as total_transacoes,
+       COUNT(DISTINCT t.usuario_id)::int as usuarios_transacionando,
+       COALESCE(SUM(CASE WHEN t.tipo='despesa' THEN t.valor ELSE 0 END), 0)::float as total_despesas,
+       COALESCE(SUM(CASE WHEN t.tipo='receita' THEN t.valor ELSE 0 END), 0)::float as total_receitas,
+       COALESCE(AVG(t.valor), 0)::float as valor_medio
+     FROM transacoes t
+     WHERE t.criado_em >= NOW() - MAKE_INTERVAL(days => $1)`,
+    [dias]
+  );
+  return r.rows[0];
+}
+
+async function metricsCategoriasTop(dias = 30, limite = 5) {
+  const r = await pool.query(
+    `SELECT categoria, COUNT(*)::int as total, COALESCE(SUM(valor), 0)::float as volume
+     FROM transacoes
+     WHERE criado_em >= NOW() - MAKE_INTERVAL(days => $1)
+       AND categoria IS NOT NULL
+     GROUP BY categoria
+     ORDER BY total DESC
+     LIMIT $2`,
+    [dias, limite]
+  );
+  return r.rows;
+}
+
+async function metricsEngajamentoUsuarios(dias = 30) {
+  const r = await pool.query(
+    `SELECT
+       COUNT(DISTINCT t.usuario_id)::int as usuarios_ativos,
+       COUNT(*)::int as total_transacoes,
+       ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT t.usuario_id), 0), 1)::float as media_por_usuario,
+       MAX(t.criado_em) as ultima_transacao_global
+     FROM transacoes t
+     JOIN usuarios u ON u.usuario_id = t.usuario_id
+     WHERE t.criado_em >= NOW() - MAKE_INTERVAL(days => $1)
+       AND u.usuario_id NOT LIKE '%@lid'`,
+    [dias]
+  );
+  return r.rows[0];
+}
+
+async function metricsReativacao() {
+  const r = await pool.query(
+    `SELECT etapa, COUNT(*)::int as total
+     FROM reativacao_log
+     WHERE enviado_em >= NOW() - INTERVAL '30 days'
+     GROUP BY etapa
+     ORDER BY etapa`
+  );
+  return r.rows;
+}
+
+async function metricsUsuariosTopEngajamento(dias = 30, limite = 10) {
+  const r = await pool.query(
+    `SELECT t.usuario_id, u.nome, COUNT(*)::int as transacoes,
+            COALESCE(SUM(t.valor), 0)::float as volume
+     FROM transacoes t
+     JOIN usuarios u ON u.usuario_id = t.usuario_id
+     WHERE t.criado_em >= NOW() - MAKE_INTERVAL(days => $1)
+       AND u.usuario_id NOT LIKE '%@lid'
+     GROUP BY t.usuario_id, u.nome
+     ORDER BY transacoes DESC
+     LIMIT $2`,
+    [dias, limite]
+  );
+  return r.rows;
+}
+
+async function metricsUsuariosRisco() {
+  const r = await pool.query(
+    `SELECT u.usuario_id, u.nome,
+       EXTRACT(DAY FROM NOW() - COALESCE(u.ultima_interacao, u.primeiro_contato))::int as dias_inativo,
+       a.status, a.trial_fim, a.pago_ate
+     FROM usuarios u
+     LEFT JOIN assinaturas a ON a.usuario_id = u.usuario_id
+     WHERE u.usuario_id NOT LIKE '%@lid'
+       AND u.churned = FALSE
+       AND COALESCE(u.ultima_interacao, u.primeiro_contato) < NOW() - INTERVAL '2 days'
+     ORDER BY dias_inativo DESC
+     LIMIT 20`
+  );
+  return r.rows;
+}
+
+async function metricsFunilConversao() {
+  const r = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM usuarios WHERE usuario_id NOT LIKE '%@lid')::int as total_registros,
+       (SELECT COUNT(*) FROM usuarios u JOIN assinaturas a ON a.usuario_id = u.usuario_id
+        WHERE u.usuario_id NOT LIKE '%@lid' AND a.status = 'trial')::int as em_trial,
+       (SELECT COUNT(*) FROM usuarios u JOIN assinaturas a ON a.usuario_id = u.usuario_id
+        WHERE u.usuario_id NOT LIKE '%@lid' AND a.status = 'ativo')::int as pagantes,
+       (SELECT COUNT(*) FROM usuarios u JOIN assinaturas a ON a.usuario_id = u.usuario_id
+        WHERE u.usuario_id NOT LIKE '%@lid' AND a.status = 'expirado')::int as expirados,
+       (SELECT COUNT(*) FROM usuarios u JOIN assinaturas a ON a.usuario_id = u.usuario_id
+        WHERE u.usuario_id NOT LIKE '%@lid' AND a.status = 'graca')::int as graca,
+       (SELECT COUNT(*) FROM usuarios WHERE churned = TRUE AND usuario_id NOT LIKE '%@lid')::int as churned`
+  );
+  return r.rows[0];
+}
+
+async function metricsLogsCampanhas(dias = 7) {
+  const r = await pool.query(
+    `SELECT c.titulo, l.status, l.total, l.enviados, l.erros, l.iniciado_em
+     FROM admin_crons_log l
+     JOIN admin_crons c ON c.id = l.cron_id
+     WHERE l.iniciado_em >= NOW() - MAKE_INTERVAL(days => $1)
+     ORDER BY l.iniciado_em DESC
+     LIMIT 20`,
+    [dias]
+  );
+  return r.rows;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -3426,4 +3581,17 @@ module.exports = {
   removerGoogleTokens,
   salvarGoogleEventId,
   buscarGoogleEventId,
+  // Métricas de Crescimento
+  contarUsuariosTotal,
+  contarUsuariosNovos,
+  contarUsuariosChurned,
+  metricsAssinaturasPorStatus,
+  metricsTransacoesAgregadas,
+  metricsCategoriasTop,
+  metricsEngajamentoUsuarios,
+  metricsReativacao,
+  metricsUsuariosTopEngajamento,
+  metricsUsuariosRisco,
+  metricsFunilConversao,
+  metricsLogsCampanhas,
 };
