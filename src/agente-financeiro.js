@@ -8,6 +8,9 @@ const charts = require('./charts');
 const fmt = require('./formatters');
 const search = require('./search');
 
+// Helper: formatarMoeda seguro (trata null/undefined)
+function moeda(v) { return moeda(Number(v) || 0); }
+
 // ── Estado por usuário ───────────────────────────────────────────────────────
 
 const agenteEstados = new Map();
@@ -45,22 +48,22 @@ async function buildFinancialContext(usuarioId) {
   const lines = [];
   const nome = usuario?.nome || 'Usuário';
   lines.push(`Nome do usuário: ${nome}`);
-  lines.push(`Saldo atual: ${fmt.formatarMoeda(saldos.saldoAtual)}`);
-  lines.push(`Receitas mês: ${fmt.formatarMoeda(saldos.receitas)} (pendentes: ${fmt.formatarMoeda(saldos.receitasPendentes)})`);
-  lines.push(`Despesas mês: ${fmt.formatarMoeda(saldos.despesas)} (pendentes: ${fmt.formatarMoeda(saldos.despesasPendentes)})`);
+  lines.push(`Saldo atual: ${moeda(saldos.saldoAtual)}`);
+  lines.push(`Receitas mês: ${moeda(saldos.receitas)} (pendentes: ${moeda(saldos.receitasPendentes)})`);
+  lines.push(`Despesas mês: ${moeda(saldos.despesas)} (pendentes: ${moeda(saldos.despesasPendentes)})`);
 
   if (cartoes.length > 0) {
     const cartoesInfo = [];
     for (const c of cartoes) {
       const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
-      cartoesInfo.push(`${c.nome} (limite ${fmt.formatarMoeda(c.limite_total)}, usado ${fmt.formatarMoeda(uso.total)})`);
+      cartoesInfo.push(`${c.nome} (limite ${moeda(c.limite_total)}, usado ${moeda(uso.total)})`);
     }
     lines.push(`Cartões: ${cartoesInfo.join(' | ')}`);
   }
 
   if (caixinhas.length > 0) {
     const cxInfo = caixinhas.map(cx =>
-      `${cx.nome} ${fmt.formatarMoeda(cx.saldo)}${cx.meta ? '/' + fmt.formatarMoeda(cx.meta) : ''}`
+      `${cx.nome} ${moeda(cx.saldo)}${cx.meta ? '/' + moeda(cx.meta) : ''}`
     );
     lines.push(`Caixinhas: ${cxInfo.join(' | ')}`);
   }
@@ -68,13 +71,13 @@ async function buildFinancialContext(usuarioId) {
   if (limites.length > 0) {
     const limitesAtivos = limites.filter(l => !l.parent).slice(0, 10);
     if (limitesAtivos.length > 0) {
-      lines.push(`Limites: ${limitesAtivos.map(l => `${l.categoria} ${fmt.formatarMoeda(l.valor_limite)}`).join(', ')}`);
+      lines.push(`Limites: ${limitesAtivos.map(l => `${l.categoria} ${moeda(l.valor_limite)}`).join(', ')}`);
     }
   }
 
   if (recorrencias.length > 0) {
     const recInfo = recorrencias.slice(0, 8).map(r =>
-      `${r.descricao} ${fmt.formatarMoeda(r.valor)} (${r.tipo}, dia ${r.dia_mes || r.dia_semana || '-'})`
+      `${r.descricao} ${moeda(r.valor)} (${r.tipo}, dia ${r.dia_mes || r.dia_semana || '-'})`
     );
     lines.push(`Recorrências: ${recInfo.join(' | ')}`);
   }
@@ -520,10 +523,10 @@ async function executeTool(usuarioId, toolName, args) {
       }
       if (parcelas && parcelas > 1) {
         const result = await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, data || null, cartaoId, parcelas);
-        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${fmt.formatarMoeda(valor)} em ${parcelas}x de ${fmt.formatarMoeda(valor / parcelas)}` };
+        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}` };
       }
       await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data || null, status || 'pago', cartaoId);
-      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${fmt.formatarMoeda(valor)} (${status || 'pago'})` };
+      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})` };
     }
     case 'consultar_transacoes': {
       const txs = await db.consultarTransacoes(usuarioId, {
@@ -580,7 +583,7 @@ async function executeTool(usuarioId, toolName, args) {
     // Limites
     case 'definir_limite': {
       await db.definirLimite(usuarioId, args.categoria, args.valor_limite);
-      return { ok: true, msg: `Limite de ${fmt.formatarMoeda(args.valor_limite)}/mês definido para ${args.categoria}.` };
+      return { ok: true, msg: `Limite de ${moeda(args.valor_limite)}/mês definido para ${args.categoria}.` };
     }
     case 'listar_limites': {
       const limites = await db.listarLimites(usuarioId);
@@ -598,7 +601,7 @@ async function executeTool(usuarioId, toolName, args) {
         usuarioId, args.tipo, args.valor, args.descricao,
         args.categoria, args.frequencia, args.dia_mes || null, args.dia_semana || null, null, null
       );
-      return { ok: true, msg: `Recorrência criada: ${args.descricao} ${fmt.formatarMoeda(args.valor)} (${args.frequencia})`, id };
+      return { ok: true, msg: `Recorrência criada: ${args.descricao} ${moeda(args.valor)} (${args.frequencia})`, id };
     }
     case 'listar_recorrencias': {
       const recs = await db.listarRecorrencias(usuarioId);
@@ -647,7 +650,7 @@ async function executeTool(usuarioId, toolName, args) {
     case 'criar_cartao': {
       const id = await db.criarCartao(usuarioId, args.nome, args.limite_total, args.dia_fechamento, args.dia_vencimento);
       if (!id) return { ok: false, msg: 'Erro ao criar cartão.' };
-      return { ok: true, msg: `Cartão ${args.nome} registrado com limite ${fmt.formatarMoeda(args.limite_total)}.` };
+      return { ok: true, msg: `Cartão ${args.nome} registrado com limite ${moeda(args.limite_total)}.` };
     }
     case 'listar_cartoes': {
       const cartoes = await db.listarCartoes(usuarioId);
@@ -666,7 +669,7 @@ async function executeTool(usuarioId, toolName, args) {
     // Caixinhas
     case 'criar_caixinha': {
       await db.criarCaixinha(usuarioId, args.nome, args.saldo || 0, args.meta || null, args.tipo || 'economia', args.rendimento_mensal || null);
-      return { ok: true, msg: `Caixinha "${args.nome}" criada${args.meta ? ` com meta de ${fmt.formatarMoeda(args.meta)}` : ''}.` };
+      return { ok: true, msg: `Caixinha "${args.nome}" criada${args.meta ? ` com meta de ${moeda(args.meta)}` : ''}.` };
     }
     case 'listar_caixinhas': {
       const caixinhas = await db.listarCaixinhas(usuarioId);
@@ -675,7 +678,7 @@ async function executeTool(usuarioId, toolName, args) {
     case 'depositar_caixinha': {
       const result = await db.adicionarSaldoCaixinha(args.caixinha_id, args.valor);
       if (!result) return { ok: false, msg: 'Caixinha não encontrada.' };
-      return { ok: true, msg: `Depósito de ${fmt.formatarMoeda(args.valor)} em "${result.nome}". Saldo: ${fmt.formatarMoeda(result.saldo)}` };
+      return { ok: true, msg: `Depósito de ${moeda(args.valor)} em "${result.nome}". Saldo: ${moeda(result.saldo)}` };
     }
 
     // Gráficos
@@ -877,11 +880,11 @@ async function handleConfirmacao(usuarioId, texto, estado, chatFn) {
 function descreverAcao(toolName, args) {
   switch (toolName) {
     case 'definir_limite':
-      return `📊 Definir limite de *${fmt.formatarMoeda(args.valor_limite)}/mês* para *${args.categoria}*`;
+      return `📊 Definir limite de *${moeda(args.valor_limite)}/mês* para *${args.categoria}*`;
     case 'remover_limite':
       return `🗑️ Remover limite de gastos de *${args.categoria}*`;
     case 'criar_recorrencia':
-      return `🔄 Criar recorrência: *${args.descricao}* ${fmt.formatarMoeda(args.valor)} (${args.tipo}, ${args.frequencia})`;
+      return `🔄 Criar recorrência: *${args.descricao}* ${moeda(args.valor)} (${args.tipo}, ${args.frequencia})`;
     case 'desativar_recorrencia':
       return `🔄 Desativar recorrência #${args.recorrencia_id}`;
     case 'excluir_transacao':
@@ -889,11 +892,11 @@ function descreverAcao(toolName, args) {
     case 'editar_transacao':
       return `✏️ Editar transação #${args.numero_usuario}: ${args.campo} → ${args.novo_valor}`;
     case 'criar_cartao':
-      return `💳 Registrar cartão *${args.nome}* (limite ${fmt.formatarMoeda(args.limite_total)})`;
+      return `💳 Registrar cartão *${args.nome}* (limite ${moeda(args.limite_total)})`;
     case 'criar_caixinha':
-      return `🐷 Criar caixinha *"${args.nome}"*${args.meta ? ` com meta de ${fmt.formatarMoeda(args.meta)}` : ''}`;
+      return `🐷 Criar caixinha *"${args.nome}"*${args.meta ? ` com meta de ${moeda(args.meta)}` : ''}`;
     case 'depositar_caixinha':
-      return `🐷 Depositar ${fmt.formatarMoeda(args.valor)} na caixinha #${args.caixinha_id}`;
+      return `🐷 Depositar ${moeda(args.valor)} na caixinha #${args.caixinha_id}`;
     case 'criar_lembrete':
       return `⏰ Criar lembrete: "${args.mensagem}" para ${new Date(args.dispara_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
     case 'criar_lembrete_recorrente':
