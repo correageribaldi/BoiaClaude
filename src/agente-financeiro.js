@@ -619,8 +619,13 @@ async function executeTool(usuarioId, toolName, args) {
 
     // Lembretes
     case 'criar_lembrete': {
-      const id = await db.criarLembreteGeral(usuarioId, args.mensagem, args.dispara_em);
-      return { ok: true, msg: `Lembrete criado para ${new Date(args.dispara_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`, id };
+      // Garantir timezone BRT: se a IA gerar datetime sem offset, acrescentar -03:00
+      let disparaEm = args.dispara_em;
+      if (disparaEm && !disparaEm.match(/[Zz+\-]\d{2}:?\d{2}$/) && !disparaEm.endsWith('Z')) {
+        disparaEm = disparaEm + '-03:00';
+      }
+      const id = await db.criarLembreteGeral(usuarioId, args.mensagem, disparaEm);
+      return { ok: true, msg: `Lembrete criado para ${new Date(disparaEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`, id };
     }
     case 'criar_lembrete_recorrente': {
       const id = await db.criarLembreteRecorrente(
