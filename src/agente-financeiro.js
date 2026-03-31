@@ -624,8 +624,20 @@ async function executeTool(usuarioId, toolName, args) {
       if (disparaEm && !disparaEm.match(/[Zz+\-]\d{2}:?\d{2}$/) && !disparaEm.endsWith('Z')) {
         disparaEm = disparaEm + '-03:00';
       }
-      const id = await db.criarLembreteGeral(usuarioId, args.mensagem, disparaEm);
-      return { ok: true, msg: `Lembrete criado para ${new Date(disparaEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`, id };
+      const disparaDate = new Date(disparaEm);
+      const id = await db.createReminder(usuarioId, args.mensagem, disparaDate.toISOString());
+      try {
+        const { reminderQueue } = require('./queue');
+        const delay = Math.max(0, disparaDate.getTime() - Date.now());
+        await reminderQueue.add('reminder',
+          { tipo: 'one_time', reminderId: id },
+          { jobId: `one-${id}`, delay, removeOnComplete: true,
+            attempts: 5, backoff: { type: 'exponential', delay: 10000 } }
+        );
+      } catch (err) {
+        console.error('[AGENTE] Erro ao enfileirar lembrete no BullMQ:', err.message);
+      }
+      return { ok: true, msg: `Lembrete criado para ${disparaDate.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`, id };
     }
     case 'criar_lembrete_recorrente': {
       const id = await db.criarLembreteRecorrente(
