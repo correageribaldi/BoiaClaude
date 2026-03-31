@@ -955,13 +955,14 @@ app.get('/api/agenda', autenticar, async (req, res) => {
     const dataInicio = `${ano}-${mesStr}-01`;
     const dataFim = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
-    const [gerais, recorrentes] = await Promise.all([
+    const [gerais, recorrentes, reminders] = await Promise.all([
       db.buscarLembretesGeraisPorPeriodo(req.usuarioId, dataInicio, dataFim),
       db.buscarLembretesRecorrentesPorMes(req.usuarioId, ano, mes),
+      db.buscarRemindersPorPeriodo(req.usuarioId, dataInicio, dataFim),
     ]);
 
     // Mescla e ordena por data_disparo + hora
-    const todos = [...gerais, ...recorrentes].sort((a, b) => {
+    const todos = [...gerais, ...recorrentes, ...reminders].sort((a, b) => {
       const ka = (a.data_disparo || '') + (a.hora || '');
       const kb = (b.data_disparo || '') + (b.hora || '');
       return ka.localeCompare(kb);

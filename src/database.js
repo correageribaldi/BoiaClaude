@@ -2819,6 +2819,28 @@ async function buscarRemindersAgendados(usuarioId) {
   return result.rows;
 }
 
+// Lembretes (reminders) por período — formato compatível com agenda do painel
+async function buscarRemindersPorPeriodo(usuarioId, dataInicio, dataFim) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const dataInicioValida = normalizarDataISO(dataInicio);
+  const dataFimValida = normalizarDataISO(dataFim);
+  if (!dataInicioValida || !dataFimValida) return [];
+
+  const result = await pool.query(
+    `SELECT id, mensagem,
+            TO_CHAR(run_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') as horario,
+            TO_CHAR(run_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') as data_disparo,
+            TO_CHAR(run_at AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') as hora
+     FROM reminders
+     WHERE usuario_id = $1 AND status = 'pending'
+       AND run_at >= ($2::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+       AND run_at < (($3::date + interval '1 day')::timestamp AT TIME ZONE 'America/Sao_Paulo')
+     ORDER BY run_at ASC`,
+    [uid, dataInicioValida, dataFimValida]
+  );
+  return result.rows;
+}
+
 // Todos os lembretes recorrentes ativos (para sweeper + re-enqueue no startup)
 async function listarRecorrentesAtivos() {
   const result = await pool.query(
@@ -3581,6 +3603,7 @@ module.exports = {
   removerGoogleTokens,
   salvarGoogleEventId,
   buscarGoogleEventId,
+  buscarRemindersPorPeriodo,
   // Métricas de Crescimento
   contarUsuariosTotal,
   contarUsuariosNovos,
