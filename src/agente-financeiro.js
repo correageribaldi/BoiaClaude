@@ -637,7 +637,7 @@ async function executeTool(usuarioId, toolName, args) {
       } catch (err) {
         console.error('[AGENTE] Erro ao enfileirar lembrete no BullMQ:', err.message);
       }
-      return { ok: true, msg: `Lembrete criado para ${disparaDate.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`, id };
+      return { ok: true, msg: `Lembrete criado para ${disparaDate.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}, ${disparaDate.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}`, id };
     }
     case 'criar_lembrete_recorrente': {
       const id = await db.criarLembreteRecorrente(
