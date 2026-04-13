@@ -93,6 +93,7 @@ function buildSystemPrompt(contextText) {
   const agora = new Date();
   const diaSemana = agora.toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' });
   const data = agora.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const horaAtual = agora.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
   const dataHoje = `${diaSemana}, ${data}`;
 
   return `Você é o Cronos, assistente financeiro pessoal e assessor do dia a dia do usuário.
@@ -105,7 +106,7 @@ PERSONALIDADE:
 - Respostas curtas e objetivas (é WhatsApp, não email)
 - Use emojis com moderação
 
-Data de hoje: ${dataHoje}
+Data e hora atual: ${dataHoje}, ${horaAtual} (horário de Brasília)
 
 CONTEXTO FINANCEIRO ATUAL:
 ${contextText}
