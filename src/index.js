@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados } = require('./handlers');
+const { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
 const pagamento = require('./pagamento');
@@ -498,6 +498,16 @@ client.on('message', async (msg) => {
           if (analise && analise.etapa === 'aguardando_csv') {
             await msg.reply('📄 Recebendo extrato para análise... ⏳');
             const resposta = await handleAnaliseFinanceiraCSV(usuarioId, csvContent);
+            await msg.reply(resposta);
+            return;
+          }
+
+          // Verificar se está no fluxo de importação de fatura de cartão
+          const importarFatura = obterImportarFaturaPendente(usuarioId);
+          if (importarFatura && importarFatura.etapa === 'aguardando_csv') {
+            await msg.reply('💳 Recebendo fatura! Analisando e categorizando os lançamentos... ⏳');
+            const resposta = await handleCSVFatura(usuarioId, csvContent, importarFatura.cartao_id);
+            limparImportarFaturaPendente(usuarioId);
             await msg.reply(resposta);
             return;
           }

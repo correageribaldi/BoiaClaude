@@ -184,6 +184,9 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 16b. NOVO CARTÃO DE CRÉDITO (quero cadastrar um cartão, novo cartão, adicionar cartão, cadastrar cartão de crédito, tenho um novo cartão, quero adicionar meu cartão):
 {"acao": "novo_cartao"}
 
+16b2. IMPORTAR FATURA DE CARTÃO (importar fatura, subir fatura do cartão, importar csv do cartão, importar fatura do nubank, importar fatura do itaú, importar fatura do bradesco, quero importar minha fatura, como importo minha fatura):
+{"acao": "importar_fatura"}
+
 16c. NOVA CAIXINHA / INVESTIMENTO (quero cadastrar uma caixinha, nova caixinha, adicionar investimento, criar caixinha, cadastrar reserva, novo investimento, quero registrar um investimento, tenho uma poupança pra cadastrar):
 {"acao": "nova_caixinha"}
 

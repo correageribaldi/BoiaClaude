@@ -304,6 +304,32 @@ function obterEditarLembretePendente(usuarioId) {
 }
 function limparEditarLembretePendente(usuarioId) { editarLembretePendentes.delete(usuarioId); }
 
+// Estado para importar fatura de cartão (fluxo multi-turn, expira em 30 min)
+const importarFaturaPendentes = new Map();
+function salvarImportarFaturaPendente(usuarioId, dados) {
+  importarFaturaPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 30 * 60 * 1000 });
+}
+function obterImportarFaturaPendente(usuarioId) {
+  const dados = importarFaturaPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { importarFaturaPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparImportarFaturaPendente(usuarioId) { importarFaturaPendentes.delete(usuarioId); }
+
+// Estado para confirmar recorrências detectadas na fatura (expira em 15 min)
+const recorrenciaFaturaPendentes = new Map();
+function salvarRecorrenciaFaturaPendente(usuarioId, dados) {
+  recorrenciaFaturaPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+}
+function obterRecorrenciaFaturaPendente(usuarioId) {
+  const dados = recorrenciaFaturaPendentes.get(usuarioId);
+  if (!dados) return null;
+  if (Date.now() > dados.expiraEm) { recorrenciaFaturaPendentes.delete(usuarioId); return null; }
+  return dados;
+}
+function limparRecorrenciaFaturaPendente(usuarioId) { recorrenciaFaturaPendentes.delete(usuarioId); }
+
 function salvarTransacaoPendente(usuarioId, dados) {
   transacaoPendente.set(usuarioId, {
     ...dados,
@@ -1862,6 +1888,19 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   const removerCartaoPend = obterRemoverCartaoPendente(usuarioId);
   if (removerCartaoPend) {
     return await handleEscolhaRemoverCartao(usuarioId, msg, removerCartaoPend);
+  }
+
+  // Verificar se há importação de fatura de cartão em andamento
+  const importarFaturaPend = obterImportarFaturaPendente(usuarioId);
+  if (importarFaturaPend) {
+    const resposta = await handleImportarFaturaPendente(usuarioId, msg, importarFaturaPend);
+    if (resposta !== null) return resposta;
+  }
+
+  // Verificar se há confirmação pendente de recorrências detectadas na fatura
+  const recorrenciaFaturaPend = obterRecorrenciaFaturaPendente(usuarioId);
+  if (recorrenciaFaturaPend) {
+    return await handleRecorrenciaFaturaResposta(usuarioId, msg, recorrenciaFaturaPend);
   }
 
   // Verificar se tem lembrete aguardando horário
@@ -3478,6 +3517,10 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
   if (resultado.acao === 'remover_cartao') {
     return await handleRemoverCartao(usuarioId, resultado);
+  }
+
+  if (resultado.acao === 'importar_fatura') {
+    return await handleImportarFatura(usuarioId, resultado);
   }
 
   // Excluir transação por nome (via IA)
@@ -8169,6 +8212,322 @@ async function criarLimitesAnalise(usuarioId, limitesSugeridos) {
   return msg;
 }
 
+// \u2500\u2500 Importar Fatura de Cart\u00E3o \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+// Servi\u00E7os de assinatura recorrente conhecidos (para sugest\u00E3o autom\u00E1tica)
+const SERVICOS_RECORRENTES = [
+  'netflix', 'spotify', 'amazon', 'amazon prime', 'apple', 'apple tv', 'apple music',
+  'google', 'youtube', 'youtube premium', 'disney', 'disney+', 'globo', 'globoplay',
+  'nubank+', 'nu+', 'ifood', 'ifood pass', 'rappi', 'rappi prime', 'deezer', 'tidal',
+  'hbo', 'hbo max', 'paramount', 'paramount+', 'crunchyroll', 'twitch', 'adobe',
+  'microsoft', 'office', 'xbox', 'playstation', 'nintendo', 'steam',
+  'dropbox', 'icloud', 'google one', 'duolingo', 'canva', 'notion',
+];
+
+function detectarServicosRecorrentes(descricao) {
+  const lower = descricao.toLowerCase();
+  return SERVICOS_RECORRENTES.some(s => lower.includes(s));
+}
+
+function parseCSVFatura(csvContent) {
+  // Remove BOM e normaliza line endings
+  const content = csvContent.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = content.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+
+  // Detectar formato pelo cabe\u00E7alho
+  const header = lines[0].toLowerCase().trim();
+  let formato = 'generico';
+  if (header.includes('date') && header.includes('category') && header.includes('title') && header.includes('amount')) {
+    formato = 'nubank';
+  } else if ((header.includes('data') && header.includes('lancamento') || header.includes('lan\u00E7amento')) || header.includes('historico') || header.includes('hist\u00F3rico')) {
+    formato = 'itau_bradesco';
+  }
+
+  const transacoes = [];
+
+  // Palavras que indicam linhas de pagamento/cr\u00E9dito a ignorar
+  const IGNORAR_REGEX = /pagamento|pag\.|credito em conta|cr\u00E9dito em conta|estorno|saldo anterior|saldo devedor|limite disponivel|limite dispon\u00EDvel|total|subtotal|pgto|pagto/i;
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    let data = null, valorStr = null, descricao = null;
+
+    if (formato === 'nubank') {
+      // date,category,title,amount
+      // amount negativo = d\u00E9bito no cart\u00E3o (despesa do usu\u00E1rio)
+      const parts = line.split(',');
+      if (parts.length < 4) continue;
+      data = parts[0].trim();
+      // category em parts[1], title em parts[2], amount em parts[3]
+      descricao = parts[2].trim();
+      valorStr = parts[3].trim();
+
+      const valor = parseFloat(valorStr);
+      if (isNaN(valor) || valor === 0) continue;
+      // Nubank: negativo = compra (d\u00E9bito); positivo = pagamento/cr\u00E9dito \u2192 ignorar
+      if (valor > 0) continue;
+
+      const dataISO = normalizarDataFatura(data);
+      if (!dataISO) continue;
+
+      if (IGNORAR_REGEX.test(descricao)) continue;
+
+      transacoes.push({ data: dataISO, valor: Math.abs(valor), descricaoOriginal: descricao });
+
+    } else if (formato === 'itau_bradesco') {
+      // Data,Lan\u00E7amento,Valor  (pode ter mais colunas)
+      const parts = line.split(',');
+      if (parts.length < 3) continue;
+      data = parts[0].trim();
+      descricao = parts[1].trim();
+      valorStr = parts[parts.length - 1].trim();
+
+      if (IGNORAR_REGEX.test(descricao)) continue;
+
+      const valor = parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
+      if (isNaN(valor) || valor <= 0) continue;
+
+      const dataISO = normalizarDataFatura(data);
+      if (!dataISO) continue;
+
+      transacoes.push({ data: dataISO, valor: Math.abs(valor), descricaoOriginal: descricao });
+
+    } else {
+      // Gen\u00E9rico: tentar encontrar padr\u00E3o com 3+ campos separados por v\u00EDrgula
+      // onde o \u00FAltimo campo de n\u00FAmero \u00E9 o valor
+      const parts = line.split(',');
+      if (parts.length < 3) continue;
+
+      // Tenta encontrar valor num\u00E9rico no pen\u00FAltimo ou \u00FAltimo campo
+      let valorNum = null;
+      let descIdx = null;
+      for (let j = parts.length - 1; j >= 1; j--) {
+        const v = parseFloat(parts[j].trim().replace(/\./g, '').replace(',', '.'));
+        if (!isNaN(v) && v !== 0) {
+          valorNum = Math.abs(v);
+          descIdx = 1;
+          data = parts[0].trim();
+          break;
+        }
+      }
+      if (!valorNum || !descIdx) continue;
+
+      descricao = parts.slice(descIdx, parts.length - 1).join(',').trim() || parts[descIdx].trim();
+      if (IGNORAR_REGEX.test(descricao)) continue;
+
+      const dataISO = normalizarDataFatura(data);
+      if (!dataISO) continue;
+
+      transacoes.push({ data: dataISO, valor: valorNum, descricaoOriginal: descricao });
+    }
+  }
+
+  return transacoes;
+}
+
+function normalizarDataFatura(dataStr) {
+  if (!dataStr) return null;
+  // yyyy-mm-dd
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dataStr)) return dataStr;
+  // dd/mm/yyyy
+  const m1 = dataStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m1) return `${m1[3]}-${m1[2].padStart(2, '0')}-${m1[1].padStart(2, '0')}`;
+  // mm/dd/yyyy (alguns bancos americanos)
+  const m2 = dataStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m2) return `${m2[3]}-${m2[1].padStart(2, '0')}-${m2[2].padStart(2, '0')}`;
+  // yyyy/mm/dd
+  const m3 = dataStr.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (m3) return `${m3[1]}-${m3[2]}-${m3[3]}`;
+  return null;
+}
+
+function detectarParcelas(descricao) {
+  // Padr\u00E3o: "Netflix 1/12", "Gympass 2/6", "Compra 01/03"
+  // Deve estar no final ou quase final da string
+  const match = descricao.match(/\b(\d{1,2})\/(\d{1,2})\s*$/);
+  if (!match) return null;
+  const atual = parseInt(match[1], 10);
+  const total = parseInt(match[2], 10);
+  if (total <= 1 || atual > total || atual < 1) return null;
+  // Remover a indica\u00E7\u00E3o de parcela da descri\u00E7\u00E3o base
+  const descBase = descricao.replace(/\s*\d{1,2}\/\d{1,2}\s*$/, '').trim();
+  return { atual, total, descBase };
+}
+
+async function handleCSVFatura(usuarioId, csvContent, cartaoId) {
+  const transacoes = parseCSVFatura(csvContent);
+
+  if (transacoes.length === 0) {
+    return '\u274C N\u00E3o encontrei transa\u00E7\u00F5es na fatura. Certifica que \u00E9 um CSV de fatura de cart\u00E3o de cr\u00E9dito.';
+  }
+
+  // Separar parceladas, recorrentes candidatas e normais
+  const normais = [];
+  const parceladas = [];
+  const recorrentesCandidatas = [];
+
+  for (const t of transacoes) {
+    const parcInfo = detectarParcelas(t.descricaoOriginal);
+    if (parcInfo) {
+      parceladas.push({ ...t, parcInfo });
+    } else {
+      normais.push(t);
+    }
+  }
+
+  // Identificar candidatas a recorr\u00EAncia entre as normais (sem parcelamento)
+  const normaisSemRec = [];
+  for (const t of normais) {
+    if (detectarServicosRecorrentes(t.descricaoOriginal)) {
+      recorrentesCandidatas.push(t);
+    } else {
+      normaisSemRec.push(t);
+    }
+  }
+
+  // Todas as transa\u00E7\u00F5es para categorizar (normais + recorrentes candidatas)
+  const todasParaCategorizar = [...normaisSemRec, ...recorrentesCandidatas, ...parceladas];
+  const descUnicas = [...new Set(todasParaCategorizar.map(t => t.descricaoOriginal))];
+
+  console.log(`[FATURA] ${transacoes.length} transa\u00E7\u00F5es, ${parceladas.length} parceladas, ${recorrentesCandidatas.length} candidatas recorr\u00EAncia. Categorizando ${descUnicas.length} descri\u00E7\u00F5es \u00FAnicas...`);
+
+  const categoriaMap = await categorizarExtrato(descUnicas, usuarioId);
+
+  // Salvar transa\u00E7\u00F5es normais + recorrentes candidatas (sem parcelamento)
+  let salvos = 0;
+  for (const t of [...normaisSemRec, ...recorrentesCandidatas]) {
+    const info = categoriaMap[t.descricaoOriginal];
+    const categoria = info?.categoria || 'Outros';
+    const descricao = info?.descricao || t.descricaoOriginal;
+    try {
+      await db.adicionarTransacao(usuarioId, 'despesa', t.valor, descricao, categoria, t.data, 'pago', cartaoId);
+      salvos++;
+    } catch (err) {
+      console.error(`[FATURA] Erro ao salvar: ${err.message}`);
+    }
+  }
+
+  // Salvar parceladas usando adicionarTransacoesParcelas
+  let salvadasParcelas = 0;
+  for (const t of parceladas) {
+    const { parcInfo } = t;
+    const info = categoriaMap[t.descricaoOriginal];
+    const categoria = info?.categoria || 'Outros';
+    const descricao = info?.descricao || parcInfo.descBase;
+    const valorTotal = t.valor * parcInfo.total;
+    try {
+      await db.adicionarTransacoesParcelas(usuarioId, valorTotal, descricao, categoria, t.data, cartaoId, parcInfo.total);
+      salvadasParcelas++;
+    } catch (err) {
+      console.error(`[FATURA] Erro ao salvar parcelas: ${err.message}`);
+    }
+  }
+
+  // Montar resumo
+  const totalDespesas = transacoes.reduce((acc, t) => acc + t.valor, 0);
+  const datas = transacoes.map(t => t.data).sort();
+  const dataInicio = datas[0];
+  const dataFim = datas[datas.length - 1];
+
+  let msg = `\u2705 *Fatura importada com sucesso!*\n\n`;
+  msg += `\uD83D\uDCC5 Per\u00EDodo: ${fmt.formatarData(dataInicio)} a ${fmt.formatarData(dataFim)}\n`;
+  msg += `\uD83D\uDCCB ${salvos + salvadasParcelas} registros salvos\n`;
+  msg += `\uD83D\uDCB3 Total da fatura: ${fmt.formatarMoeda(totalDespesas)}\n`;
+
+  if (parceladas.length > 0) {
+    msg += `\n\uD83D\uDCE6 *Parcelamentos detectados:* ${parceladas.length}\n`;
+    for (const t of parceladas.slice(0, 5)) {
+      msg += `  \u2022 ${t.parcInfo.descBase} (${t.parcInfo.atual}/${t.parcInfo.total}x)\n`;
+    }
+    if (parceladas.length > 5) msg += `  \u2022 ... e mais ${parceladas.length - 5}\n`;
+  }
+
+  // Sugerir recorr\u00EAncias se houver candidatas
+  if (recorrentesCandidatas.length > 0) {
+    salvarRecorrenciaFaturaPendente(usuarioId, { candidatas: recorrentesCandidatas, categoriaMap });
+    msg += `\n\uD83D\uDD04 *Servi\u00E7os recorrentes detectados:*\n`;
+    for (const c of recorrentesCandidatas) {
+      const info = categoriaMap[c.descricaoOriginal];
+      const desc = info?.descricao || c.descricaoOriginal;
+      msg += `  \u2022 ${desc}: ${fmt.formatarMoeda(c.valor)}\n`;
+    }
+    msg += `\nDeseja criar recorr\u00EAncias mensais para eles? Responda *sim* ou *n\u00E3o*`;
+  }
+
+  return msg;
+}
+
+async function handleImportarFatura(usuarioId, resultado) {
+  const cartoes = await db.listarCartoes(usuarioId);
+
+  if (!cartoes || cartoes.length === 0) {
+    return '\u274C Voc\u00EA n\u00E3o tem cart\u00F5es cadastrados. Cadastre um primeiro com *"novo cart\u00E3o"*.';
+  }
+
+  if (cartoes.length === 1) {
+    salvarImportarFaturaPendente(usuarioId, { etapa: 'aguardando_csv', cartao_id: cartoes[0].id });
+    return `\uD83D\uDCB3 Cart\u00E3o selecionado: *${cartoes[0].nome}*\n\nAgora me manda o arquivo CSV da fatura!`;
+  }
+
+  // M\u00FAltiplos cart\u00F5es: listar op\u00E7\u00F5es
+  salvarImportarFaturaPendente(usuarioId, { etapa: 'aguardando_cartao', cartoes });
+  let msg = `\uD83D\uDCB3 Qual cart\u00E3o \u00E9 essa fatura?\n\n`;
+  cartoes.forEach((c, i) => {
+    msg += `*${i + 1}.* ${c.nome}\n`;
+  });
+  msg += `\nResponda com o n\u00FAmero do cart\u00E3o.`;
+  return msg;
+}
+
+async function handleImportarFaturaPendente(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'cancela' || lower === 'deixa' || lower === 'esquece') {
+    limparImportarFaturaPendente(usuarioId);
+    return '\u274C Importa\u00E7\u00E3o cancelada.';
+  }
+
+  if (estado.etapa === 'aguardando_cartao') {
+    const num = parseInt(lower, 10);
+    if (isNaN(num) || num < 1 || num > estado.cartoes.length) {
+      return `\u274C Op\u00E7\u00E3o inv\u00E1lida. Responda com um n\u00FAmero entre 1 e ${estado.cartoes.length}. Ou manda *cancelar* pra desistir.`;
+    }
+    const cartaoEscolhido = estado.cartoes[num - 1];
+    salvarImportarFaturaPendente(usuarioId, { etapa: 'aguardando_csv', cartao_id: cartaoEscolhido.id });
+    return `\uD83D\uDCB3 Cart\u00E3o selecionado: *${cartaoEscolhido.nome}*\n\nAgora me manda o arquivo CSV da fatura!`;
+  }
+
+  // etapa aguardando_csv: usu\u00E1rio mandou texto em vez de arquivo
+  return `\uD83D\uDCC2 Me manda o arquivo CSV da fatura para importar.\n\nSe quiser cancelar, manda *cancelar*.`;
+}
+
+async function handleRecorrenciaFaturaResposta(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+  limparRecorrenciaFaturaPendente(usuarioId);
+
+  if (lower !== 'sim' && lower !== 's') {
+    return '\u2705 Ok, nenhuma recorr\u00EAncia criada.';
+  }
+
+  let criadas = 0;
+  for (const c of estado.candidatas) {
+    const info = estado.categoriaMap[c.descricaoOriginal];
+    const categoria = info?.categoria || 'Outros';
+    const descricao = info?.descricao || c.descricaoOriginal;
+    try {
+      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valor, descricao, categoria, 'mensal', null, null);
+      criadas++;
+    } catch (err) {
+      console.error(`[FATURA] Erro ao criar recorr\u00EAncia: ${err.message}`);
+    }
+  }
+
+  return `\u2705 *${criadas} recorr\u00EAncia(s) criada(s)!* Vou registrar essas despesas automaticamente todo m\u00EAs.`;
+}
+
 function parseCSV(csvContent) {
   // Remove BOM e normaliza line endings
   const content = csvContent.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -8435,6 +8794,8 @@ function limparMapsExpirados() {
     agente.agenteEstados,
     agenteCrescimento.estadosCrescimento,
     agenteCrescimento.ofertasPendentes,
+    importarFaturaPendentes,
+    recorrenciaFaturaPendentes,
   ];
   for (const m of maps) {
     for (const [key, val] of m.entries()) {
@@ -8449,4 +8810,4 @@ function limparMapsExpirados() {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados };
