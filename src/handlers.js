@@ -8561,7 +8561,7 @@ async function handleRecorrenciaFaturaResposta(usuarioId, texto, estado) {
     const categoria = info?.categoria || 'Outros';
     const descricao = info?.descricao || c.descricaoOriginal;
     try {
-      await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', c.valor, descricao, categoria, 'mensal', null, null);
+      await db.criarRecorrencia(usuarioId, 'despesa', c.valor, descricao, categoria, 'mensal', null, null, null, null);
       criadas++;
     } catch (err) {
       console.error(`[FATURA] Erro ao criar recorr\u00EAncia: ${err.message}`);
