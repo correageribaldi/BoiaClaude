@@ -8243,7 +8243,10 @@ function parseCSVFatura(csvContent) {
   // Detectar formato pelo cabe\u00E7alho
   const header = lines[0].toLowerCase().trim();
   let formato = 'generico';
-  if (header.includes('date') && header.includes('category') && header.includes('title') && header.includes('amount')) {
+  // Nubank exporta em ingl\u00EAs (date,category,title,amount) ou pode variar
+  if ((header.includes('date') || header.includes('data')) &&
+      (header.includes('amount') || header.includes('valor')) &&
+      (header.includes('title') || header.includes('t\u00EDtulo') || header.includes('titulo') || header.includes('category') || header.includes('categoria'))) {
     formato = 'nubank';
   } else if ((header.includes('data') && header.includes('lancamento') || header.includes('lan\u00E7amento')) || header.includes('historico') || header.includes('hist\u00F3rico')) {
     formato = 'itau_bradesco';
@@ -8272,13 +8275,13 @@ function parseCSVFatura(csvContent) {
 
       const valor = parseFloat(valorStr);
       if (isNaN(valor) || valor === 0) continue;
-      // Nubank: negativo = compra (d\u00E9bito); positivo = pagamento/cr\u00E9dito \u2192 ignorar
-      if (valor > 0) continue;
 
       const dataISO = normalizarDataFatura(data);
       if (!dataISO) continue;
 
       if (IGNORAR_REGEX.test(descricao)) continue;
+      // Ignorar valores negativos (cr\u00E9ditos/pagamentos n\u00E3o capturados pelo IGNORAR_REGEX)
+      if (valor < 0) continue;
 
       transacoes.push({ data: dataISO, valor: Math.abs(valor), descricaoOriginal: descricao });
 
@@ -8292,7 +8295,7 @@ function parseCSVFatura(csvContent) {
 
       if (IGNORAR_REGEX.test(descricao)) continue;
 
-      const valor = parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
+      const valor = parseValorFatura(valorStr);
       if (isNaN(valor) || valor <= 0) continue;
 
       const dataISO = normalizarDataFatura(data);
@@ -8310,7 +8313,7 @@ function parseCSVFatura(csvContent) {
       let valorNum = null;
       let descIdx = null;
       for (let j = parts.length - 1; j >= 1; j--) {
-        const v = parseFloat(parts[j].trim().replace(/\./g, '').replace(',', '.'));
+        const v = parseValorFatura(parts[j].trim());
         if (!isNaN(v) && v !== 0) {
           valorNum = Math.abs(v);
           descIdx = 1;
@@ -8331,6 +8334,20 @@ function parseCSVFatura(csvContent) {
   }
 
   return transacoes;
+}
+
+function parseValorFatura(s) {
+  s = s.trim().replace(/['"]/g, '');
+  // Tem vírgula E ponto: formato brasileiro 1.234,56 → ponto é milhar
+  if (s.includes(',') && s.includes('.')) {
+    return parseFloat(s.replace(/\./g, '').replace(',', '.'));
+  }
+  // Só vírgula: decimal brasileiro 26,25
+  if (s.includes(',') && !s.includes('.')) {
+    return parseFloat(s.replace(',', '.'));
+  }
+  // Só ponto ou nenhum: decimal inglês 26.25 ou inteiro
+  return parseFloat(s);
 }
 
 function normalizarDataFatura(dataStr) {
