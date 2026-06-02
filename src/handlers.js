@@ -8264,16 +8264,26 @@ function parseCSVFatura(csvContent) {
     let data = null, valorStr = null, descricao = null;
 
     if (formato === 'nubank') {
-      // date,category,title,amount
-      // amount negativo = d\u00E9bito no cart\u00E3o (despesa do usu\u00E1rio)
-      const parts = line.split(',');
-      if (parts.length < 4) continue;
-      data = parts[0].trim();
-      // category em parts[1], title em parts[2], amount em parts[3]
-      descricao = parts[2].trim();
-      valorStr = parts[3].trim();
+      // Suporta 3 colunas (date,title,amount) e 4 colunas (date,category,title,amount)
+      // Detecta \u00EDndices dinamicamente pelo header para n\u00E3o depender de posi\u00E7\u00E3o fixa
+      const headerParts = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+      const dateIdx   = headerParts.findIndex(h => h === 'date' || h === 'data');
+      const amountIdx = headerParts.findIndex(h => h === 'amount' || h === 'valor');
+      const titleIdx  = headerParts.findIndex(h => h === 'title' || h === 't\u00EDtulo' || h === 'titulo' || h === 'name' || h === 'nome' || h === 'description' || h === 'descri\u00E7\u00E3o');
 
-      const valor = parseFloat(valorStr);
+      // Fallback: se n\u00E3o achou title explicitamente, pega a coluna entre date e amount
+      const dIdx    = dateIdx   !== -1 ? dateIdx   : 0;
+      const aIdx    = amountIdx !== -1 ? amountIdx : (headerParts.length - 1);
+      const descIdx = titleIdx  !== -1 ? titleIdx  : (aIdx > 1 ? aIdx - 1 : 1);
+
+      const parts = line.split(',');
+      if (parts.length <= Math.max(dIdx, aIdx, descIdx)) continue;
+
+      data      = parts[dIdx].trim().replace(/['"]/g, '');
+      descricao = parts[descIdx].trim().replace(/['"]/g, '');
+      valorStr  = parts[aIdx].trim().replace(/['"]/g, '');
+
+      const valor = parseValorFatura(valorStr);
       if (isNaN(valor) || valor === 0) continue;
 
       const dataISO = normalizarDataFatura(data);
