@@ -2168,6 +2168,11 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleRemoverCartao(usuarioId, { cartao_nome });
   }
 
+  // Comando: importar fatura de cartão (detecção antes da IA)
+  if (/import[ao]r?\s+fatura|subir?\s+fatura|csv\s+(?:do\s+)?cart[aã]o/i.test(lower)) {
+    return await handleImportarFatura(usuarioId, {});
+  }
+
   // Comando: excluir
   if (lower.startsWith('excluir ')) {
     return await handleExcluir(usuarioId, msg);
@@ -8500,6 +8505,17 @@ async function handleImportarFaturaPendente(usuarioId, texto, estado) {
     return `\uD83D\uDCB3 Cart\u00E3o selecionado: *${cartaoEscolhido.nome}*\n\nAgora me manda o arquivo CSV da fatura!`;
   }
 
+  if (estado.etapa === 'aguardando_csv_com_arquivo') {
+    const cartoes = await db.listarCartoes(usuarioId);
+    const idx = parseInt(lower, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= cartoes.length) {
+      return `Por favor, escolha o n\u00FAmero do cart\u00E3o (1 a ${cartoes.length}). Ou manda *cancelar* pra desistir.`;
+    }
+    const cartao = cartoes[idx];
+    limparImportarFaturaPendente(usuarioId);
+    return await handleCSVFatura(usuarioId, estado.csvContent, cartao.id);
+  }
+
   // etapa aguardando_csv: usu\u00E1rio mandou texto em vez de arquivo
   return `\uD83D\uDCC2 Me manda o arquivo CSV da fatura para importar.\n\nSe quiser cancelar, manda *cancelar*.`;
 }
@@ -8579,6 +8595,18 @@ async function handleCSVImport(usuarioId, csvContent) {
   const transacoes = parseCSV(csvContent);
 
   if (transacoes.length === 0) {
+    // Tentar como fatura de cartão (formato Nubank/Itaú)
+    const transacoesFatura = parseCSVFatura(csvContent);
+    if (transacoesFatura.length > 0) {
+      const cartoes = await db.listarCartoes(usuarioId);
+      if (cartoes.length === 1) {
+        return await handleCSVFatura(usuarioId, csvContent, cartoes[0].id);
+      } else if (cartoes.length > 1) {
+        const lista = cartoes.map((c, i) => `  ${i + 1}. ${c.nome}`).join('\n');
+        salvarImportarFaturaPendente(usuarioId, { etapa: 'aguardando_csv_com_arquivo', csvContent });
+        return `💳 Detectei uma fatura de cartão!\n\nQual cartão é esta fatura?\n\n${lista}`;
+      }
+    }
     return '❌ Não encontrei transações no arquivo CSV.\n\nCertifica que é um extrato no formato: Data,Valor,Identificador,Descrição';
   }
 
