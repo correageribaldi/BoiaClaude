@@ -1772,6 +1772,26 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     }
   }
 
+  // ── Alexa: vincular conta via código de pareamento ──────────────────────────
+  // Comando: "vincular alexa <codigo>" — enviado pelo usuário após receber código no Echo
+  {
+    const matchVincularAlexa = lower.match(/^vincular\s+alexa\s+(\d{6})\s*$/i);
+    if (matchVincularAlexa) {
+      const codigo = matchVincularAlexa[1];
+      try {
+        const vinculou = await db.vincularAlexaPorCodigo(codigo, usuarioId);
+        if (vinculou) {
+          return 'Conta vinculada com sucesso! Agora você pode usar o Cronos pelo seu Echo. Diga "Alexa, abrir Cronos" para começar.';
+        } else {
+          return 'Codigo nao encontrado ou ja utilizado. Abra a skill Cronos no seu Echo e peça um novo codigo de vinculo.';
+        }
+      } catch (err) {
+        console.error('[ALEXA] Erro ao vincular por código:', err.message);
+        return 'Erro ao processar o vinculo. Tente novamente em alguns instantes.';
+      }
+    }
+  }
+
   // Verificar se está no fluxo Finanças em Dia — posição #2 para bloquear todos os outros estados
   const pontoZero = await obterPontoZero(usuarioId);
   if (pontoZero) {
