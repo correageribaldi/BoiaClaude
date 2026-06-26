@@ -1567,6 +1567,10 @@ app.post('/admin/upload-image', async (req, res) => {
   }
 });
 
+// ── Canal Alexa ───────────────────────────────────────────────────────────────
+const { montarRotaAlexa } = require('./channels/alexa');
+montarRotaAlexa(app);
+
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function iniciarWebServer(whatsappClient) {
   if (whatsappClient) {
