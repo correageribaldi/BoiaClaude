@@ -691,6 +691,9 @@ async function initTables() {
     ALTER TABLE lembretes_gerais ADD COLUMN IF NOT EXISTS google_event_id TEXT;
     ALTER TABLE lembretes_recorrentes ADD COLUMN IF NOT EXISTS google_event_id TEXT;
   `);
+
+  // Tabela de vínculos Alexa (chamada aqui para garantir que cria junto com as demais)
+  await initAlexaLinksTable();
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -3437,6 +3440,95 @@ async function metricsLogsCampanhas(dias = 7) {
   return r.rows;
 }
 
+// ── Alexa Links — vínculo alexaUserId ↔ usuarioId ────────────────────────────
+
+/**
+ * Cria a tabela de vínculos Alexa se não existir.
+ * Chamado por initTables.
+ */
+async function initAlexaLinksTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alexa_links (
+      alexa_user_id   TEXT PRIMARY KEY,
+      usuario_id      TEXT NOT NULL,
+      codigo_pareamento TEXT,
+      criado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // Índice para busca por código de pareamento
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_alexa_links_codigo
+    ON alexa_links (codigo_pareamento)
+    WHERE codigo_pareamento IS NOT NULL
+  `);
+}
+
+/**
+ * Gera um código de pareamento de 6 dígitos para o alexaUserId.
+ * Se já existir um código não utilizado, retorna o mesmo.
+ * @param {string} alexaUserId
+ * @returns {Promise<string>} código de 6 dígitos
+ */
+async function gerarCodigoPareamento(alexaUserId) {
+  // Se já tiver vínculo completo, não precisa de código
+  const existente = await pool.query(
+    'SELECT usuario_id, codigo_pareamento FROM alexa_links WHERE alexa_user_id = $1',
+    [alexaUserId]
+  );
+
+  if (existente.rows.length > 0 && existente.rows[0].usuario_id) {
+    // Já vinculado — retorna um código vazio (caller deve tratar)
+    return existente.rows[0].codigo_pareamento || '';
+  }
+
+  // Gerar código de 6 dígitos
+  const codigo = String(Math.floor(100000 + Math.random() * 900000));
+
+  await pool.query(
+    `INSERT INTO alexa_links (alexa_user_id, usuario_id, codigo_pareamento)
+     VALUES ($1, '', $2)
+     ON CONFLICT (alexa_user_id) DO UPDATE
+       SET codigo_pareamento = EXCLUDED.codigo_pareamento`,
+    [alexaUserId, codigo]
+  );
+
+  return codigo;
+}
+
+/**
+ * Completa o vínculo: associa o alexaUserId ao usuarioId do WhatsApp.
+ * @param {string} codigo - código de 6 dígitos enviado pelo usuário no WhatsApp
+ * @param {string} usuarioId - ID do usuário no WhatsApp (formato <numero>@c.us)
+ * @returns {Promise<boolean>} true se vinculou com sucesso, false se código não encontrado/expirado
+ */
+async function vincularAlexaPorCodigo(codigo, usuarioId) {
+  const r = await pool.query(
+    `UPDATE alexa_links
+     SET usuario_id = $1, codigo_pareamento = NULL
+     WHERE codigo_pareamento = $2
+       AND (usuario_id = '' OR usuario_id IS NULL)
+     RETURNING alexa_user_id`,
+    [usuarioId, codigo]
+  );
+  return r.rowCount > 0;
+}
+
+/**
+ * Resolve o usuarioId (WhatsApp) a partir do alexaUserId.
+ * @param {string} alexaUserId
+ * @returns {Promise<string|null>} usuarioId ou null se não vinculado
+ */
+async function resolverUsuarioPorAlexa(alexaUserId) {
+  const r = await pool.query(
+    `SELECT usuario_id FROM alexa_links
+     WHERE alexa_user_id = $1
+       AND usuario_id IS NOT NULL
+       AND usuario_id <> ''`,
+    [alexaUserId]
+  );
+  return r.rows[0]?.usuario_id || null;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -3617,4 +3709,9 @@ module.exports = {
   metricsUsuariosRisco,
   metricsFunilConversao,
   metricsLogsCampanhas,
+  // Alexa
+  initAlexaLinksTable,
+  gerarCodigoPareamento,
+  vincularAlexaPorCodigo,
+  resolverUsuarioPorAlexa,
 };
