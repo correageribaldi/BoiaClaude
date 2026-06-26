@@ -76,7 +76,7 @@ const timestampVerifier = new TimestampVerifier();
 async function verificarAssinatura(req) {
   const rawBody = req.rawBody;
   if (!rawBody) {
-    throw new Error('rawBody ausente — configure express.raw() antes desta rota');
+    throw new Error('rawBody ausente — configure o verify callback no express.json global');
   }
 
   await signatureVerifier.verify(rawBody.toString(), req.headers);
@@ -215,23 +215,15 @@ async function processarRequest(body) {
  * @param {import('express').Application} app
  */
 function montarRotaAlexa(app) {
-  // express.raw() para capturar body bruto necessário para verificação de assinatura
-  const rawBodyParser = require('express').raw({ type: 'application/json', limit: '10mb' });
-
-  app.post('/alexa', rawBodyParser, async (req, res) => {
-    let body;
-
-    try {
-      // Guardar rawBody para o verificador de assinatura
-      req.rawBody = req.body; // express.raw() já entrega Buffer
-
-      // Parse JSON
-      const raw = req.rawBody instanceof Buffer ? req.rawBody.toString('utf8') : req.rawBody;
-      body = JSON.parse(raw);
-    } catch (err) {
-      console.error('[ALEXA] Erro ao parsear body:', err.message);
+  app.post('/alexa', async (req, res) => {
+    // req.body já é objeto parseado pelo express.json global
+    // req.rawBody é Buffer capturado pelo verify callback do express.json global
+    if (!req.rawBody) {
+      console.error('[ALEXA] rawBody ausente — express.json global não capturou o buffer');
       return res.status(400).json({ error: 'Body inválido' });
     }
+
+    const body = req.body;
 
     try {
       await verificarAssinatura(req);
