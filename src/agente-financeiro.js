@@ -8,6 +8,11 @@ const charts = require('./charts');
 const fmt = require('./formatters');
 const search = require('./search');
 
+// Importação lazy para evitar dependência circular (handlers.js importa agente-financeiro.js)
+function getHandlers() {
+  return require('./handlers');
+}
+
 // Helper: formatarMoeda seguro (trata null/undefined)
 function moeda(v) { return fmt.formatarMoeda(Number(v) || 0); }
 
@@ -122,7 +127,8 @@ REGRAS IMPORTANTES:
 8. Quando o campo "categoria" for necessário, use SEMPRE uma subcategoria existente da lista de categorias disponíveis. Se nenhuma se encaixa, crie uma nova descritiva (ex: "iFood", "Uber").
 9. Para datas relativas: "hoje" = data de hoje, "ontem" = dia anterior, "amanhã" = dia seguinte. Converta para YYYY-MM-DD.
 10. Se o usuário disser "resetar", "começar do zero" ou "limpar tudo", NÃO execute — responda que ele precisa digitar o comando diretamente.
-11. Quando a tool retornar resultado, apresente de forma amigável e formatada para WhatsApp (negrito com *, itálico com _).`;
+11. Quando a tool retornar resultado, apresente de forma amigável e formatada para WhatsApp (negrito com *, itálico com _).
+12. Para criar conta (corrente, poupança, carteira, investimento), listar contas ou ver saldo de uma conta específica, chame as tools criar_conta, listar_contas ou saldo_conta IMEDIATAMENTE — não pedem confirmação. Se o usuário disser algo como "quero criar uma conta" sem informar o nome, chame criar_conta mesmo assim sem o parâmetro nome; a tool já devolve a pergunta pedindo o nome. A resposta da tool já vem pronta e formatada — repasse o texto dela ao usuário como sua resposta final, sem reescrever o conteúdo.`;
 }
 
 // ── Tool definitions (OpenAI function calling) ───────────────────────────────
@@ -456,6 +462,39 @@ const TOOLS = [
       },
     },
   },
+  // ── Contas ──
+  {
+    type: 'function', function: {
+      name: 'criar_conta',
+      description: 'Criar uma nova conta (corrente, poupança, carteira, investimento). Se o usuário não disser o nome da conta, chame mesmo assim sem o parâmetro nome — o sistema vai perguntar o nome.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nome: { type: 'string', description: 'Nome da conta (ex: Poupança, Carteira, Nubank)', nullable: true },
+          tipo: { type: 'string', enum: ['corrente', 'poupanca', 'carteira', 'investimento', 'outro'], description: 'Tipo da conta', nullable: true },
+        },
+      },
+    },
+  },
+  {
+    type: 'function', function: {
+      name: 'listar_contas',
+      description: 'Listar todas as contas cadastradas do usuário com saldo de cada uma',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function', function: {
+      name: 'saldo_conta',
+      description: 'Consultar saldo de uma conta específica pelo nome, ou de todas as contas se o nome não for informado',
+      parameters: {
+        type: 'object',
+        properties: {
+          conta_nome: { type: 'string', description: 'Nome (ou parte do nome) da conta', nullable: true },
+        },
+      },
+    },
+  },
   // ── Gráficos ──
   {
     type: 'function', function: {
@@ -700,6 +739,23 @@ async function executeTool(usuarioId, toolName, args) {
       return { ok: true, msg: `Depósito de ${moeda(args.valor)} em "${result.nome}". Saldo: ${moeda(result.saldo)}` };
     }
 
+    // Contas
+    case 'criar_conta': {
+      const handlers = getHandlers();
+      const msg = await handlers.handleNovaConta(usuarioId, { nome: args.nome || null, tipo: args.tipo || null });
+      return { ok: true, msg };
+    }
+    case 'listar_contas': {
+      const handlers = getHandlers();
+      const msg = await handlers.handleListarContas(usuarioId);
+      return { ok: true, msg };
+    }
+    case 'saldo_conta': {
+      const handlers = getHandlers();
+      const msg = await handlers.handleSaldoConta(usuarioId, { conta_nome: args.conta_nome || null });
+      return { ok: true, msg };
+    }
+
     // Gráficos
     case 'gerar_grafico_categorias': {
       const resumo = await db.resumoMensal(usuarioId, args.mes, args.ano);
@@ -921,6 +977,8 @@ function descreverAcao(toolName, args) {
 
 module.exports = {
   processarMensagem,
+  executeTool,
+  TOOLS,
   obterEstado,
   limparEstado,
   agenteEstados,
