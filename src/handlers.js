@@ -304,6 +304,36 @@ function obterEditarLembretePendente(usuarioId) {
 }
 function limparEditarLembretePendente(usuarioId) { editarLembretePendentes.delete(usuarioId); }
 
+// Estado para cadastro de conta (fluxo multi-turn: nome → tipo). Persiste no banco
+// (fluxo_ativo) no mesmo padrão do Ponto Zero, para sobreviver a restart do servidor.
+const novaContaPendentes = new Map();
+function salvarNovaContaPendente(usuarioId, dados) {
+  novaContaPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+  db.salvarFluxoAtivoDB(usuarioId, { ...dados, tipoFluxo: 'nova_conta' }).catch(e => console.error('[DB] fluxo nova conta:', e));
+}
+async function obterNovaContaPendente(usuarioId) {
+  const dados = novaContaPendentes.get(usuarioId);
+  if (dados) {
+    if (Date.now() > dados.expiraEm) { novaContaPendentes.delete(usuarioId); }
+    else return dados;
+  }
+  try {
+    const dadosDB = await db.buscarFluxoAtivoDB(usuarioId);
+    if (dadosDB && dadosDB.tipoFluxo === 'nova_conta') {
+      const restaurado = { ...dadosDB, expiraEm: Date.now() + 15 * 60 * 1000 };
+      novaContaPendentes.set(usuarioId, restaurado);
+      return restaurado;
+    }
+  } catch (e) {
+    console.error('[DB] buscarFluxoAtivoDB (nova conta):', e.message);
+  }
+  return null;
+}
+function limparNovaContaPendente(usuarioId) {
+  novaContaPendentes.delete(usuarioId);
+  db.limparFluxoAtivoDB(usuarioId).catch(e => console.error('[DB] limpar fluxo nova conta:', e));
+}
+
 // Estado para importar fatura de cartão (fluxo multi-turn, expira em 30 min)
 const importarFaturaPendentes = new Map();
 function salvarImportarFaturaPendente(usuarioId, dados) {
@@ -1857,6 +1887,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     if (resposta !== null) return resposta;
   }
 
+  // Verificar se há cadastro de conta em andamento (fluxo multi-turn: nome → tipo)
+  const novaContaPend = await obterNovaContaPendente(usuarioId);
+  if (novaContaPend) {
+    return await handleNovaContaContinuacao(usuarioId, msg, novaContaPend);
+  }
+
   // Verificar se há edição/exclusão de caixinha em andamento
   const editarCaixinhaPend = obterEditarCaixinhaPendente(usuarioId);
   if (editarCaixinhaPend) {
@@ -2182,6 +2218,26 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   if (lower === 'saldo') {
     const saldos = await db.calcularSaldos(usuarioId);
     return fmt.formatarSaldos(saldos);
+  }
+
+  // Comando: criar conta <nome> — bypass da IA (determinístico, mesmo padrão de "vincular contato")
+  if (lower.startsWith('criar conta ')) {
+    const nome = msg.trim().slice('criar conta '.length).trim();
+    return await handleNovaConta(usuarioId, { nome: nome || null, tipo: null });
+  }
+
+  // Comando: minhas contas / listar contas
+  if (lower === 'minhas contas' || lower === 'listar contas') {
+    return await handleListarContas(usuarioId);
+  }
+
+  // Comando: saldo <nome da conta> — só ativa com texto adicional após "saldo ",
+  // para não colidir com o comando "saldo" genérico (saldo agregado) acima.
+  if (lower.startsWith('saldo ')) {
+    const contaNome = msg.trim().slice('saldo '.length).trim();
+    if (contaNome) {
+      return await handleSaldoConta(usuarioId, { conta_nome: contaNome });
+    }
   }
 
   // Comando: pendentes
@@ -3452,6 +3508,17 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   // Cadastro standalone de caixinha/investimento
   if (resultado.acao === 'nova_caixinha') {
     return await iniciarCadastroCaixinhaStandalone(usuarioId);
+  }
+
+  // Módulo de Contas (Marco 2)
+  if (resultado.acao === 'nova_conta') {
+    return await handleNovaConta(usuarioId, resultado);
+  }
+  if (resultado.acao === 'listar_contas') {
+    return await handleListarContas(usuarioId);
+  }
+  if (resultado.acao === 'saldo_conta') {
+    return await handleSaldoConta(usuarioId, resultado);
   }
 
   // Agenda - visão geral do dia/semana/mês
@@ -7402,6 +7469,142 @@ async function iniciarCadastroCaixinhaStandalone(usuarioId) {
   return `Vamos cadastrar sua caixinha de investimento! 🏦\n\nMe diz o *nome* da caixinha.\n_Ex: "Poupança", "CDB Nubank", "Reserva emergência"_\n\n_Quando terminar, manda "não" pra encerrar._`;
 }
 
+// ─── Módulo de Contas (Marco 2) ─────────────────────────────────────────────
+
+const TIPOS_CONTA_VALIDOS = ['corrente', 'poupanca', 'carteira', 'investimento', 'outro'];
+
+function normalizarTipoConta(tipo) {
+  if (!tipo) return null;
+  const t = normalizarTextoBusca(tipo);
+  if (TIPOS_CONTA_VALIDOS.includes(t)) return t;
+  return null;
+}
+
+function formatarTipoConta(tipo) {
+  const labels = {
+    corrente: 'Conta Corrente',
+    poupanca: 'Poupança',
+    carteira: 'Carteira',
+    investimento: 'Investimento',
+    outro: 'Outro',
+  };
+  return labels[tipo] || null;
+}
+
+async function criarContaComMensagem(usuarioId, nome, tipo) {
+  try {
+    const conta = await db.criarConta(usuarioId, nome, tipo);
+    const tipoLabel = formatarTipoConta(conta.tipo);
+    return `✅ Conta *${conta.nome}* criada${tipoLabel ? ` (${tipoLabel})` : ''}!\n\n_Use "minhas contas" pra ver todas ou "saldo ${conta.nome}" pra consultar o saldo dela._`;
+  } catch (err) {
+    return `❌ ${err.message}`;
+  }
+}
+
+// Inicia/processa o cadastro de conta. Se nome já veio preenchido (via IA ou parsing literal),
+// cria direto. Caso contrário, inicia fluxo multi-turn (pergunta nome → pergunta tipo).
+async function handleNovaConta(usuarioId, resultado) {
+  const nome = (resultado.nome || '').trim() || null;
+  const tipo = normalizarTipoConta(resultado.tipo);
+
+  if (nome) {
+    return await criarContaComMensagem(usuarioId, nome, tipo);
+  }
+
+  salvarNovaContaPendente(usuarioId, { fase: 'aguardando_nome' });
+  return `Vamos criar sua conta! 💼\n\nMe diz o *nome* da conta.\n_Ex: "Conta Corrente", "Poupança", "Carteira"_`;
+}
+
+// Continuação do fluxo multi-turn de cadastro de conta (nome → tipo)
+async function handleNovaContaContinuacao(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
+    limparNovaContaPendente(usuarioId);
+    return '❌ Cadastro de conta cancelado.';
+  }
+
+  if (estado.fase === 'aguardando_nome') {
+    const nome = texto.trim();
+    if (!nome || nome.length < 2) {
+      return `Me diz o nome da conta 😅\n_Ex: "Conta Corrente", "Poupança", "Carteira"_`;
+    }
+    salvarNovaContaPendente(usuarioId, { fase: 'aguardando_tipo', nome });
+    return `*${nome}* — qual o tipo dessa conta? 🏦\n_Ex: "corrente", "poupança", "carteira", "investimento" — ou "pular" se não quiser definir agora._`;
+  }
+
+  if (estado.fase === 'aguardando_tipo') {
+    const pular = /^(pular|n[aã]o|nenhum[a]?|skip)$/i.test(lower);
+    const tipo = pular ? null : normalizarTipoConta(texto);
+    limparNovaContaPendente(usuarioId);
+    return await criarContaComMensagem(usuarioId, estado.nome, tipo);
+  }
+
+  // Estado inconsistente — encerra o fluxo
+  limparNovaContaPendente(usuarioId);
+  return 'Algo deu errado no cadastro da conta 😅 Me manda *"criar conta"* pra tentar de novo.';
+}
+
+async function handleListarContas(usuarioId) {
+  const contas = await db.listarContas(usuarioId);
+  if (contas.length === 0) {
+    return `💼 Você ainda não tem contas cadastradas.\n\n_Use "criar conta <nome>" para cadastrar._`;
+  }
+
+  const saldos = await db.calcularSaldosPorConta(usuarioId);
+  const saldoPorId = Object.fromEntries(saldos.map(s => [s.id, s.saldo]));
+
+  let msg = `💼 *Suas Contas:*\n\n`;
+  for (const c of contas) {
+    const tipoLabel = formatarTipoConta(c.tipo);
+    const saldo = saldoPorId[c.id] ?? 0;
+    msg += `💰 *${c.nome}*${c.padrao ? ' _(padrão)_' : ''}\n`;
+    if (tipoLabel) msg += `   Tipo: ${tipoLabel}\n`;
+    msg += `   Saldo: ${fmt.formatarMoeda(saldo)}\n\n`;
+  }
+  return msg.trim();
+}
+
+async function handleSaldoConta(usuarioId, resultado) {
+  const contaNome = (resultado.conta_nome || '').trim() || null;
+
+  if (!contaNome) {
+    const saldos = await db.calcularSaldosPorConta(usuarioId);
+    if (saldos.length === 0) {
+      return `💼 Você ainda não tem contas cadastradas.\n\n_Use "criar conta <nome>" para cadastrar._`;
+    }
+    let msg = `💼 *Saldo por conta:*\n\n`;
+    for (const s of saldos) {
+      const tipoLabel = formatarTipoConta(s.tipo);
+      msg += `💰 *${s.nome}*${tipoLabel ? ` (${tipoLabel})` : ''} — ${fmt.formatarMoeda(s.saldo)}\n`;
+    }
+    return msg.trim();
+  }
+
+  const matches = await db.buscarContasPorNome(usuarioId, contaNome);
+
+  if (matches.length === 0) {
+    const contas = await db.listarContas(usuarioId);
+    const lista = contas.length > 0
+      ? contas.map(c => `  💰 *${c.nome}*`).join('\n')
+      : '  _Nenhuma conta cadastrada_';
+    return `Não encontrei conta com o nome *"${contaNome}"* 😅\n\nSuas contas:\n${lista}\n\n_Tenta de novo com o nome correto, ou "listar contas" pra ver todas._`;
+  }
+
+  if (matches.length > 1) {
+    const lista = matches.map(c => `  💰 *${c.nome}*`).join('\n');
+    return `Encontrei ${matches.length} contas com esse nome. Qual você quer ver?\n\n${lista}\n\n_Me diz o nome completo._`;
+  }
+
+  const conta = matches[0];
+  const saldos = await db.calcularSaldosPorConta(usuarioId);
+  const saldoInfo = saldos.find(s => s.id === conta.id);
+  const saldo = saldoInfo ? saldoInfo.saldo : 0;
+  const tipoLabel = formatarTipoConta(conta.tipo);
+
+  return `💰 *${conta.nome}*${tipoLabel ? ` (${tipoLabel})` : ''}\n\nSaldo: *${fmt.formatarMoeda(saldo)}*`;
+}
+
 function calcularDataPendente(dia) {
   const hoje = new Date();
   const ano = hoje.getFullYear();
@@ -8851,6 +9054,7 @@ function limparMapsExpirados() {
     agenteCrescimento.ofertasPendentes,
     importarFaturaPendentes,
     recorrenciaFaturaPendentes,
+    novaContaPendentes,
   ];
   for (const m of maps) {
     for (const [key, val] of m.entries()) {

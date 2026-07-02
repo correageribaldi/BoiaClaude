@@ -190,6 +190,15 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 16c. NOVA CAIXINHA / INVESTIMENTO (quero cadastrar uma caixinha, nova caixinha, adicionar investimento, criar caixinha, cadastrar reserva, novo investimento, quero registrar um investimento, tenho uma poupança pra cadastrar):
 {"acao": "nova_caixinha"}
 
+16d. NOVA CONTA (criar conta, cadastrar conta, adicionar conta, nova conta corrente/poupança/carteira):
+{"acao": "nova_conta", "nome": "nome da conta ou null se não especificou", "tipo": "corrente|poupanca|carteira|investimento|outro|null"}
+
+16e. SALDO POR CONTA (saldo da conta X, quanto tenho na poupança, ver conta corrente):
+{"acao": "saldo_conta", "conta_nome": "nome da conta ou null para ver todas"}
+
+16f. LISTAR CONTAS (minhas contas, quais contas tenho, ver contas):
+{"acao": "listar_contas"}
+
 17. FINANÇAS EM DIA / ORGANIZAR FINANÇAS (quero colocar minhas finanças em dia, organizar meu financeiro, me ajuda com as finanças, quero organizar minhas finanças, colocar financeiro em dia, quero começar a organizar, organizar tudo agora, quero organizar tudo, bora organizar, vou organizar tudo, quero começar pelo começo, me ajuda a organizar):
 {"acao": "financas_em_dia"}
 
