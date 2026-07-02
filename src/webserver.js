@@ -525,6 +525,87 @@ app.post('/api/transactions', autenticar, async (req, res) => {
   }
 });
 
+// ── Contas ───────────────────────────────────────────────────────────────────
+
+app.get('/api/contas', autenticar, async (req, res) => {
+  try {
+    const contas = await db.calcularSaldosPorConta(req.usuarioId);
+    res.json(contas);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/contas', autenticar, async (req, res) => {
+  try {
+    const { nome, tipo } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Nome obrigatório' });
+    const resultado = await db.criarConta(req.usuarioId, nome.trim(), tipo || null);
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/contas:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+app.put('/api/contas/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { nome, tipo } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Nome obrigatório' });
+    const resultado = await db.atualizarConta(req.usuarioId, id, nome.trim(), tipo || null);
+    if (!resultado) return res.status(404).json({ erro: 'Conta não encontrada' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] PUT /api/contas/:id:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/contas/:id', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const resultado = await db.excluirConta(req.usuarioId, id);
+    if (!resultado) return res.status(404).json({ erro: 'Conta não encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/contas/:id:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+// ── Transferências entre contas ───────────────────────────────────────────────
+
+app.get('/api/transferencias', autenticar, async (req, res) => {
+  try {
+    const limite = parseInt(req.query.limite) || 20;
+    const transferencias = await db.listarTransferencias(req.usuarioId, limite);
+    res.json(transferencias);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post('/api/transferencias', autenticar, async (req, res) => {
+  try {
+    const { conta_origem_id, conta_destino_id, valor, descricao, data } = req.body;
+    const origemId = parseInt(conta_origem_id);
+    const destinoId = parseInt(conta_destino_id);
+    const valorNum = parseFloat(valor);
+    if (!origemId || !destinoId) return res.status(400).json({ erro: 'Conta de origem e destino são obrigatórias' });
+    if (!valorNum || valorNum <= 0) return res.status(400).json({ erro: 'Valor inválido' });
+    const resultado = await db.criarTransferencia(
+      req.usuarioId, origemId, destinoId, valorNum, descricao || null, data || null
+    );
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/transferencias:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
 // ── Cartões de crédito ───────────────────────────────────────────────────────
 
 app.get('/api/cartoes', autenticar, async (req, res) => {

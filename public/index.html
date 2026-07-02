@@ -401,6 +401,19 @@
 
         <div class="accordion-item">
           <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>🏦 Contas</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div id="contas-list"></div>
+            <div id="contas-empty" class="empty-state hidden">Nenhuma conta cadastrada.</div>
+            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaConta()">+ Nova Conta</button>
+            <button class="btn btn-secondary" style="margin-top:8px" onclick="abrirModalTransferencia()">↔ Transferir entre contas</button>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
             <span>💳 Cartões de Crédito</span>
             <span class="accordion-icon">›</span>
           </button>
@@ -766,6 +779,74 @@
 </div>
 
 <!-- ── Modal de novo cartão ────────────────────────────────────────────── -->
+<!-- ── Modal de nova/editar conta ───────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-nova-conta">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3 id="modal-conta-titulo">Nova Conta</h3>
+      <button class="modal-close" onclick="fecharModalConta()">✕</button>
+    </div>
+    <input type="hidden" id="conta-edit-id">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Nome</label>
+      <input type="text" id="conta-nome" class="input" placeholder="Ex: Conta Corrente, Carteira...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Tipo (opcional)</label>
+      <select id="conta-tipo" class="input">
+        <option value="">Selecione...</option>
+        <option value="corrente">Corrente</option>
+        <option value="poupanca">Poupança</option>
+        <option value="carteira">Carteira</option>
+        <option value="investimento">Investimento</option>
+        <option value="outro">Outro</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalConta()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarConta()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de transferência entre contas ──────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-transferencia">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Transferir entre Contas</h3>
+      <button class="modal-close" onclick="fecharModalTransferencia()">✕</button>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Conta de Origem</label>
+      <select id="transf-origem" class="input">
+        <option value="">Selecione...</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Conta de Destino</label>
+      <select id="transf-destino" class="input">
+        <option value="">Selecione...</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
+      <input type="number" id="transf-valor" class="input" step="0.01" min="0.01" placeholder="0,00">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Descrição (opcional)</label>
+      <input type="text" id="transf-descricao" class="input" placeholder="Ex: Reserva de emergência...">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Data</label>
+      <input type="date" id="transf-data" class="input">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalTransferencia()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarTransferencia()">Transferir</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay hidden" id="modal-novo-cartao">
   <div class="modal-box modal-box-center">
     <div class="modal-header">

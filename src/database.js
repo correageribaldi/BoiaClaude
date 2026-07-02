@@ -2796,6 +2796,70 @@ async function listarTransferencias(usuarioId, limite = 20) {
   return res.rows;
 }
 
+// Atualiza nome/tipo de uma conta. Bloqueia edição se a conta for a padrão.
+async function atualizarConta(usuarioId, contaId, nome, tipo) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const contaRes = await pool.query(
+    `SELECT id, padrao FROM contas WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE`,
+    [contaId, uid]
+  );
+  if (contaRes.rows.length === 0) return null;
+  if (contaRes.rows[0].padrao) {
+    throw new Error('A conta padrão não pode ser editada.');
+  }
+
+  try {
+    const res = await pool.query(
+      `UPDATE contas SET nome = $1, tipo = $2 WHERE id = $3 AND usuario_id = $4
+       RETURNING id, nome, tipo, saldo_inicial::float, ativo, padrao`,
+      [nome, tipo || null, contaId, uid]
+    );
+    return res.rows[0] || null;
+  } catch (err) {
+    if (err.code === '23505') {
+      throw new Error(`Você já tem uma conta chamada "${nome}".`);
+    }
+    throw err;
+  }
+}
+
+// Soft-delete de conta. Bloqueia se for a conta padrão ou se houver transações vinculadas.
+async function excluirConta(usuarioId, contaId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const contaRes = await pool.query(
+    `SELECT id, padrao FROM contas WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE`,
+    [contaId, uid]
+  );
+  if (contaRes.rows.length === 0) return null;
+  if (contaRes.rows[0].padrao) {
+    throw new Error('A conta padrão não pode ser excluída.');
+  }
+
+  const transRes = await pool.query(
+    `SELECT 1 FROM transacoes WHERE usuario_id = $1 AND conta_id = $2 LIMIT 1`,
+    [uid, contaId]
+  );
+  if (transRes.rows.length > 0) {
+    throw new Error('Esta conta possui transações vinculadas e não pode ser excluída.');
+  }
+
+  const transfRes = await pool.query(
+    `SELECT 1 FROM transferencias WHERE usuario_id = $1 AND (conta_origem_id = $2 OR conta_destino_id = $2) LIMIT 1`,
+    [uid, contaId]
+  );
+  if (transfRes.rows.length > 0) {
+    throw new Error('Esta conta possui transferências vinculadas e não pode ser excluída.');
+  }
+
+  await pool.query(
+    `UPDATE contas SET ativo = FALSE WHERE id = $1 AND usuario_id = $2`,
+    [contaId, uid]
+  );
+  return true;
+}
+
 async function atualizarCartao(usuarioId, cartaoId, campo, novoValor) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const camposPermitidos = ['nome', 'limite_total', 'dia_fechamento', 'dia_vencimento'];
@@ -3763,6 +3827,8 @@ module.exports = {
   calcularSaldosPorConta,
   criarTransferencia,
   listarTransferencias,
+  atualizarConta,
+  excluirConta,
   atualizarCartao,
   deletarCartao,
   deletarCartaoCompleto,

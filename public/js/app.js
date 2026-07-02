@@ -870,7 +870,141 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  await Promise.all([carregarCartoes(), carregarOrcamento(), carregarCaixinhas()]);
+  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas()]);
+}
+
+// ── Contas ───────────────────────────────────────────────────────────────────
+let _contasCache = [];
+
+async function carregarContas() {
+  let contas;
+  try { contas = await api('/api/contas'); }
+  catch { return; }
+
+  _contasCache = contas;
+
+  const list = document.getElementById('contas-list');
+  const empty = document.getElementById('contas-empty');
+  list.innerHTML = '';
+
+  if (!contas.length) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  for (const c of contas) {
+    const row = document.createElement('div');
+    row.className = 'cartao-row';
+    const info = [c.tipo ? c.tipo : null, c.padrao ? 'Conta padrão' : null].filter(Boolean).join(' · ');
+    const botaoExcluir = c.padrao
+      ? ''
+      : `<button class="action-btn" title="Excluir" onclick="excluirConta(${c.id}, '${esc(c.nome)}')">🗑️</button>`;
+    const botaoEditar = c.padrao
+      ? ''
+      : `<button class="action-btn" title="Editar" onclick='abrirModalNovaConta(${c.id})'>✏️</button>`;
+    row.innerHTML = `
+      <div class="cartao-info">
+        <span class="cartao-nome">🏦 ${esc(c.nome)} — ${fmtMoeda(c.saldo)}</span>
+        ${info ? `<span class="cartao-meta">${esc(info)}</span>` : ''}
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        ${botaoEditar}
+        ${botaoExcluir}
+      </div>
+    `;
+    list.appendChild(row);
+  }
+}
+
+let _editandoConta = false;
+
+function abrirModalNovaConta(contaId = null) {
+  const conta = contaId ? _contasCache.find(c => c.id === contaId) : null;
+  _editandoConta = !!conta;
+  document.getElementById('modal-conta-titulo').textContent = conta ? 'Editar Conta' : 'Nova Conta';
+  document.getElementById('conta-edit-id').value = conta ? conta.id : '';
+  document.getElementById('conta-nome').value = conta ? conta.nome || '' : '';
+  document.getElementById('conta-tipo').value = conta ? conta.tipo || '' : '';
+  document.getElementById('modal-nova-conta').classList.remove('hidden');
+}
+
+function fecharModalConta() {
+  document.getElementById('modal-nova-conta').classList.add('hidden');
+}
+
+async function salvarConta() {
+  const nome = document.getElementById('conta-nome').value.trim();
+  const tipo = document.getElementById('conta-tipo').value || null;
+  if (!nome) { toast('Preencha o nome', 'error'); return; }
+
+  try {
+    if (_editandoConta) {
+      const id = parseInt(document.getElementById('conta-edit-id').value);
+      await api(`/api/contas/${id}`, { method: 'PUT', body: JSON.stringify({ nome, tipo }) });
+      toast('Conta atualizada!', 'success');
+    } else {
+      await api('/api/contas', { method: 'POST', body: JSON.stringify({ nome, tipo }) });
+      toast('Conta criada!', 'success');
+    }
+    fecharModalConta();
+    carregarContas();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirConta(id, nome) {
+  if (!confirm(`Excluir a conta "${nome}"?`)) return;
+  try {
+    await api(`/api/contas/${id}`, { method: 'DELETE' });
+    toast(`Conta "${nome}" excluída com sucesso.`, 'success');
+    carregarContas();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Transferência entre contas ────────────────────────────────────────────────
+async function abrirModalTransferencia() {
+  await carregarContas();
+
+  const origemSel = document.getElementById('transf-origem');
+  const destinoSel = document.getElementById('transf-destino');
+  origemSel.innerHTML = '<option value="">Selecione...</option>';
+  destinoSel.innerHTML = '<option value="">Selecione...</option>';
+
+  for (const c of _contasCache) {
+    origemSel.innerHTML += `<option value="${c.id}">${esc(c.nome)}</option>`;
+    destinoSel.innerHTML += `<option value="${c.id}">${esc(c.nome)}</option>`;
+  }
+
+  document.getElementById('transf-valor').value = '';
+  document.getElementById('transf-descricao').value = '';
+  document.getElementById('transf-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('modal-transferencia').classList.remove('hidden');
+}
+
+function fecharModalTransferencia() {
+  document.getElementById('modal-transferencia').classList.add('hidden');
+}
+
+async function salvarTransferencia() {
+  const conta_origem_id = parseInt(document.getElementById('transf-origem').value);
+  const conta_destino_id = parseInt(document.getElementById('transf-destino').value);
+  const valor = parseFloat(document.getElementById('transf-valor').value);
+  const descricao = document.getElementById('transf-descricao').value.trim() || null;
+  const data = document.getElementById('transf-data').value || null;
+
+  if (!conta_origem_id || !conta_destino_id) { toast('Selecione a conta de origem e destino', 'error'); return; }
+  if (conta_origem_id === conta_destino_id) { toast('Conta de origem e destino não podem ser a mesma', 'error'); return; }
+  if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
+
+  try {
+    await api('/api/transferencias', {
+      method: 'POST',
+      body: JSON.stringify({ conta_origem_id, conta_destino_id, valor, descricao, data }),
+    });
+    toast('Transferência realizada!', 'success');
+    fecharModalTransferencia();
+    carregarContas();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 async function carregarCartoes() {
