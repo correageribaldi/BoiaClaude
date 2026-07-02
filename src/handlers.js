@@ -334,6 +334,36 @@ function limparNovaContaPendente(usuarioId) {
   db.limparFluxoAtivoDB(usuarioId).catch(e => console.error('[DB] limpar fluxo nova conta:', e));
 }
 
+// Estado para transferência entre contas (fluxo multi-turn: valor → origem → destino).
+// Mesmo padrão de persistência do cadastro de conta, para sobreviver a restart do servidor.
+const transferenciaPendentes = new Map();
+function salvarTransferenciaPendente(usuarioId, dados) {
+  transferenciaPendentes.set(usuarioId, { ...dados, expiraEm: Date.now() + 15 * 60 * 1000 });
+  db.salvarFluxoAtivoDB(usuarioId, { ...dados, tipoFluxo: 'transferencia' }).catch(e => console.error('[DB] fluxo transferencia:', e));
+}
+async function obterTransferenciaPendente(usuarioId) {
+  const dados = transferenciaPendentes.get(usuarioId);
+  if (dados) {
+    if (Date.now() > dados.expiraEm) { transferenciaPendentes.delete(usuarioId); }
+    else return dados;
+  }
+  try {
+    const dadosDB = await db.buscarFluxoAtivoDB(usuarioId);
+    if (dadosDB && dadosDB.tipoFluxo === 'transferencia') {
+      const restaurado = { ...dadosDB, expiraEm: Date.now() + 15 * 60 * 1000 };
+      transferenciaPendentes.set(usuarioId, restaurado);
+      return restaurado;
+    }
+  } catch (e) {
+    console.error('[DB] buscarFluxoAtivoDB (transferencia):', e.message);
+  }
+  return null;
+}
+function limparTransferenciaPendente(usuarioId) {
+  transferenciaPendentes.delete(usuarioId);
+  db.limparFluxoAtivoDB(usuarioId).catch(e => console.error('[DB] limpar fluxo transferencia:', e));
+}
+
 // Estado para importar fatura de cartão (fluxo multi-turn, expira em 30 min)
 const importarFaturaPendentes = new Map();
 function salvarImportarFaturaPendente(usuarioId, dados) {
@@ -1893,6 +1923,12 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return await handleNovaContaContinuacao(usuarioId, msg, novaContaPend);
   }
 
+  // Verificar se há transferência entre contas em andamento (fluxo multi-turn)
+  const transferenciaPend = await obterTransferenciaPendente(usuarioId);
+  if (transferenciaPend) {
+    return await handleTransferenciaContinuacao(usuarioId, msg, transferenciaPend);
+  }
+
   // Verificar se há edição/exclusão de caixinha em andamento
   const editarCaixinhaPend = obterEditarCaixinhaPendente(usuarioId);
   if (editarCaixinhaPend) {
@@ -2237,6 +2273,29 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     const contaNome = msg.trim().slice('saldo '.length).trim();
     if (contaNome) {
       return await handleSaldoConta(usuarioId, { conta_nome: contaNome });
+    }
+  }
+
+  // Comando: transferir <valor> de/da <origem> para/pra <destino> — bypass da IA
+  // (determinístico, mesmo padrão de "criar conta <nome>")
+  {
+    const transferMatch = msg.trim().match(/^transferir\s+([\d.,]+)\s+(?:de|da|do)\s+(.+?)\s+(?:para|pra)\s+(.+)$/i);
+    if (transferMatch) {
+      const valor = extrairValorDoTexto(transferMatch[1]);
+      const contaOrigem = transferMatch[2].trim();
+      const contaDestino = transferMatch[3].trim();
+      return await handleTransferencia(usuarioId, { valor, conta_origem: contaOrigem, conta_destino: contaDestino });
+    }
+  }
+
+  // Comando: mover <valor> pra/para <destino> (sem origem explícita — inicia fluxo
+  // multi-turn perguntando a conta de origem)
+  {
+    const moverMatch = msg.trim().match(/^mover\s+([\d.,]+)\s*(?:reais?)?\s+(?:pra|para)\s+(.+)$/i);
+    if (moverMatch) {
+      const valor = extrairValorDoTexto(moverMatch[1]);
+      const contaDestino = moverMatch[2].trim();
+      return await handleTransferencia(usuarioId, { valor, conta_origem: null, conta_destino: contaDestino });
     }
   }
 
@@ -3519,6 +3578,9 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
   }
   if (resultado.acao === 'saldo_conta') {
     return await handleSaldoConta(usuarioId, resultado);
+  }
+  if (resultado.acao === 'transferencia') {
+    return await handleTransferencia(usuarioId, resultado);
   }
 
   // Agenda - visão geral do dia/semana/mês
@@ -7605,6 +7667,117 @@ async function handleSaldoConta(usuarioId, resultado) {
   return `💰 *${conta.nome}*${tipoLabel ? ` (${tipoLabel})` : ''}\n\nSaldo: *${fmt.formatarMoeda(saldo)}*`;
 }
 
+// Resolve um nome (parcial) de conta para exatamente uma conta do usuário.
+// Reusa a mesma lógica de desambiguação 0/1/múltiplos usada em handleSaldoConta.
+// Retorna { conta } em caso de sucesso, ou { erro: <mensagem> } caso contrário.
+async function resolverContaPorNome(usuarioId, nomeParcial) {
+  const matches = await db.buscarContasPorNome(usuarioId, nomeParcial);
+
+  if (matches.length === 0) {
+    const contas = await db.listarContas(usuarioId);
+    const lista = contas.length > 0
+      ? contas.map(c => `  💰 *${c.nome}*`).join('\n')
+      : '  _Nenhuma conta cadastrada_';
+    return { erro: `Não encontrei conta com o nome *"${nomeParcial}"* 😅\n\nSuas contas:\n${lista}\n\n_Tenta de novo com o nome correto, ou "listar contas" pra ver todas._` };
+  }
+
+  if (matches.length > 1) {
+    const lista = matches.map(c => `  💰 *${c.nome}*`).join('\n');
+    return { erro: `Encontrei ${matches.length} contas com esse nome. Qual você quer dizer?\n\n${lista}\n\n_Me diz o nome completo._` };
+  }
+
+  return { conta: matches[0] };
+}
+
+async function executarTransferenciaComMensagem(usuarioId, contaOrigem, contaDestino, valor, descricao) {
+  try {
+    await db.criarTransferencia(usuarioId, contaOrigem.id, contaDestino.id, valor, descricao || null);
+    return `✅ Transferência de ${fmt.formatarMoeda(valor)} de *${contaOrigem.nome}* para *${contaDestino.nome}* registrada.`;
+  } catch (err) {
+    return `❌ ${err.message}`;
+  }
+}
+
+// Inicia/processa a transferência entre contas. Se valor, conta_origem e conta_destino
+// já vieram preenchidos (via IA ou parsing literal), executa direto. Caso contrário,
+// inicia fluxo multi-turn (mesmo padrão de handleNovaConta/handleNovaContaContinuacao).
+async function handleTransferencia(usuarioId, resultado) {
+  const valor = Number(resultado.valor) || 0;
+  const origemNome = (resultado.conta_origem || '').trim() || null;
+  const destinoNome = (resultado.conta_destino || '').trim() || null;
+  const descricao = (resultado.descricao || '').trim() || null;
+
+  if (!valor || valor <= 0) {
+    salvarTransferenciaPendente(usuarioId, { fase: 'aguardando_valor', conta_origem: origemNome, conta_destino: destinoNome, descricao });
+    return `Vamos transferir entre contas! 💸\n\nQual o *valor* da transferência?`;
+  }
+
+  if (!origemNome) {
+    salvarTransferenciaPendente(usuarioId, { fase: 'aguardando_origem', valor, conta_destino: destinoNome, descricao });
+    return `De qual conta sai o valor de ${fmt.formatarMoeda(valor)}? 💼\n_Ex: "Conta Corrente", "Poupança", "Carteira"_`;
+  }
+
+  const origemResolvida = await resolverContaPorNome(usuarioId, origemNome);
+  if (origemResolvida.erro) {
+    salvarTransferenciaPendente(usuarioId, { fase: 'aguardando_origem', valor, conta_destino: destinoNome, descricao });
+    return origemResolvida.erro;
+  }
+
+  if (!destinoNome) {
+    salvarTransferenciaPendente(usuarioId, { fase: 'aguardando_destino', valor, conta_origem: origemResolvida.conta.nome, descricao });
+    return `Pra qual conta vai o valor de ${fmt.formatarMoeda(valor)}? 💼\n_Ex: "Conta Corrente", "Poupança", "Carteira"_`;
+  }
+
+  const destinoResolvida = await resolverContaPorNome(usuarioId, destinoNome);
+  if (destinoResolvida.erro) {
+    salvarTransferenciaPendente(usuarioId, { fase: 'aguardando_destino', valor, conta_origem: origemResolvida.conta.nome, descricao });
+    return destinoResolvida.erro;
+  }
+
+  return await executarTransferenciaComMensagem(usuarioId, origemResolvida.conta, destinoResolvida.conta, valor, descricao);
+}
+
+// Continuação do fluxo multi-turn de transferência (valor → origem → destino)
+async function handleTransferenciaContinuacao(usuarioId, texto, estado) {
+  const lower = texto.toLowerCase().trim();
+
+  if (lower === 'cancelar' || lower === 'sair' || lower === 'parar') {
+    limparTransferenciaPendente(usuarioId);
+    return '❌ Transferência cancelada.';
+  }
+
+  if (estado.fase === 'aguardando_valor') {
+    const valor = extrairValorDoTexto(texto);
+    if (!valor || valor <= 0) {
+      return `Não entendi o valor 😅 Me diz de novo (ex: "100" ou "R$ 100,00").`;
+    }
+    limparTransferenciaPendente(usuarioId);
+    return await handleTransferencia(usuarioId, { valor, conta_origem: estado.conta_origem || null, conta_destino: estado.conta_destino || null, descricao: estado.descricao || null });
+  }
+
+  if (estado.fase === 'aguardando_origem') {
+    const nome = texto.trim();
+    if (!nome || nome.length < 2) {
+      return `Me diz o nome da conta de origem 😅\n_Ex: "Conta Corrente", "Poupança", "Carteira"_`;
+    }
+    limparTransferenciaPendente(usuarioId);
+    return await handleTransferencia(usuarioId, { valor: estado.valor, conta_origem: nome, conta_destino: estado.conta_destino || null, descricao: estado.descricao || null });
+  }
+
+  if (estado.fase === 'aguardando_destino') {
+    const nome = texto.trim();
+    if (!nome || nome.length < 2) {
+      return `Me diz o nome da conta de destino 😅\n_Ex: "Conta Corrente", "Poupança", "Carteira"_`;
+    }
+    limparTransferenciaPendente(usuarioId);
+    return await handleTransferencia(usuarioId, { valor: estado.valor, conta_origem: estado.conta_origem || null, conta_destino: nome, descricao: estado.descricao || null });
+  }
+
+  // Estado inconsistente — encerra o fluxo
+  limparTransferenciaPendente(usuarioId);
+  return 'Algo deu errado na transferência 😅 Me manda *"transferir <valor> de <origem> para <destino>"* pra tentar de novo.';
+}
+
 function calcularDataPendente(dia) {
   const hoje = new Date();
   const ano = hoje.getFullYear();
@@ -9069,4 +9242,4 @@ function limparMapsExpirados() {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia };
