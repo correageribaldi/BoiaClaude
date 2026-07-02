@@ -691,6 +691,65 @@ async function initTables() {
     ALTER TABLE lembretes_gerais ADD COLUMN IF NOT EXISTS google_event_id TEXT;
     ALTER TABLE lembretes_recorrentes ADD COLUMN IF NOT EXISTS google_event_id TEXT;
   `);
+
+  // ─── Módulo de Contas (Marco 1) ─────────────────────────────────────────────
+
+  // Tabela de contas (Conta Corrente, Poupança, Carteira, etc) por usuário
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contas (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      tipo TEXT CHECK(tipo IN ('corrente', 'poupanca', 'carteira', 'investimento', 'outro')),
+      saldo_inicial NUMERIC(12,2) NOT NULL DEFAULT 0,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      padrao BOOLEAN NOT NULL DEFAULT FALSE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(usuario_id, nome)
+    );
+    CREATE INDEX IF NOT EXISTS idx_contas_usuario ON contas(usuario_id, ativo);
+  `);
+
+  // Tabela de transferências entre contas (fundação para Marco 3 — sem uso ainda)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transferencias (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      conta_origem_id INTEGER NOT NULL REFERENCES contas(id),
+      conta_destino_id INTEGER NOT NULL REFERENCES contas(id),
+      valor NUMERIC(12,2) NOT NULL CHECK(valor > 0),
+      descricao TEXT,
+      data DATE NOT NULL DEFAULT CURRENT_DATE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      CHECK(conta_origem_id <> conta_destino_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_transferencias_usuario ON transferencias(usuario_id, data);
+    CREATE INDEX IF NOT EXISTS idx_transferencias_origem ON transferencias(conta_origem_id);
+    CREATE INDEX IF NOT EXISTS idx_transferencias_destino ON transferencias(conta_destino_id);
+  `);
+
+  // Migração: coluna conta_id em transacoes (nullable — retrocompatível com os call sites existentes)
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS conta_id INTEGER REFERENCES contas(id);
+    CREATE INDEX IF NOT EXISTS idx_transacoes_conta_id ON transacoes(conta_id) WHERE conta_id IS NOT NULL;
+  `);
+
+  // Migração idempotente: cria "Conta Principal" para usuários que já têm transações
+  // e nunca tiveram nenhuma conta, e vincula as transações órfãs (conta_id NULL) a ela.
+  await pool.query(`
+    INSERT INTO contas (usuario_id, nome, saldo_inicial, padrao)
+    SELECT DISTINCT t.usuario_id, 'Conta Principal', 0, TRUE
+    FROM transacoes t
+    LEFT JOIN contas c ON c.usuario_id = t.usuario_id AND c.padrao = TRUE
+    WHERE c.id IS NULL
+    ON CONFLICT (usuario_id, nome) DO NOTHING;
+  `);
+  await pool.query(`
+    UPDATE transacoes t
+    SET conta_id = c.id
+    FROM contas c
+    WHERE c.usuario_id = t.usuario_id AND c.padrao = TRUE AND t.conta_id IS NULL;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -780,14 +839,14 @@ async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descrica
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status, cartaoId = null) {
+async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status, cartaoId = null, contaId = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, cartao_id, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, cartao_id, conta_id, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id, numero_usuario`,
-    [uid, tipo, valor, descricao, categoria || 'Outros', data || dataHojeBR(), status || 'pago', cartaoId || null]
+    [uid, tipo, valor, descricao, categoria || 'Outros', data || dataHojeBR(), status || 'pago', cartaoId || null, contaId || null]
   );
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
@@ -1290,16 +1349,55 @@ async function calcularSaldos(usuarioId) {
   const receitasPendentes = r.receitas_pendentes + receitasRecorrentes;
   const despesasPendentes = r.despesas_pendentes + despesasRecorrentes + faturaCartaoProjetada;
 
+  // 4. Saldo inicial das contas ativas do usuário (módulo de Contas — Marco 1)
+  const saldoInicialRes = await pool.query(
+    `SELECT COALESCE(SUM(saldo_inicial), 0)::float as total FROM contas WHERE usuario_id = $1 AND ativo = TRUE`,
+    [uid]
+  );
+  const saldoInicialContas = saldoInicialRes.rows[0].total;
+  const saldoAtualComContas = saldoAtual + saldoInicialContas;
+
   return {
-    saldoAtual,
-    saldoPrevisao: saldoAtual + receitasPendentes - despesasPendentes,
+    saldoAtual: saldoAtualComContas,
+    saldoPrevisao: saldoAtualComContas + receitasPendentes - despesasPendentes,
     receitasPagas:    r.receitas_pagas,
     despesasPagas:    r.despesas_pagas,
     receitasPendentes,
     despesasPendentes,
     totalCaixinhas,
-    patrimonio: saldoAtual + totalCaixinhas,
+    patrimonio: saldoAtualComContas + totalCaixinhas,
   };
+}
+
+// Calcula o saldo de cada conta ativa do usuário.
+// Transações com conta_id NULL (histórico anterior ao módulo de Contas) contam
+// para a conta marcada como padrão (fallback histórico).
+async function calcularSaldosPorConta(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT
+       c.id,
+       c.nome,
+       c.tipo,
+       (
+         c.saldo_inicial
+         + COALESCE((
+             SELECT SUM(CASE WHEN t.tipo = 'receita' THEN t.valor ELSE -t.valor END)
+             FROM transacoes t
+             WHERE t.usuario_id = $1
+               AND t.status = 'pago'
+               AND (
+                 t.conta_id = c.id
+                 OR (t.conta_id IS NULL AND c.padrao = TRUE)
+               )
+           ), 0)
+       )::float as saldo
+     FROM contas c
+     WHERE c.usuario_id = $1 AND c.ativo = TRUE
+     ORDER BY c.padrao DESC, c.nome ASC`,
+    [uid]
+  );
+  return result.rows;
 }
 
 // Buscar transações pendentes que vencem hoje ou já venceram (para lembretes)
@@ -1527,6 +1625,14 @@ async function registrarUsuario(usuarioId, nome) {
      ON CONFLICT (usuario_id) DO UPDATE SET nome = $2`,
     [uid, nome]
   );
+  // Garante que todo usuário tenha ao menos a "Conta Principal" (padrão), sem depender
+  // apenas da migração de boot — cobre o caso de usuário 100% novo (sem transações).
+  await pool.query(
+    `INSERT INTO contas (usuario_id, nome, saldo_inicial, padrao)
+     VALUES ($1, 'Conta Principal', 0, TRUE)
+     ON CONFLICT (usuario_id, nome) DO NOTHING`,
+    [uid]
+  );
 }
 
 // Buscar dados do usuário
@@ -1633,7 +1739,7 @@ async function listarCategoriasParaIA(usuarioId) {
 // Limpar todos os dados de um usuário (para testes)
 async function limparDadosUsuario(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  // transacoes tem FK para recorrencias e cartoes: deletar primeiro
+  // transacoes tem FK para recorrencias, cartoes e contas: deletar primeiro
   await pool.query('DELETE FROM transacoes WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM recorrencias WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM cartoes WHERE usuario_id = $1', [uid]);
@@ -1643,6 +1749,8 @@ async function limparDadosUsuario(usuarioId) {
   await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM caixinhas WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM contatos_compartilhados WHERE usuario_principal_id = $1 OR contato_id = $1', [uid]);
+  await pool.query('DELETE FROM transferencias WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM contas WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM usuarios WHERE usuario_id = $1', [uid]);
   return true;
 }
@@ -2576,6 +2684,48 @@ async function buscarCartoesPorNome(usuarioId, nome) {
     `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento
      FROM cartoes WHERE usuario_id = $1 AND nome ILIKE $2`,
     [uid, `%${nome}%`]
+  );
+  return res.rows;
+}
+
+// ─── Contas (Marco 2) ──────────────────────────────────────────────────────────
+
+async function criarConta(usuarioId, nome, tipo = null) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  try {
+    const res = await pool.query(
+      `INSERT INTO contas (usuario_id, nome, tipo)
+       VALUES ($1, $2, $3)
+       RETURNING id, nome, tipo, saldo_inicial::float, ativo, padrao`,
+      [uid, nome, tipo || null]
+    );
+    return res.rows[0];
+  } catch (err) {
+    if (err.code === '23505') { // unique_violation (usuario_id, nome)
+      throw new Error(`Você já tem uma conta chamada "${nome}".`);
+    }
+    throw err;
+  }
+}
+
+async function listarContas(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT id, nome, tipo, saldo_inicial::float, ativo, padrao
+     FROM contas WHERE usuario_id = $1 AND ativo = TRUE
+     ORDER BY padrao DESC, nome ASC`,
+    [uid]
+  );
+  return res.rows;
+}
+
+async function buscarContasPorNome(usuarioId, nomeParcial) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT id, nome, tipo, saldo_inicial::float, ativo, padrao
+     FROM contas WHERE usuario_id = $1 AND ativo = TRUE AND nome ILIKE $2
+     ORDER BY nome ASC`,
+    [uid, `%${nomeParcial}%`]
   );
   return res.rows;
 }
@@ -3541,6 +3691,10 @@ module.exports = {
   criarCartao,
   listarCartoes,
   buscarCartoesPorNome,
+  criarConta,
+  listarContas,
+  buscarContasPorNome,
+  calcularSaldosPorConta,
   atualizarCartao,
   deletarCartao,
   deletarCartaoCompleto,
