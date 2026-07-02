@@ -1372,6 +1372,10 @@ async function calcularSaldos(usuarioId) {
 // Calcula o saldo de cada conta ativa do usuário.
 // Transações com conta_id NULL (histórico anterior ao módulo de Contas) contam
 // para a conta marcada como padrão (fallback histórico).
+// Inclui o efeito das transferências (Marco 3): entra como destino, sai como origem.
+// O agregado total do usuário (calcularSaldos) não muda com transferências — elas
+// vivem em tabela própria e nunca tocam `transacoes`, então a soma líquida entre
+// contas do mesmo usuário é sempre zero no total.
 async function calcularSaldosPorConta(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -1390,6 +1394,14 @@ async function calcularSaldosPorConta(usuarioId) {
                  t.conta_id = c.id
                  OR (t.conta_id IS NULL AND c.padrao = TRUE)
                )
+           ), 0)
+         + COALESCE((
+             SELECT SUM(tr.valor) FROM transferencias tr
+             WHERE tr.usuario_id = $1 AND tr.conta_destino_id = c.id
+           ), 0)
+         - COALESCE((
+             SELECT SUM(tr.valor) FROM transferencias tr
+             WHERE tr.usuario_id = $1 AND tr.conta_origem_id = c.id
            ), 0)
        )::float as saldo
      FROM contas c
@@ -2730,6 +2742,60 @@ async function buscarContasPorNome(usuarioId, nomeParcial) {
   return res.rows;
 }
 
+// ─── Transferências entre contas (Marco 3) ─────────────────────────────────────
+// Saldo negativo na conta origem é PERMITIDO (mesmo comportamento de despesa comum).
+// Aqui só validamos que as contas existem e pertencem ao usuário — nada de saldo.
+
+async function criarTransferencia(usuarioId, contaOrigemId, contaDestinoId, valor, descricao = null, data = null) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  if (contaOrigemId === contaDestinoId) {
+    throw new Error('Conta de origem e destino não podem ser a mesma.');
+  }
+
+  try {
+    const res = await pool.query(
+      `INSERT INTO transferencias (usuario_id, conta_origem_id, conta_destino_id, valor, descricao, data)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, CURRENT_DATE))
+       RETURNING id, conta_origem_id, conta_destino_id, valor::float, descricao,
+                 TO_CHAR(data, 'YYYY-MM-DD') as data, criado_em`,
+      [uid, contaOrigemId, contaDestinoId, valor, descricao || null, data || null]
+    );
+    return res.rows[0];
+  } catch (err) {
+    if (err.code === '23503') { // foreign_key_violation (conta_origem_id/conta_destino_id inexistente)
+      throw new Error('Uma das contas informadas não existe.');
+    }
+    if (err.code === '23514') { // check_violation (mesma conta, ou valor <= 0)
+      throw new Error('Transferência inválida: verifique o valor e as contas informadas.');
+    }
+    throw err;
+  }
+}
+
+async function listarTransferencias(usuarioId, limite = 20) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT
+       tr.id,
+       tr.valor::float,
+       tr.descricao,
+       TO_CHAR(tr.data, 'YYYY-MM-DD') as data,
+       tr.conta_origem_id,
+       co.nome as conta_origem_nome,
+       tr.conta_destino_id,
+       cd.nome as conta_destino_nome
+     FROM transferencias tr
+     JOIN contas co ON co.id = tr.conta_origem_id
+     JOIN contas cd ON cd.id = tr.conta_destino_id
+     WHERE tr.usuario_id = $1
+     ORDER BY tr.data DESC, tr.id DESC
+     LIMIT $2`,
+    [uid, limite]
+  );
+  return res.rows;
+}
+
 async function atualizarCartao(usuarioId, cartaoId, campo, novoValor) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const camposPermitidos = ['nome', 'limite_total', 'dia_fechamento', 'dia_vencimento'];
@@ -3695,6 +3761,8 @@ module.exports = {
   listarContas,
   buscarContasPorNome,
   calcularSaldosPorConta,
+  criarTransferencia,
+  listarTransferencias,
   atualizarCartao,
   deletarCartao,
   deletarCartaoCompleto,
