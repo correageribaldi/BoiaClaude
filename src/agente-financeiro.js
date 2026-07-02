@@ -128,7 +128,8 @@ REGRAS IMPORTANTES:
 9. Para datas relativas: "hoje" = data de hoje, "ontem" = dia anterior, "amanhã" = dia seguinte. Converta para YYYY-MM-DD.
 10. Se o usuário disser "resetar", "começar do zero" ou "limpar tudo", NÃO execute — responda que ele precisa digitar o comando diretamente.
 11. Quando a tool retornar resultado, apresente de forma amigável e formatada para WhatsApp (negrito com *, itálico com _).
-12. Para criar conta (corrente, poupança, carteira, investimento), listar contas ou ver saldo de uma conta específica, chame as tools criar_conta, listar_contas ou saldo_conta IMEDIATAMENTE — não pedem confirmação. Se o usuário disser algo como "quero criar uma conta" sem informar o nome, chame criar_conta mesmo assim sem o parâmetro nome; a tool já devolve a pergunta pedindo o nome. A resposta da tool já vem pronta e formatada — repasse o texto dela ao usuário como sua resposta final, sem reescrever o conteúdo.`;
+12. Para criar conta (corrente, poupança, carteira, investimento), listar contas ou ver saldo de uma conta específica, chame as tools criar_conta, listar_contas ou saldo_conta IMEDIATAMENTE — não pedem confirmação. Se o usuário disser algo como "quero criar uma conta" sem informar o nome, chame criar_conta mesmo assim sem o parâmetro nome; a tool já devolve a pergunta pedindo o nome. A resposta da tool já vem pronta e formatada — repasse o texto dela ao usuário como sua resposta final, sem reescrever o conteúdo.
+13. Para mover dinheiro entre contas do próprio usuário (ex: "transferir 100 da conta corrente pra poupança", "mover 50 reais pra carteira", "passar 200 do Nubank pra poupança"), chame a tool transferir IMEDIATAMENTE — não pede confirmação. Se faltar valor, conta de origem ou conta de destino, chame mesmo assim com o que tiver informado; a tool já pergunta o que falta. Transferência NÃO é despesa nem receita — nunca use registrar_transacao para isso. Saldo negativo na conta de origem após a transferência é permitido, não bloqueie nem avise sobre isso.`;
 }
 
 // ── Tool definitions (OpenAI function calling) ───────────────────────────────
@@ -495,6 +496,21 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function', function: {
+      name: 'transferir',
+      description: 'Transferir um valor de uma conta para outra (ex: "transferir 100 da conta corrente pra poupança", "mover 50 reais pra carteira"). Se faltar valor, conta de origem ou conta de destino, chame mesmo assim com o que tiver — o sistema pergunta o que falta.',
+      parameters: {
+        type: 'object',
+        properties: {
+          valor: { type: 'number', description: 'Valor a transferir', nullable: true },
+          conta_origem: { type: 'string', description: 'Nome (ou parte do nome) da conta de origem', nullable: true },
+          conta_destino: { type: 'string', description: 'Nome (ou parte do nome) da conta de destino', nullable: true },
+          descricao: { type: 'string', description: 'Descrição opcional da transferência', nullable: true },
+        },
+      },
+    },
+  },
   // ── Gráficos ──
   {
     type: 'function', function: {
@@ -753,6 +769,16 @@ async function executeTool(usuarioId, toolName, args) {
     case 'saldo_conta': {
       const handlers = getHandlers();
       const msg = await handlers.handleSaldoConta(usuarioId, { conta_nome: args.conta_nome || null });
+      return { ok: true, msg };
+    }
+    case 'transferir': {
+      const handlers = getHandlers();
+      const msg = await handlers.handleTransferencia(usuarioId, {
+        valor: args.valor || null,
+        conta_origem: args.conta_origem || null,
+        conta_destino: args.conta_destino || null,
+        descricao: args.descricao || null,
+      });
       return { ok: true, msg };
     }
 
