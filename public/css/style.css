@@ -597,6 +597,14 @@ html:not([data-theme="light"]) .modal-box {
 .dash-list-body { padding: 0 16px 14px; }
 .empty-hint { color: var(--text-muted); font-size: 13px; text-align: center; padding: 12px 0; }
 
+/* Card de assinaturas — largura cheia, total em destaque no header */
+.dash-assinaturas-card { margin-bottom: 20px; }
+.dash-assinaturas-total {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
 /* Item de transação recente */
 .dash-tx-item {
   display: flex;

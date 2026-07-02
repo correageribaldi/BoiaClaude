@@ -385,6 +385,165 @@ function iconeTx(descricao, categoria, tipo) {
   return tipo === 'receita' ? '↑' : '↓';
 }
 
+// ── Card "Assinaturas" (Visão Geral) ───────────────────────────────────────────
+// Mapa curado de marcas → ícone SVG inline (sem CDN externo, funciona offline).
+// Para adicionar um serviço novo: acrescente uma entrada com `re` (regex que
+// identifica o nome, testada contra descrição E categoria da transação) e
+// `svg` (miolo do <svg>, sem a tag externa — cor/tamanho são aplicados no wrapper).
+const ASSINATURA_ICON_MAP = {
+  netflix: {
+    re: /netflix/i,
+    nome: 'Netflix',
+    color: '#E50914',
+    svg: '<path d="M5 3h3.2l7.6 18H12.6L5 3z" fill="currentColor"/><path d="M13.2 3H16v18h-2.8z" fill="currentColor" opacity=".55"/>',
+  },
+  spotify: {
+    re: /spotify/i,
+    nome: 'Spotify',
+    color: '#1DB954',
+    svg: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M6.5 9.8c3.2-.9 6.9-.7 9.6.9M7 13c2.6-.7 5.6-.5 7.9.8M7.5 16c2-.5 4.3-.4 6 .6" stroke="#fff" stroke-width="1.4" stroke-linecap="round" fill="none"/>',
+  },
+  youtube: {
+    re: /youtube|yt\s?premium/i,
+    nome: 'YouTube Premium',
+    color: '#FF0000',
+    svg: '<rect x="2" y="5" width="20" height="14" rx="4" fill="currentColor"/><path d="M10 9l6 3-6 3V9z" fill="#fff"/>',
+  },
+  primevideo: {
+    re: /prime\s?video|amazon\s?prime/i,
+    nome: 'Amazon Prime',
+    color: '#00A8E1',
+    svg: '<path d="M4 16c4 3 12 3 16 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M17 15.5c1.8-.3 3-.9 3-1.4 0-.6-1.7-1-3-1" fill="currentColor"/><circle cx="12" cy="9" r="5" fill="currentColor" opacity=".85"/>',
+  },
+  disneyplus: {
+    re: /disney(\s?\+|plus)?/i,
+    nome: 'Disney+',
+    color: '#113CCF',
+    svg: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M6 13c3-4 9-4 12 0" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round"/><circle cx="12" cy="9" r="1.6" fill="#fff"/>',
+  },
+  maxhbo: {
+    re: /\bhbo\b|\bmax\b/i,
+    nome: 'Max',
+    color: '#7B2FF7',
+    svg: '<rect x="2" y="2" width="20" height="20" rx="5" fill="currentColor"/><text x="12" y="16" font-size="10" font-weight="700" text-anchor="middle" fill="#fff">MAX</text>',
+  },
+  apple: {
+    re: /apple\s?(tv|music|one)?|icloud/i,
+    nome: 'Apple',
+    color: '#A3A3A3',
+    svg: '<path d="M16.5 12.4c0-2.1 1.7-3.1 1.8-3.2-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.7-3.1.7-.6 0-1.6-.7-2.7-.7-1.4 0-2.7.8-3.4 2-1.5 2.5-.4 6.3 1.1 8.3.7 1 1.6 2.1 2.7 2 1.1 0 1.5-.7 2.8-.7s1.7.7 2.8.7c1.2 0 1.9-1 2.6-2 .8-1.2 1.2-2.3 1.2-2.4-.1 0-2.8-1.1-2.8-4.1z" fill="currentColor"/><path d="M14.8 5.8c.6-.7 1-1.7.9-2.7-.9 0-1.9.6-2.5 1.3-.5.6-1 1.6-.9 2.6 1 .1 1.9-.5 2.5-1.2z" fill="currentColor"/>',
+  },
+  google: {
+    re: /google\s?(one|storage)?/i,
+    nome: 'Google One',
+    color: '#4285F4',
+    svg: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M12 10.2v3.6h5c-.2 1.2-1.6 3.6-5 3.6-3 0-5.4-2.5-5.4-5.4S9 6.6 12 6.6c1.7 0 2.8.7 3.5 1.3l2.4-2.3C16.4 4.3 14.4 3.4 12 3.4 6.9 3.4 2.8 7.5 2.8 12.6S6.9 21.8 12 21.8c6.9 0 9.3-4.8 9.3-8.5 0-.6-.1-1-.2-1.5H12z" fill="#fff"/>',
+  },
+  globoplay: {
+    re: /globoplay/i,
+    nome: 'Globoplay',
+    color: '#FF3366',
+    svg: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M8 8l8 4-8 4V8z" fill="#fff"/>',
+  },
+  ifood: {
+    re: /ifood|i-food/i,
+    nome: 'iFood',
+    color: '#EA1D2C',
+    svg: '<rect x="2" y="2" width="20" height="20" rx="10" fill="currentColor"/><path d="M8 8h8M8 12h8M8 16h5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+  },
+  openai: {
+    re: /chatgpt|open\s?ai|gpt(-|\s)?(4|5|plus)/i,
+    nome: 'ChatGPT',
+    color: '#10A37F',
+    svg: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M9 8.5l6 3.5-6 3.5v-7z" fill="#fff"/>',
+  },
+  amazon: {
+    re: /amazon(?!\s?prime)/i,
+    nome: 'Amazon',
+    color: '#FF9900',
+    svg: '<path d="M4 16c4 3 12 3 16 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M17 15.5c1.8-.3 3-.9 3-1.4 0-.6-1.7-1-3-1" fill="currentColor"/><circle cx="12" cy="9" r="5" fill="currentColor" opacity=".85"/>',
+  },
+};
+
+// Fallback genérico para assinatura sem marca reconhecida (ícone "repeat").
+const ASSINATURA_ICON_FALLBACK = {
+  nome: null,
+  color: '#8a8aa0',
+  svg: '<path d="M17 2l4 4-4 4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11V9a4 4 0 0 1 4-4h14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 22l-4-4 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 13v2a4 4 0 0 1-4 4H3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+
+/** Acha a entrada do mapa de marcas que casa com o texto (descrição ou categoria). */
+function _matchAssinaturaMarca(texto) {
+  const t = (texto || '');
+  for (const key in ASSINATURA_ICON_MAP) {
+    if (ASSINATURA_ICON_MAP[key].re.test(t)) return ASSINATURA_ICON_MAP[key];
+  }
+  return null;
+}
+
+/**
+ * Verifica se uma transação deve ser tratada como assinatura:
+ * - bate com alguma marca curada do ASSINATURA_ICON_MAP (descrição OU categoria), OU
+ * - descrição/categoria contém literalmente a palavra "assinatura".
+ */
+function ehAssinatura(descricao, categoria) {
+  const desc = descricao || '';
+  const cat = categoria || '';
+  if (_matchAssinaturaMarca(desc) || _matchAssinaturaMarca(cat)) return true;
+  return /assinatura/i.test(desc) || /assinatura/i.test(cat);
+}
+
+/** Retorna { svg, color, nome } para exibir no card de Assinaturas. */
+function iconeAssinatura(descricao, categoria) {
+  const marca = _matchAssinaturaMarca(descricao) || _matchAssinaturaMarca(categoria);
+  return marca || ASSINATURA_ICON_FALLBACK;
+}
+
+function _svgAssinatura(entry) {
+  return `<svg width="18" height="18" viewBox="0 0 24 24" style="color:${entry.color}">${entry.svg}</svg>`;
+}
+
+async function carregarAssinaturas() {
+  const el = document.getElementById('dash-assinaturas');
+  const elTotal = document.getElementById('dash-assinaturas-total');
+  if (!el) return;
+  try {
+    const { mes, ano } = estado.dash;
+    const mesStr = String(mes).padStart(2, '0');
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    const dataInicio = `${ano}-${mesStr}-01`;
+    const dataFim = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
+    const txs = await api(`/api/transactions?tipo=despesa&dataInicio=${dataInicio}&dataFim=${dataFim}&limite=1000`);
+    const lista = Array.isArray(txs) ? txs : [];
+    const assinaturas = lista.filter(t => ehAssinatura(t.descricao, t.categoria));
+
+    const total = assinaturas.reduce((soma, t) => soma + Number(t.valor || 0), 0);
+    if (elTotal) elTotal.textContent = fmtMoeda(total);
+
+    if (assinaturas.length === 0) {
+      el.innerHTML = '<p class="empty-hint">Nenhuma assinatura no mês.</p>';
+      return;
+    }
+
+    el.innerHTML = assinaturas.map(t => {
+      const entry = iconeAssinatura(t.descricao, t.categoria);
+      const nomeExibido = entry.nome || t.descricao || 'Assinatura';
+      return `<div class="dash-tx-item">
+        <div class="dash-tx-icon despesa">${_svgAssinatura(entry)}</div>
+        <div class="dash-tx-info">
+          <div class="dash-tx-desc">${nomeExibido}</div>
+          <div class="dash-tx-meta">${fmtData(t.data)}</div>
+        </div>
+        <div class="dash-tx-valor despesa">${fmtMoeda(t.valor)}</div>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    console.error('[DASH] Erro carregarAssinaturas:', err);
+    if (elTotal) elTotal.textContent = '—';
+    el.innerHTML = '<p class="empty-hint">Erro ao carregar.</p>';
+  }
+}
+
 // ── Estado global ─────────────────────────────────────────────────────────────
 const estado = {
   dash: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear() },
@@ -760,7 +919,7 @@ async function pagarTransacao(id) {
     await api(`/api/transactions/${id}/pagar`, { method: 'PUT' });
     toast('✅ Marcada como paga!', 'success');
     carregarTransacoes();
-    if (tabAtual === 'dashboard') carregarDashboard();
+    if (tabAtual === 'dashboard') { carregarDashboard(); carregarAssinaturas(); }
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -810,7 +969,7 @@ async function salvarEdicaoTx() {
     toast('✅ Transação atualizada!', 'success');
     fecharModalEditar();
     carregarTransacoes();
-    if (tabAtual === 'dashboard') carregarDashboard();
+    if (tabAtual === 'dashboard') { carregarDashboard(); carregarAssinaturas(); }
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -834,7 +993,7 @@ async function excluirTransacao(id) {
         }
         toast('Transação excluída.', 'success');
         carregarTransacoes();
-        if (tabAtual === 'dashboard') carregarDashboard();
+        if (tabAtual === 'dashboard') { carregarDashboard(); carregarAssinaturas(); }
         return;
       }
     }
@@ -846,7 +1005,7 @@ async function excluirTransacao(id) {
     }
     toast('Transação excluída.', 'success');
     carregarTransacoes();
-    if (tabAtual === 'dashboard') carregarDashboard();
+    if (tabAtual === 'dashboard') { carregarDashboard(); carregarAssinaturas(); }
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -864,7 +1023,7 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
     }
     toast('Transação excluída.', 'success');
     carregarTransacoes();
-    if (tabAtual === 'dashboard') carregarDashboard();
+    if (tabAtual === 'dashboard') { carregarDashboard(); carregarAssinaturas(); }
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -1815,6 +1974,7 @@ function ativarTab(tab) {
     carregarDashboard();
     carregarUltimasTx();
     carregarProximosLembretes();
+    carregarAssinaturas();
   }
   if (tab === 'transactions') carregarTransacoes();
   if (tab === 'categories') carregarCategorias();
@@ -1964,10 +2124,10 @@ function inicializar() {
 
   // Dashboard nav
   document.getElementById('dash-prev')?.addEventListener('click', () => {
-    const e = estado.dash; e.mes--; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarDashboard();
+    const e = estado.dash; e.mes--; if (e.mes < 1) { e.mes = 12; e.ano--; } carregarDashboard(); carregarAssinaturas();
   });
   document.getElementById('dash-next')?.addEventListener('click', () => {
-    const e = estado.dash; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarDashboard();
+    const e = estado.dash; e.mes++; if (e.mes > 12) { e.mes = 1; e.ano++; } carregarDashboard(); carregarAssinaturas();
   });
 
   // Alertas de atrasados → ir para transações pendentes
@@ -2364,7 +2524,7 @@ async function salvarNovaTx() {
     fecharModalNovaTx();
     _categoriasCache = null; // Invalidate cache
     carregarTransacoes();
-    if (tabAtual === 'dashboard') carregarDashboard();
+    if (tabAtual === 'dashboard') { carregarDashboard(); carregarAssinaturas(); }
   } catch (err) { toast(err.message, 'error'); }
 }
 
