@@ -150,6 +150,7 @@ const TOOLS = [
           data: { type: 'string', description: 'Data no formato YYYY-MM-DD ou null para hoje', nullable: true },
           status: { type: 'string', enum: ['pago', 'pendente'], description: 'Se já foi pago ou é pendente' },
           cartao_nome: { type: 'string', description: 'Nome do cartão de crédito se aplicável', nullable: true },
+          conta_nome: { type: 'string', description: 'Nome da conta (corrente, poupança, carteira) SOMENTE se o usuário mencionar explicitamente. Não inventar/assumir.', nullable: true },
           parcelas: { type: 'integer', description: 'Número de parcelas (1 se à vista)', default: 1 },
         },
         required: ['tipo', 'valor', 'descricao', 'categoria', 'status'],
@@ -571,19 +572,32 @@ async function executeTool(usuarioId, toolName, args) {
   switch (toolName) {
     // Transações
     case 'registrar_transacao': {
-      const { tipo, valor, descricao, categoria, data, status, cartao_nome, parcelas } = args;
+      const { tipo, valor, descricao, categoria, data, status, cartao_nome, conta_nome, parcelas } = args;
       let cartaoId = null;
       if (cartao_nome) {
         const cartoes = await db.listarCartoes(usuarioId);
         const cartao = cartoes.find(c => c.nome.toLowerCase().includes(cartao_nome.toLowerCase()));
         if (cartao) cartaoId = cartao.id;
       }
+      // Resolver conta_nome → contaId (reusa a mesma lógica de desambiguação do Marco 3).
+      // Se não encontrar ou for ambíguo, NÃO bloqueia o registro — cai no fallback de conta padrão.
+      let contaId = null;
+      let avisoConta = '';
+      if (conta_nome) {
+        const handlers = getHandlers();
+        const resolvida = await handlers.resolverContaPorNome(usuarioId, conta_nome);
+        if (resolvida.conta) {
+          contaId = resolvida.conta.id;
+        } else {
+          avisoConta = `\n_obs: não encontrei a conta "${conta_nome}", lancei na conta principal._`;
+        }
+      }
       if (parcelas && parcelas > 1) {
         const result = await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, data || null, cartaoId, parcelas);
-        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}` };
+        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}${avisoConta}` };
       }
-      await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data || null, status || 'pago', cartaoId);
-      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})` };
+      await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data || null, status || 'pago', cartaoId, contaId);
+      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})${avisoConta}` };
     }
     case 'consultar_transacoes': {
       const txs = await db.consultarTransacoes(usuarioId, {

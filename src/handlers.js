@@ -3772,6 +3772,20 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
       }
     }
 
+    // Resolver conta_nome → contaId (reusa a mesma lógica de desambiguação do Marco 3).
+    // NUNCA bloqueia o registro da transação: se não encontrar ou for ambíguo,
+    // cai no fallback de conta padrão (contaId fica null) e apenas avisa na resposta.
+    let contaId = null;
+    let avisoConta = '';
+    if (resultado.conta_nome) {
+      const contaResolvida = await resolverContaPorNome(usuarioId, resultado.conta_nome);
+      if (contaResolvida.conta) {
+        contaId = contaResolvida.conta.id;
+      } else {
+        avisoConta = `\n_obs: não encontrei a conta "${resultado.conta_nome}", lancei na Conta Principal._`;
+      }
+    }
+
     // Verificar se a compra foi feita em um cartão de crédito cadastrado
     let cartaoId = null;
     if (tipo === 'despesa') {
@@ -3797,7 +3811,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
 
       // Compra parcelada com cartão já identificado
       if (parcelas > 1 && cartaoId) {
-        return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas);
+        return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas, avisoConta);
       }
 
       // Parcelado sem cartão e sem cartões cadastrados → salvar direto em conta corrente
@@ -3813,7 +3827,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
           return pergunta;
         }
         // Sem cartões cadastrados → salvar parcelado direto em conta corrente
-        return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, null, parcelas);
+        return await salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, null, parcelas, avisoConta);
       }
 
       // Se não identificou cartão e a despesa já tem valor, perguntar se foi no cartão
@@ -3836,7 +3850,7 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
       }
     }
 
-    return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
+    return await salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId, contaId, avisoConta);
   }
 
   // Múltiplas transações via IA
@@ -3963,7 +3977,7 @@ function handleConsultaFuncionalidade(funcionalidade) {
   return `Hmm, ainda não tenho essa funcionalidade disponível 😅\n\nSe quiser, pode sugerir! O Cronos está sempre evoluindo. 🚀\n\nAlgumas coisas que já faço: áudio, foto de boleto, CSV, cartão de crédito, lembretes, caixinhas, análise financeira e muito mais.`;
 }
 
-async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas) {
+async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, dataFinal, cartaoId, parcelas, avisoConta = '') {
   const dataBase = dataFinal || dataHojeBRISO();
   await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, dataBase, cartaoId, parcelas);
 
@@ -3986,17 +4000,18 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
     `💵 Total: ${fmt.formatarMoeda(valor)}\n📋 *Parcelas:*\n${listaParcelas}`;
 
   msg += '\n💡 _Para ver suas despesas, tente:_\n_"minhas despesas", "despesas desse mês" ou "resumo"_';
+  msg += avisoConta || '';
 
   return msg;
 }
 
-async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null) {
+async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId = null, contaId = null, avisoConta = '') {
   // Sanitizar categoria: tratar string "null"/"undefined"/vazia como null real
   if (!categoria || categoria === 'null' || categoria === 'undefined') categoria = 'Outros';
   // Auto-criar subcategoria vinculada se for nova
   if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
 
-  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId);
+  const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId, contaId);
   const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
 
   let emoji, label;
@@ -4027,6 +4042,8 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
   } else {
     msg += '\n\n💡 _Para ver suas receitas, tente:_\n_"minhas receitas", "receitas desse mês" ou "resumo"_';
   }
+
+  msg += avisoConta || '';
 
   return msg;
 }
@@ -9242,4 +9259,4 @@ function limparMapsExpirados() {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia, resolverContaPorNome };
