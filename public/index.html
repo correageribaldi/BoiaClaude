@@ -741,6 +741,10 @@
       <label style="color:var(--text-muted);font-size:13px">Parcelas (1 = à vista)</label>
       <input type="number" id="nova-tx-parcelas" class="input" min="1" max="48" value="1" placeholder="1">
     </div>
+    <div id="nova-tx-conta-wrap" class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Conta</label>
+      <select id="nova-tx-conta" class="input"></select>
+    </div>
     <div id="nova-tx-cartao-wrap" class="form-group" style="margin-bottom:16px">
       <label style="color:var(--text-muted);font-size:13px">Cartão (opcional)</label>
       <select id="nova-tx-cartao" class="input"><option value="">Nenhum</option></select>
@@ -1072,6 +1076,10 @@
     <div class="form-group" style="margin-bottom:16px">
       <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
       <input type="number" id="editar-tx-valor" class="input" step="0.01" min="0" placeholder="0,00">
+    </div>
+    <div id="editar-tx-conta-wrap" class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Conta</label>
+      <select id="editar-tx-conta" class="input"></select>
     </div>
     <div class="form-group" style="margin-bottom:24px">
       <label style="color:var(--text-muted);font-size:13px">Data</label>

@@ -691,7 +691,7 @@ function renderTabelaTransacoes(transacoes) {
       }</td>
       <td style="white-space:nowrap">
         ${!t.projetado && t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
-        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data})})'>✏️</button>` : ''}
+        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data,conta_id:t.conta_id||null})})'>✏️</button>` : ''}
         ${t.projetado
           ? `<button class="action-btn" title="Excluir" onclick="excluirProjetado(${t.recorrencia_id}, '${esc(t.descricao)}', '${t.data}')">🗑️</button>`
           : `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>`
@@ -775,6 +775,7 @@ async function carregarCategoriasSelect() {
 
 async function abrirModalEditar(tx) {
   await carregarCategoriasSelect();
+  await _carregarContasSelect('editar-tx-conta');
   document.getElementById('editar-tx-id').value = tx.id;
   document.getElementById('editar-tx-descricao').value = tx.descricao;
   document.getElementById('editar-tx-valor').value = tx.valor;
@@ -785,6 +786,8 @@ async function abrirModalEditar(tx) {
     sel.innerHTML += `<option value="${esc(tx.categoria)}">${esc(tx.categoria)}</option>`;
     sel.value = tx.categoria;
   }
+  const contaSel = document.getElementById('editar-tx-conta');
+  if (contaSel && tx.conta_id) contaSel.value = tx.conta_id;
   document.getElementById('modal-editar-tx').classList.remove('hidden');
 }
 
@@ -794,15 +797,18 @@ function fecharModalEditar() {
 
 async function salvarEdicaoTx() {
   const id = parseInt(document.getElementById('editar-tx-id').value);
+  const conta_id = document.getElementById('editar-tx-conta').value;
   const campos = {
     descricao: document.getElementById('editar-tx-descricao').value.trim(),
     categoria: document.getElementById('editar-tx-categoria').value,
     valor: parseFloat(document.getElementById('editar-tx-valor').value),
     data: document.getElementById('editar-tx-data').value,
+    conta_id: conta_id ? parseInt(conta_id) : null,
   };
   if (!campos.descricao) { toast('Descrição não pode ser vazia', 'error'); return; }
   if (!campos.valor || campos.valor <= 0) { toast('Valor inválido', 'error'); return; }
   if (!campos.data) { toast('Data inválida', 'error'); return; }
+  if (!campos.conta_id) { toast('Selecione uma conta', 'error'); return; }
   try {
     for (const [campo, novo_valor] of Object.entries(campos)) {
       await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify({ campo, novo_valor }) });
@@ -2397,6 +2403,18 @@ async function _carregarCartoesSelect() {
   }
 }
 
+async function _carregarContasSelect(selectId) {
+  if (!_contasCache.length) {
+    try { _contasCache = await api('/api/contas'); } catch { _contasCache = []; }
+  }
+  const sel = document.getElementById(selectId);
+  if (sel) {
+    sel.innerHTML = _contasCache.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('');
+    const contaPadrao = _contasCache.find(c => c.padrao);
+    if (contaPadrao) sel.value = contaPadrao.id;
+  }
+}
+
 async function abrirModalNovaTx() {
   await carregarCategoriasSelect();
   // Copy categories to nova-tx select
@@ -2404,6 +2422,7 @@ async function abrirModalNovaTx() {
   const novaSel = document.getElementById('nova-tx-categoria');
   if (editSel && novaSel) novaSel.innerHTML = editSel.innerHTML;
   await _carregarCartoesSelect();
+  await _carregarContasSelect('nova-tx-conta');
 
   // Set defaults
   _novaTxTipo = 'despesa';
@@ -2443,12 +2462,14 @@ async function salvarNovaTx() {
   const categoria = document.getElementById('nova-tx-categoria').value;
   const data = document.getElementById('nova-tx-data').value;
   const cartao_id = document.getElementById('nova-tx-cartao').value || null;
+  const conta_id = document.getElementById('nova-tx-conta').value || null;
   const parcelas = parseInt(document.getElementById('nova-tx-parcelas').value) || 1;
   const isRecorrente = document.getElementById('nova-tx-recorrente')?.checked;
 
   if (!descricao) { toast('Preencha a descrição', 'error'); return; }
   if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
   if (!data) { toast('Selecione uma data', 'error'); return; }
+  if (!conta_id) { toast('Selecione uma conta', 'error'); return; }
 
   try {
     if (isRecorrente) {
@@ -2490,6 +2511,7 @@ async function salvarNovaTx() {
           data,
           status: _novaTxStatus,
           cartao_id: cartao_id ? parseInt(cartao_id) : null,
+          conta_id: conta_id ? parseInt(conta_id) : null,
           parcelas,
         }),
       });
