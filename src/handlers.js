@@ -641,12 +641,18 @@ async function resolverBudgetCategoria(categoria) {
   return aiClassified;
 }
 
-// Auto-criar subcategoria vinculada se a IA usou uma categoria nova
-async function garantirSubcategoriaVinculada(usuarioId, categoria) {
+// Auto-criar subcategoria vinculada se a IA usou uma categoria nova.
+// tipo: 'despesa' (default) usa a classificação de bucket de orçamento (50/30/20).
+// tipo: 'receita' vincula direto à categoria principal "Receitas" (lista simples, sem bucket).
+async function garantirSubcategoriaVinculada(usuarioId, categoria, tipo = 'despesa') {
   if (!categoria) return;
+  if (tipo === 'receita') {
+    await db.garantirSubcategoria(usuarioId, categoria, db.CATEGORIA_PRINCIPAL_RECEITA.nome, 'receita');
+    return;
+  }
   const budgetCat = await resolverBudgetCategoria(categoria);
   if (budgetCat && budgetCat !== categoria) {
-    await db.garantirSubcategoria(usuarioId, categoria, budgetCat);
+    await db.garantirSubcategoria(usuarioId, categoria, budgetCat, 'despesa');
   }
 }
 
@@ -2379,7 +2385,7 @@ async function handleTransacao(usuarioId, msg) {
   }
 
   // Auto-criar subcategoria se necessária
-  if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
+  if (categoria) await garantirSubcategoriaVinculada(usuarioId, categoria, tipo);
 
   const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data);
   const emoji = tipo === 'receita' ? '✅💰' : '✅💸';
@@ -3158,8 +3164,8 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
       }
 
       const tipoFinal = itemTipo || 'despesa';
-      if (tipoFinal === 'despesa' && itemCategoria) {
-        await garantirSubcategoriaVinculada(usuarioId, itemCategoria);
+      if (itemCategoria) {
+        await garantirSubcategoriaVinculada(usuarioId, itemCategoria, tipoFinal);
       }
       const result = await db.adicionarTransacao(usuarioId, tipoFinal, itemValor, itemDescricao, itemCategoria, itemData, status);
       const dataExibir = itemData ? fmt.formatarData(itemData) : 'Hoje';
@@ -3195,7 +3201,7 @@ async function handleConfirmacaoImagem(usuarioId, resposta, dados) {
   const { tipo, valor, descricao, categoria, data } = dados;
 
   // Auto-criar subcategoria vinculada se for nova
-  if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
+  if (categoria) await garantirSubcategoriaVinculada(usuarioId, categoria, tipo);
 
   const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data, status);
   const dataExibir = data ? fmt.formatarData(data) : 'Hoje';
@@ -4009,7 +4015,7 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
   // Sanitizar categoria: tratar string "null"/"undefined"/vazia como null real
   if (!categoria || categoria === 'null' || categoria === 'undefined') categoria = 'Outros';
   // Auto-criar subcategoria vinculada se for nova
-  if (tipo === 'despesa' && categoria) await garantirSubcategoriaVinculada(usuarioId, categoria);
+  if (categoria) await garantirSubcategoriaVinculada(usuarioId, categoria, tipo);
 
   const result = await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, dataFinal, statusFinal, cartaoId, contaId);
   const dataExibir = dataFinal ? fmt.formatarData(dataFinal) : 'Hoje';
@@ -9259,4 +9265,4 @@ function limparMapsExpirados() {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia, resolverContaPorNome };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia, resolverContaPorNome, garantirSubcategoriaVinculada };
