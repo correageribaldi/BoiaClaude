@@ -1792,6 +1792,48 @@ async function listarCategoriasParaIA(usuarioId, tipo = 'despesa') {
   return partes.join(', ');
 }
 
+// Retorna array plano de nomes de subcategoria (ou categoria principal, se não tiver
+// subcategorias) do usuário, filtrado por tipo — usado para popular <select> no painel web.
+// Mesma fonte de dados usada pela IA (categorias_principais/limites_categoria), diferente
+// da tabela global legada "categorias".
+async function listarSubcategoriasPorTipo(usuarioId, tipo = 'despesa') {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const catsPrincipais = await pool.query(
+    `SELECT nome FROM categorias_principais
+     WHERE usuario_id = $1 AND ativo = TRUE AND (tipo = $2 OR tipo = 'ambos')
+     ORDER BY ordem, nome`,
+    [uid, tipo]
+  );
+  if (catsPrincipais.rows.length === 0) {
+    return await listarCategorias();
+  }
+
+  const subs = await pool.query(
+    `SELECT categoria, parent FROM limites_categoria
+     WHERE usuario_id = $1 AND ativo = TRUE AND parent IS NOT NULL
+       AND (tipo = $2 OR tipo = 'ambos' OR (tipo IS NULL AND $2 = 'despesa'))
+     ORDER BY parent, categoria`,
+    [uid, tipo]
+  );
+
+  const subMap = {};
+  for (const s of subs.rows) {
+    if (!subMap[s.parent]) subMap[s.parent] = [];
+    subMap[s.parent].push(s.categoria);
+  }
+
+  const nomes = [];
+  for (const cp of catsPrincipais.rows) {
+    const filhas = subMap[cp.nome] || [];
+    if (filhas.length > 0) {
+      nomes.push(...filhas);
+    } else {
+      nomes.push(cp.nome);
+    }
+  }
+  return nomes;
+}
+
 // Limpar todos os dados de um usuário (para testes)
 async function limparDadosUsuario(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
@@ -3822,6 +3864,7 @@ module.exports = {
   desativarRecorrencia,
   listarCategorias,
   listarCategoriasParaIA,
+  listarSubcategoriasPorTipo,
   consultarTransacoes,
   consultarTotalTransacoes,
   liquidarTransacao,

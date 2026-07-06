@@ -691,7 +691,7 @@ function renderTabelaTransacoes(transacoes) {
       }</td>
       <td style="white-space:nowrap">
         ${!t.projetado && t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
-        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data,conta_id:t.conta_id||null})})'>✏️</button>` : ''}
+        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data,conta_id:t.conta_id||null,tipo:t.tipo})})'>✏️</button>` : ''}
         ${t.projetado
           ? `<button class="action-btn" title="Excluir" onclick="excluirProjetado(${t.recorrencia_id}, '${esc(t.descricao)}', '${t.data}')">🗑️</button>`
           : `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>`
@@ -764,27 +764,41 @@ async function pagarTransacao(id) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
-let _categoriasCache = null;
-async function carregarCategoriasSelect() {
-  if (!_categoriasCache) {
-    try { _categoriasCache = await api('/api/categories'); } catch { _categoriasCache = []; }
+let _categoriasCache = { despesa: null, receita: null };
+async function _buscarCategoriasPorTipo(tipo) {
+  const t = tipo === 'receita' ? 'receita' : 'despesa';
+  if (!_categoriasCache[t]) {
+    try { _categoriasCache[t] = await api(`/api/categories?tipo=${t}`); } catch { _categoriasCache[t] = []; }
   }
-  const sel = document.getElementById('editar-tx-categoria');
-  sel.innerHTML = _categoriasCache.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  return _categoriasCache[t];
+}
+
+// selectId: id do <select> a popular. tipo: 'despesa' | 'receita'.
+async function carregarCategoriasSelect(selectId = 'editar-tx-categoria', tipo = 'despesa') {
+  const lista = await _buscarCategoriasPorTipo(tipo);
+  const sel = document.getElementById(selectId);
+  if (sel) sel.innerHTML = lista.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  return lista;
 }
 
 async function abrirModalEditar(tx) {
-  await carregarCategoriasSelect();
+  const tipo = tx.tipo === 'receita' ? 'receita' : 'despesa';
+  await carregarCategoriasSelect('editar-tx-categoria', tipo);
   await _carregarContasSelect('editar-tx-conta');
   document.getElementById('editar-tx-id').value = tx.id;
   document.getElementById('editar-tx-descricao').value = tx.descricao;
   document.getElementById('editar-tx-valor').value = tx.valor;
   document.getElementById('editar-tx-data').value = tx.data;
   const sel = document.getElementById('editar-tx-categoria');
-  sel.value = tx.categoria;
-  if (!sel.value && tx.categoria) {
-    sel.innerHTML += `<option value="${esc(tx.categoria)}">${esc(tx.categoria)}</option>`;
+  if (tx.categoria) {
     sel.value = tx.categoria;
+    if (!sel.value) {
+      // Categoria antiga/customizada real que não está na lista carregada — preserva o valor.
+      sel.innerHTML += `<option value="${esc(tx.categoria)}">${esc(tx.categoria)}</option>`;
+      sel.value = tx.categoria;
+    }
+  } else {
+    sel.selectedIndex = sel.options.length ? 0 : -1;
   }
   const contaSel = document.getElementById('editar-tx-conta');
   if (contaSel && tx.conta_id) contaSel.value = tx.conta_id;
@@ -2368,6 +2382,7 @@ function toggleNovaTxTipo(btn) {
   // Mostrar/esconder cartão wrap quando for despesa
   const cartaoWrap = document.getElementById('nova-tx-cartao-wrap');
   if (cartaoWrap) cartaoWrap.classList.toggle('hidden', _novaTxTipo !== 'despesa');
+  carregarCategoriasSelect('nova-tx-categoria', _novaTxTipo);
 }
 
 function toggleNovaTxStatus(btn) {
@@ -2416,11 +2431,7 @@ async function _carregarContasSelect(selectId) {
 }
 
 async function abrirModalNovaTx() {
-  await carregarCategoriasSelect();
-  // Copy categories to nova-tx select
-  const editSel = document.getElementById('editar-tx-categoria');
-  const novaSel = document.getElementById('nova-tx-categoria');
-  if (editSel && novaSel) novaSel.innerHTML = editSel.innerHTML;
+  await carregarCategoriasSelect('nova-tx-categoria', 'despesa');
   await _carregarCartoesSelect();
   await _carregarContasSelect('nova-tx-conta');
 
@@ -2808,6 +2819,7 @@ function toggleRecTipo(btn) {
   btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   _recTipo = btn.dataset.val;
+  carregarCategoriasSelect('rec-categoria', _recTipo);
 }
 
 function toggleRecFreqFields() {
@@ -2817,12 +2829,9 @@ function toggleRecFreqFields() {
 }
 
 async function abrirModalNovaRecorrencia() {
-  await carregarCategoriasSelect();
-  const editSel = document.getElementById('editar-tx-categoria');
-  const recSel = document.getElementById('rec-categoria');
-  if (editSel && recSel) recSel.innerHTML = editSel.innerHTML;
-
   _recTipo = 'despesa';
+  await carregarCategoriasSelect('rec-categoria', _recTipo);
+
   document.getElementById('rec-descricao').value = '';
   document.getElementById('rec-valor').value = '';
   document.getElementById('rec-frequencia').value = 'mensal';

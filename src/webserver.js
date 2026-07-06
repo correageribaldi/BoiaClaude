@@ -467,8 +467,16 @@ app.delete('/api/categorias-principais/:id', autenticar, async (req, res) => {
 });
 
 // ── Categorias ────────────────────────────────────────────────────────────────
+// Sem ?tipo: mantém comportamento legado (lista global, sem usuário/tipo) para não
+// quebrar call sites existentes. Com ?tipo=despesa|receita: retorna as subcategorias
+// (ou categorias principais sem subcategoria) do usuário logado, já filtradas por tipo —
+// mesma fonte usada pela IA (categorias_principais/limites_categoria).
 app.get('/api/categories', autenticar, async (req, res) => {
   try {
+    const { tipo } = req.query;
+    if (tipo === 'despesa' || tipo === 'receita') {
+      return res.json(await db.listarSubcategoriasPorTipo(req.usuarioId, tipo));
+    }
     res.json(await db.listarCategorias());
   } catch (err) {
     res.status(500).json({ erro: err.message });

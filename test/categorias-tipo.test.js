@@ -135,6 +135,72 @@ test('listarCategoriasParaIA: subcategoria legada com tipo NULL é tratada como 
   assert.ok(resultado.includes('Uber'));
 });
 
+// ── listarSubcategoriasPorTipo (fonte do <select> de categoria no painel web) ─
+
+test('listarSubcategoriasPorTipo: retorna subcategorias filtradas por tipo=despesa (default)', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql, params) => {
+    if (sql.includes('FROM categorias_principais')) {
+      assert.equal(params[1], 'despesa');
+      return { rows: [{ nome: 'Variáveis' }] };
+    }
+    if (sql.includes('FROM limites_categoria')) {
+      assert.equal(params[1], 'despesa');
+      return { rows: [{ categoria: 'Alimentação', parent: 'Variáveis' }, { categoria: 'Transporte', parent: 'Variáveis' }] };
+    }
+    return { rows: [] };
+  });
+
+  const resultado = await db.listarSubcategoriasPorTipo('user1@c.us');
+  assert.deepEqual(resultado, ['Alimentação', 'Transporte']);
+});
+
+test('listarSubcategoriasPorTipo: filtra por tipo=receita quando solicitado', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql, params) => {
+    if (sql.includes('FROM categorias_principais')) {
+      assert.equal(params[1], 'receita');
+      return { rows: [{ nome: 'Receitas' }] };
+    }
+    if (sql.includes('FROM limites_categoria')) {
+      assert.equal(params[1], 'receita');
+      return { rows: [{ categoria: 'Salário', parent: 'Receitas' }] };
+    }
+    return { rows: [] };
+  });
+
+  const resultado = await db.listarSubcategoriasPorTipo('user1@c.us', 'receita');
+  assert.deepEqual(resultado, ['Salário']);
+});
+
+test('listarSubcategoriasPorTipo: categoria principal sem subcategoria aparece pelo próprio nome', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql) => {
+    if (sql.includes('FROM categorias_principais')) {
+      return { rows: [{ nome: 'Investimentos' }] };
+    }
+    if (sql.includes('FROM limites_categoria')) {
+      return { rows: [] };
+    }
+    return { rows: [] };
+  });
+
+  const resultado = await db.listarSubcategoriasPorTipo('user1@c.us', 'receita');
+  assert.deepEqual(resultado, ['Investimentos']);
+});
+
+test('listarSubcategoriasPorTipo: sem categorias principais cadastradas, cai no fallback legado', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql) => {
+    if (sql.includes('FROM categorias_principais')) return { rows: [] };
+    if (sql === 'SELECT nome FROM categorias ORDER BY nome') return { rows: [{ nome: 'Outros' }] };
+    return { rows: [] };
+  });
+
+  const resultado = await db.listarSubcategoriasPorTipo('user1@c.us', 'despesa');
+  assert.deepEqual(resultado, ['Outros']);
+});
+
 // ── validarCategoriaPorTipo (via executeTool registrar_transacao) ────────────
 
 test('validarCategoriaPorTipo: categoria certa (despesa) passa direto, sem aviso', async (t) => {
