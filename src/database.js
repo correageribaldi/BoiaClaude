@@ -291,6 +291,38 @@ async function initTables() {
       ON categorias_principais(usuario_id, ativo);
   `);
 
+  // Migração: separar categorias de despesa e receita (bug de categoria cruzada)
+  await pool.query(`
+    ALTER TABLE categorias_principais ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'despesa' CHECK(tipo IN ('despesa', 'receita', 'ambos'));
+    ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS tipo TEXT CHECK(tipo IN ('despesa', 'receita', 'ambos'));
+  `);
+
+  // Migração idempotente: seed da categoria principal de Receitas + subcategorias
+  // para usuários já existentes (usuários novos recebem via inicializarCategoriasPrincipais).
+  await pool.query(
+    `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem, tipo)
+     SELECT DISTINCT usuario_id, $1, 0, 99, 'receita'
+     FROM categorias_principais cp
+     WHERE NOT EXISTS (
+       SELECT 1 FROM categorias_principais cp2
+       WHERE cp2.usuario_id = cp.usuario_id AND cp2.nome = $1
+     )`,
+    [CATEGORIA_PRINCIPAL_RECEITA.nome]
+  );
+
+  await pool.query(
+    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, tipo)
+     SELECT DISTINCT cp.usuario_id, sub.nome, 0, $2, 'receita'
+     FROM categorias_principais cp
+     CROSS JOIN UNNEST($1::text[]) AS sub(nome)
+     WHERE cp.nome = $2
+       AND NOT EXISTS (
+         SELECT 1 FROM limites_categoria lc
+         WHERE lc.usuario_id = cp.usuario_id AND lc.categoria = sub.nome
+       )`,
+    [SUBCATEGORIAS_RECEITA_PADRAO, CATEGORIA_PRINCIPAL_RECEITA.nome]
+  );
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contatos_compartilhados (
       id SERIAL PRIMARY KEY,
@@ -1715,19 +1747,30 @@ async function listarCategorias() {
 }
 
 // Retorna categorias formatadas para o prompt da IA: "Principal(sub1, sub2), Principal2(sub3)"
-async function listarCategoriasParaIA(usuarioId) {
+// Parametrizado por tipo (despesa/receita) — filtra categorias principais e subcategorias
+// cujo tipo bata com o pedido ou seja 'ambos'. Default 'despesa' preserva comportamento
+// anterior para call sites que ainda não passam tipo.
+async function listarCategoriasParaIA(usuarioId, tipo = 'despesa') {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const catsPrincipais = await listarCategoriasPrincipais(uid);
-  if (catsPrincipais.length === 0) {
+  const catsPrincipais = await pool.query(
+    `SELECT id, nome, percentual::float, ordem
+     FROM categorias_principais
+     WHERE usuario_id = $1 AND ativo = TRUE AND (tipo = $2 OR tipo = 'ambos')
+     ORDER BY ordem, nome`,
+    [uid, tipo]
+  );
+  if (catsPrincipais.rows.length === 0) {
     // Fallback: retorna categorias antigas se não tem categorias principais
     return (await listarCategorias()).join(', ');
   }
 
+  // tipo NULL = subcategoria legada (criada antes da separação despesa/receita) → trata como despesa
   const subs = await pool.query(
     `SELECT categoria, parent FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE AND parent IS NOT NULL
+       AND (tipo = $2 OR tipo = 'ambos' OR (tipo IS NULL AND $2 = 'despesa'))
      ORDER BY parent, categoria`,
-    [uid]
+    [uid, tipo]
   );
 
   const subMap = {};
@@ -1737,7 +1780,7 @@ async function listarCategoriasParaIA(usuarioId) {
   }
 
   const partes = [];
-  for (const cp of catsPrincipais) {
+  for (const cp of catsPrincipais.rows) {
     const filhas = subMap[cp.nome] || [];
     if (filhas.length > 0) {
       partes.push(`${cp.nome}(${filhas.join(', ')})`);
@@ -1897,7 +1940,8 @@ async function excluirSubcategoria(usuarioId, nome) {
 }
 
 // Garantir que uma subcategoria existe vinculada a uma principal (auto-criar se não existe)
-async function garantirSubcategoria(usuarioId, subcategoria, parent) {
+// tipo: 'despesa' (default, preserva comportamento anterior) ou 'receita'.
+async function garantirSubcategoria(usuarioId, subcategoria, parent, tipo = 'despesa') {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   // Verifica se já existe
   const existing = await pool.query(
@@ -1924,11 +1968,11 @@ async function garantirSubcategoria(usuarioId, subcategoria, parent) {
   const saldoLivre = Math.max(0, limiteParent - totalSubsAlocado);
 
   await pool.query(
-    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, tipo)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (usuario_id, categoria)
-     DO UPDATE SET ativo = TRUE, parent = $4, valor_limite = $3`,
-    [uid, subcategoria.trim(), saldoLivre, parent.trim()]
+     DO UPDATE SET ativo = TRUE, parent = $4, valor_limite = $3, tipo = $5`,
+    [uid, subcategoria.trim(), saldoLivre, parent.trim(), tipo]
   );
 }
 
@@ -2287,6 +2331,11 @@ const CATEGORIAS_PRINCIPAIS_PADRAO = [
   { nome: 'Objetivos',         percentual:  5, ordem: 5 },
 ];
 
+// Categoria principal de receita: lista simples, sem percentual/distribuição de orçamento
+// (não participa do budget 50/30/20 — só agrupa subcategorias de receita).
+const CATEGORIA_PRINCIPAL_RECEITA = { nome: 'Receitas', percentual: 0, ordem: 99 };
+const SUBCATEGORIAS_RECEITA_PADRAO = ['Salário', 'Freelance', 'Investimentos (retorno)', 'Outras Receitas'];
+
 async function listarCategoriasPrincipais(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -2309,11 +2358,49 @@ async function inicializarCategoriasPrincipais(usuarioId) {
   if (check.rows.length > 0) return;
   for (const cat of CATEGORIAS_PRINCIPAIS_PADRAO) {
     await pool.query(
-      `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem)
-       VALUES ($1, $2, $3, $4) ON CONFLICT (usuario_id, nome) DO NOTHING`,
+      `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem, tipo)
+       VALUES ($1, $2, $3, $4, 'despesa') ON CONFLICT (usuario_id, nome) DO NOTHING`,
       [uid, cat.nome, cat.percentual, cat.ordem]
     );
   }
+
+  await pool.query(
+    `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem, tipo)
+     VALUES ($1, $2, $3, $4, 'receita') ON CONFLICT (usuario_id, nome) DO NOTHING`,
+    [uid, CATEGORIA_PRINCIPAL_RECEITA.nome, CATEGORIA_PRINCIPAL_RECEITA.percentual, CATEGORIA_PRINCIPAL_RECEITA.ordem]
+  );
+  for (const sub of SUBCATEGORIAS_RECEITA_PADRAO) {
+    await pool.query(
+      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, tipo)
+       VALUES ($1, $2, 0, $3, 'receita') ON CONFLICT (usuario_id, categoria) DO NOTHING`,
+      [uid, sub, CATEGORIA_PRINCIPAL_RECEITA.nome]
+    );
+  }
+}
+
+// Busca o tipo (despesa/receita/ambos) cadastrado para uma categoria/subcategoria pelo nome.
+// Procura primeiro em limites_categoria (subcategoria), depois em categorias_principais.
+// Retorna null se a categoria ainda não existe (categoria nova, ainda não cadastrada).
+async function buscarTipoCategoria(usuarioId, nomeCategoria) {
+  if (!nomeCategoria) return null;
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const nome = nomeCategoria.trim();
+
+  const sub = await pool.query(
+    `SELECT tipo FROM limites_categoria
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE`,
+    [uid, nome]
+  );
+  if (sub.rows.length > 0) return sub.rows[0].tipo;
+
+  const principal = await pool.query(
+    `SELECT tipo FROM categorias_principais
+     WHERE usuario_id = $1 AND nome = $2 AND ativo = TRUE`,
+    [uid, nome]
+  );
+  if (principal.rows.length > 0) return principal.rows[0].tipo;
+
+  return null;
 }
 
 async function criarCategoriaPrincipal(usuarioId, nome, percentual, ordem = 99) {
@@ -3857,6 +3944,9 @@ module.exports = {
   excluirCategoriaPrincipal,
   salvarCategoriasPrincipaisBatch,
   CATEGORIAS_PRINCIPAIS_PADRAO,
+  CATEGORIA_PRINCIPAL_RECEITA,
+  SUBCATEGORIAS_RECEITA_PADRAO,
+  buscarTipoCategoria,
   listarUsuariosFeedback,
   criarFeedbackCampanha,
   registrarDestinatarioFeedback,
