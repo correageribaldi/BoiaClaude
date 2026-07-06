@@ -500,7 +500,7 @@ app.delete('/api/categories/:nome', autenticar, async (req, res) => {
 // ── Criar transação ──────────────────────────────────────────────────────────
 app.post('/api/transactions', autenticar, async (req, res) => {
   try {
-    const { tipo, valor, descricao, categoria, data, status, cartao_id, parcelas } = req.body;
+    const { tipo, valor, descricao, categoria, data, status, cartao_id, parcelas, conta_id } = req.body;
     if (!tipo || !valor || !descricao || !data) {
       return res.status(400).json({ erro: 'tipo, valor, descricao e data são obrigatórios' });
     }
@@ -509,13 +509,13 @@ app.post('/api/transactions', autenticar, async (req, res) => {
     }
     if (parcelas && parcelas > 1) {
       const resultado = await db.adicionarTransacoesParcelas(
-        req.usuarioId, valor, descricao, categoria || null, data, cartao_id || null, parcelas
+        req.usuarioId, valor, descricao, categoria || null, data, cartao_id || null, parcelas, conta_id || null
       );
       res.json(resultado);
     } else {
       const resultado = await db.adicionarTransacao(
         req.usuarioId, tipo, parseFloat(valor), descricao, categoria || null,
-        data, status || 'pendente', cartao_id || null
+        data, status || 'pendente', cartao_id || null, conta_id || null
       );
       res.json(resultado);
     }

@@ -883,7 +883,7 @@ async function adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, 
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
 
-async function adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, dataBase, cartaoId, parcelas) {
+async function adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, dataBase, cartaoId, parcelas, contaId = null) {
   const valorParcela = Math.round((valor / parcelas) * 100) / 100;
   const valorUltima  = Math.round((valor - valorParcela * (parcelas - 1)) * 100) / 100;
   const ids = [];
@@ -896,7 +896,7 @@ async function adicionarTransacoesParcelas(usuarioId, valor, descricao, categori
     const result = await adicionarTransacao(
       usuarioId, 'despesa', valorAtual,
       `${descricao} (${i + 1}/${parcelas})`,
-      categoria, dataStr, status, cartaoId
+      categoria, dataStr, status, cartaoId, contaId
     );
     ids.push(result);
   }
@@ -1072,12 +1072,12 @@ async function buscarTransacoesPorDescricao(usuarioId, query, tipo) {
 
 async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const camposPermitidos = ['valor', 'data', 'descricao', 'categoria'];
+  const camposPermitidos = ['valor', 'data', 'descricao', 'categoria', 'conta_id'];
   if (!camposPermitidos.includes(campo)) throw new Error(`Campo inválido: ${campo}`);
   const result = await pool.query(
     `UPDATE transacoes SET ${campo} = $1
      WHERE numero_usuario = $2 AND usuario_id = $3
-     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status`,
+     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, cartao_id, conta_id`,
     [novoValor, numeroUsuario, uid]
   );
   return result.rows[0] || null;
@@ -1087,7 +1087,7 @@ async function buscarTransacaoPorId(usuarioId, id) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT numero_usuario as id, tipo, valor::float, descricao, categoria,
-            TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id
+            TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id, cartao_id, conta_id
      FROM transacoes WHERE numero_usuario = $1 AND usuario_id = $2`,
     [id, uid]
   );
@@ -1172,7 +1172,7 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   }
 
   let query = `
-    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id
+    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id, cartao_id, conta_id
     FROM transacoes
     WHERE usuario_id = $1
   `;
