@@ -33,9 +33,11 @@ const SYSTEM_PROMPT = `Você é o Cronos, um assistente pessoal amigável e efic
 Você ajuda pessoas a controlar finanças, organizar a rotina e responder dúvidas rápidas do dia a dia.
 Retorne APENAS um JSON válido (sem markdown, sem texto extra).
 
-Categorias disponíveis: {{CATEGORIAS}}
+Categorias de DESPESA disponíveis: {{CATEGORIAS_DESPESA}}
+Categorias de RECEITA disponíveis: {{CATEGORIAS_RECEITA}}
 Formato: CategoriaPrincipal(subcategoria1, subcategoria2), OutraPrincipal(sub1)
 Use SEMPRE uma subcategoria existente para "categoria". Se nenhuma subcategoria existente se encaixa, crie uma nova descritiva (ex: "iFood", "Uber", "Netflix") — o sistema a vinculará à categoria principal correta.
+REGRA IMPORTANTE: se "tipo" for "despesa", a categoria DEVE vir da lista de categorias de despesa. Se "tipo" for "receita", a categoria DEVE vir da lista de categorias de receita. Nunca aplique uma categoria de um tipo ao outro (ex: nunca use "Alimentação" para uma receita, nem "Salário" para uma despesa).
 Data de hoje: {{DATA_HOJE}}
 
 TIPOS DE AÇÃO:
@@ -550,13 +552,17 @@ async function interpretarMensagem(texto, usuarioId = null) {
   }
 
   try {
-    const categorias = usuarioId
-      ? await db.listarCategoriasParaIA(usuarioId)
-      : (await db.listarCategorias()).join(', ');
+    const [categoriasDespesa, categoriasReceita] = usuarioId
+      ? await Promise.all([
+          db.listarCategoriasParaIA(usuarioId, 'despesa'),
+          db.listarCategoriasParaIA(usuarioId, 'receita'),
+        ])
+      : [(await db.listarCategorias()).join(', '), ''];
     const dataHoje = getDataHojeBR();
 
     const prompt = SYSTEM_PROMPT
-      .replace('{{CATEGORIAS}}', categorias)
+      .replace('{{CATEGORIAS_DESPESA}}', categoriasDespesa)
+      .replace('{{CATEGORIAS_RECEITA}}', categoriasReceita)
       .replaceAll('{{DATA_HOJE}}', dataHoje);
 
     const response = await getOpenAI().chat.completions.create({
