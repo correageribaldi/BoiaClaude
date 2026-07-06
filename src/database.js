@@ -766,13 +766,14 @@ async function initTables() {
     CREATE INDEX IF NOT EXISTS idx_transacoes_conta_id ON transacoes(conta_id) WHERE conta_id IS NOT NULL;
   `);
 
-  // Migração idempotente: cria "Conta Principal" para usuários que já têm transações
-  // e nunca tiveram nenhuma conta, e vincula as transações órfãs (conta_id NULL) a ela.
+  // Migração idempotente: cria "Conta Principal" para todo usuário que nunca
+  // teve nenhuma conta padrão (independente de ter transação ou não),
+  // e vincula as transações órfãs (conta_id NULL) a ela.
   await pool.query(`
     INSERT INTO contas (usuario_id, nome, saldo_inicial, padrao)
-    SELECT DISTINCT t.usuario_id, 'Conta Principal', 0, TRUE
-    FROM transacoes t
-    LEFT JOIN contas c ON c.usuario_id = t.usuario_id AND c.padrao = TRUE
+    SELECT u.usuario_id, 'Conta Principal', 0, TRUE
+    FROM usuarios u
+    LEFT JOIN contas c ON c.usuario_id = u.usuario_id AND c.padrao = TRUE
     WHERE c.id IS NULL
     ON CONFLICT (usuario_id, nome) DO NOTHING;
   `);
