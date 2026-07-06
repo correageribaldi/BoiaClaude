@@ -24,6 +24,7 @@ function mockResolverIdentidade(t) {
 test('registrar_transacao: conta explícita reconhecida — resolve contaId e passa pra db.adicionarTransacao', async (t) => {
   mockResolverIdentidade(t);
   t.mock.method(db, 'listarCartoes', async () => []);
+  t.mock.method(db, 'buscarTipoCategoria', async () => 'despesa');
   t.mock.method(db, 'buscarContasPorNome', async (usuarioId, nome) => {
     if (/poup/i.test(nome)) return [{ id: 2, nome: 'Poupança', tipo: 'poupanca', ativo: true, padrao: false }];
     return [];
@@ -48,6 +49,7 @@ test('registrar_transacao: conta explícita reconhecida — resolve contaId e pa
 test('registrar_transacao: sem menção de conta — cai na conta padrão (contaId null), comportamento inalterado', async (t) => {
   mockResolverIdentidade(t);
   t.mock.method(db, 'listarCartoes', async () => []);
+  t.mock.method(db, 'buscarTipoCategoria', async () => 'despesa');
   const buscarContasSpy = t.mock.method(db, 'buscarContasPorNome', async () => []);
 
   let paramsCapturados = null;
@@ -70,6 +72,7 @@ test('registrar_transacao: sem menção de conta — cai na conta padrão (conta
 test('registrar_transacao: nome de conta não encontrado — não bloqueia, cai no fallback e avisa na resposta', async (t) => {
   mockResolverIdentidade(t);
   t.mock.method(db, 'listarCartoes', async () => []);
+  t.mock.method(db, 'buscarTipoCategoria', async () => 'receita');
   t.mock.method(db, 'buscarContasPorNome', async () => []);
   t.mock.method(db, 'listarContas', async () => ([
     { id: 1, nome: 'Conta Principal', tipo: 'corrente', ativo: true, padrao: true },
@@ -97,6 +100,7 @@ test('registrar_transacao: nome de conta não encontrado — não bloqueia, cai 
 test('registrar_transacao: nome de conta ambíguo — não bloqueia, cai no fallback', async (t) => {
   mockResolverIdentidade(t);
   t.mock.method(db, 'listarCartoes', async () => []);
+  t.mock.method(db, 'buscarTipoCategoria', async () => 'despesa');
   t.mock.method(db, 'buscarContasPorNome', async () => ([
     { id: 1, nome: 'Conta Nubank', tipo: 'corrente', ativo: true, padrao: false },
     { id: 2, nome: 'Conta Nubank PJ', tipo: 'corrente', ativo: true, padrao: false },

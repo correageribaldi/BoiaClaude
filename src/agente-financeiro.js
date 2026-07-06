@@ -38,7 +38,7 @@ function limparEstado(usuarioId) { agenteEstados.delete(usuarioId); }
 // ── Contexto financeiro ──────────────────────────────────────────────────────
 
 async function buildFinancialContext(usuarioId) {
-  const [saldos, resumo, limites, recorrencias, cartoes, caixinhas, usuario, categorias] =
+  const [saldos, resumo, limites, recorrencias, cartoes, caixinhas, usuario, categoriasDespesa, categoriasReceita] =
     await Promise.all([
       db.calcularSaldos(usuarioId),
       db.resumoMensal(usuarioId),
@@ -47,7 +47,8 @@ async function buildFinancialContext(usuarioId) {
       db.listarCartoes(usuarioId),
       db.listarCaixinhas(usuarioId),
       db.buscarUsuario(usuarioId),
-      db.listarCategoriasParaIA(usuarioId),
+      db.listarCategoriasParaIA(usuarioId, 'despesa'),
+      db.listarCategoriasParaIA(usuarioId, 'receita'),
     ]);
 
   const lines = [];
@@ -87,9 +88,10 @@ async function buildFinancialContext(usuarioId) {
     lines.push(`Recorrências: ${recInfo.join(' | ')}`);
   }
 
-  lines.push(`Categorias disponíveis: ${categorias}`);
+  lines.push(`Categorias de despesa disponíveis: ${categoriasDespesa}`);
+  lines.push(`Categorias de receita disponíveis: ${categoriasReceita}`);
 
-  return { text: lines.join('\n'), nome, categorias };
+  return { text: lines.join('\n'), nome, categoriasDespesa, categoriasReceita };
 }
 
 // ── System Prompt ────────────────────────────────────────────────────────────
@@ -124,7 +126,7 @@ REGRAS IMPORTANTES:
 5. Se perceber que o usuário nunca usou uma funcionalidade relevante, sugira naturalmente.
 6. Respostas máx 15 linhas — é WhatsApp, não email.
 7. Valores monetários SEMPRE em formato brasileiro: R$ 1.234,56
-8. Quando o campo "categoria" for necessário, use SEMPRE uma subcategoria existente da lista de categorias disponíveis. Se nenhuma se encaixa, crie uma nova descritiva (ex: "iFood", "Uber").
+8. Quando o campo "categoria" for necessário, use SEMPRE uma subcategoria existente da lista de categorias disponíveis. Se nenhuma se encaixa, crie uma nova descritiva (ex: "iFood", "Uber"). REGRA IMPORTANTE: se tipo=despesa, a categoria DEVE vir da lista de categorias de despesa. Se tipo=receita, a categoria DEVE vir da lista de categorias de receita. Nunca aplique categoria de um tipo ao outro (ex: nunca use "Alimentação" para uma receita, nem "Salário" para uma despesa).
 9. Para datas relativas: "hoje" = data de hoje, "ontem" = dia anterior, "amanhã" = dia seguinte. Converta para YYYY-MM-DD.
 10. Se o usuário disser "resetar", "começar do zero" ou "limpar tudo", NÃO execute — responda que ele precisa digitar o comando diretamente.
 11. Quando a tool retornar resultado, apresente de forma amigável e formatada para WhatsApp (negrito com *, itálico com _).
@@ -566,13 +568,43 @@ const TOOLS_COM_CONFIRMACAO = new Set([
   'criar_lembrete', 'criar_lembrete_recorrente', 'cancelar_lembrete',
 ]);
 
+// ── Validação determinística de categoria × tipo ─────────────────────────────
+// Corrige silenciosamente quando a IA (ou o usuário) aplica categoria de um tipo
+// errado (ex: categoria de despesa numa receita). Não bloqueia nem pergunta —
+// substitui pela categoria genérica do tipo certo e retorna aviso pra concatenar
+// na resposta final.
+const CATEGORIA_GENERICA_POR_TIPO = {
+  despesa: 'Outros',
+  receita: 'Outras Receitas',
+};
+
+async function validarCategoriaPorTipo(usuarioId, categoria, tipo) {
+  if (!categoria) return { categoriaFinal: categoria, aviso: '' };
+
+  const tipoCadastrado = await db.buscarTipoCategoria(usuarioId, categoria);
+
+  if (tipoCadastrado && tipoCadastrado !== tipo && tipoCadastrado !== 'ambos') {
+    const categoriaGenerica = CATEGORIA_GENERICA_POR_TIPO[tipo] || categoria;
+    const aviso = `_obs: categoria ajustada para "${categoriaGenerica}" — "${categoria}" é categoria de ${tipoCadastrado}._`;
+    return { categoriaFinal: categoriaGenerica, aviso };
+  }
+
+  if (!tipoCadastrado) {
+    // Categoria nova (ainda não cadastrada) — aceita como está e cadastra com o tipo correto
+    const handlers = getHandlers();
+    await handlers.garantirSubcategoriaVinculada(usuarioId, categoria, tipo);
+  }
+
+  return { categoriaFinal: categoria, aviso: '' };
+}
+
 // ── Executor de tools ────────────────────────────────────────────────────────
 
 async function executeTool(usuarioId, toolName, args) {
   switch (toolName) {
     // Transações
     case 'registrar_transacao': {
-      const { tipo, valor, descricao, categoria, data, status, cartao_nome, conta_nome, parcelas } = args;
+      const { tipo, valor, descricao, data, status, cartao_nome, conta_nome, parcelas } = args;
       let cartaoId = null;
       if (cartao_nome) {
         const cartoes = await db.listarCartoes(usuarioId);
@@ -592,12 +624,17 @@ async function executeTool(usuarioId, toolName, args) {
           avisoConta = `\n_obs: não encontrei a conta "${conta_nome}", lancei na conta principal._`;
         }
       }
+
+      // Validação determinística categoria × tipo — corrige silenciosamente categoria cruzada
+      const { categoriaFinal: categoria, aviso: avisoCategoria } = await validarCategoriaPorTipo(usuarioId, args.categoria, tipo);
+      const avisos = `${avisoConta}${avisoCategoria ? `\n${avisoCategoria}` : ''}`;
+
       if (parcelas && parcelas > 1) {
         const result = await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, data || null, cartaoId, parcelas);
-        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}${avisoConta}` };
+        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}${avisos}` };
       }
       await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data || null, status || 'pago', cartaoId, contaId);
-      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})${avisoConta}` };
+      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})${avisos}` };
     }
     case 'consultar_transacoes': {
       const txs = await db.consultarTransacoes(usuarioId, {
