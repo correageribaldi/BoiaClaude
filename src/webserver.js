@@ -723,7 +723,23 @@ app.get('/api/pluggy/connect-token', autenticar, async (req, res) => {
     if (!credencial) {
       return res.status(400).json({ erro: 'Configure sua credencial Pluggy antes de conectar um banco.' });
     }
-    const connectToken = await pluggy.gerarConnectToken(credencial.clientId, credencial.clientSecret, req.usuarioId);
+
+    // webhookUrl (Marco 3): token único por usuário, gerado sob demanda na
+    // primeira vez. Sem PAINEL_BASE_URL configurada, segue sem webhookUrl —
+    // o Item ainda é criado normalmente, só não terá sync automático até a
+    // env var existir (loga para não falhar silenciosamente em produção).
+    let webhookUrl = null;
+    const baseUrl = process.env.PAINEL_BASE_URL;
+    if (baseUrl) {
+      const webhookToken = await db.obterOuCriarWebhookTokenPluggy(req.usuarioId);
+      webhookUrl = `${baseUrl.replace(/\/$/, '')}/webhook/pluggy/${webhookToken}`;
+    } else {
+      console.error('[WEB] PAINEL_BASE_URL não configurada — Item Pluggy será criado sem webhook (sem sync automático).');
+    }
+
+    const connectToken = await pluggy.gerarConnectToken(
+      credencial.clientId, credencial.clientSecret, req.usuarioId, webhookUrl
+    );
     res.json({ connectToken });
   } catch (err) {
     console.error('[WEB] GET /api/pluggy/connect-token:', err.message);
@@ -1119,6 +1135,43 @@ app.post('/webhook/pagamento', async (req, res) => {
     // 400 faz InfinityPay tentar novamente — usar só em erros transitórios
     res.status(400).json({ success: false, message: err.message });
   }
+});
+
+// ── Webhook Pluggy (Open Finance) — Marco 3 ───────────────────────────────────
+// Endpoint público (sem middleware autenticar — não há JWT de usuário aqui,
+// o :token na URL é o único mecanismo de autenticação). Pluggy não assina o
+// payload (sem HMAC nativo confirmado na doc) — o token de alta entropia
+// (24 bytes, gerado por usuário em obterOuCriarWebhookTokenPluggy) é a defesa
+// real: sem ele, rejeita com 401 sem processar nada do corpo.
+//
+// Responde 2XX imediatamente (exigência Pluggy: <5s, senão retry) e processa
+// em segundo plano, fora do ciclo de resposta — sincronizar transações pode
+// levar mais que 5s (365 dias de histórico na primeira vez). Trade-off consciente:
+// isso roda fire-and-forget no próprio processo do webserver, não numa fila
+// dedicada (o projeto já tem BullMQ para lembretes, ver src/worker-reminders.js,
+// mas criar uma fila nova para isso é mudança de infra maior que o escopo deste
+// marco — reavaliar se o volume de usuários/transações crescer muito).
+app.post('/webhook/pluggy/:token', async (req, res) => {
+  const { token } = req.params;
+
+  let usuarioId;
+  try {
+    usuarioId = await db.buscarUsuarioIdPorWebhookToken(token);
+  } catch (err) {
+    console.error('[WEBHOOK PLUGGY] Erro ao validar token:', err.message);
+    return res.status(500).json({ erro: 'Erro interno' });
+  }
+
+  if (!usuarioId) {
+    return res.status(401).json({ erro: 'Token inválido' });
+  }
+
+  console.log('[WEBHOOK PLUGGY] Evento recebido:', req.body?.event, 'item:', req.body?.itemId);
+  res.status(200).json({ ok: true });
+
+  pluggy.processarWebhookEvent(usuarioId, req.body).catch((err) => {
+    console.error('[WEBHOOK PLUGGY] Erro ao processar evento em segundo plano:', err.message);
+  });
 });
 
 // ── Agenda ────────────────────────────────────────────────────────────────────
