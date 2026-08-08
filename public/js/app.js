@@ -12,6 +12,8 @@ let _isAdmin = false;
 let _saldoOculto = false;
 let _saldoAtual = null;
 let _meNome = '';
+let _detalheSaldoAberto = false;
+let _detalheContasCache = null;
 
 // ── Tema claro / escuro ────────────────────────────────────────────────────
 function getTheme() { return localStorage.getItem('cronos_theme') || 'dark'; }
@@ -489,6 +491,7 @@ async function renderChartMensal() {
 async function carregarDashboard() {
   const { mes, ano } = estado.dash;
   document.getElementById('dash-mes-label').textContent = MESES[mes - 1] + ' ' + ano;
+  _detalheContasCache = null; // saldo por conta pode ter mudado desde o último load
 
   let data;
   try { data = await api(`/api/dashboard?mes=${mes}&ano=${ano}`); }
@@ -513,6 +516,13 @@ async function carregarDashboard() {
                 - (findTotal('despesa', 'pago') + findTotal('despesa', 'pendente'));
   }
   document.getElementById('c-saldo').textContent = _saldoOculto ? '••••••' : fmtMoeda(_saldoAtual);
+
+  // Detalhamento por conta: só faz sentido no saldo atual (mês corrente),
+  // já que a decomposição reflete o saldo de hoje, não o resultado de meses passados.
+  const detalheToggle = document.getElementById('dash-detalhe-toggle');
+  if (detalheToggle) detalheToggle.classList.toggle('hidden', !ehMesAtual);
+  if (!ehMesAtual) fecharDetalheSaldo();
+  else if (_detalheSaldoAberto) renderDetalheSaldo();
 
   // Totais do mês (pago + pendente)
   document.getElementById('c-receitas').textContent = fmtMoeda(findTotal('receita', 'pago') + findTotal('receita', 'pendente'));
@@ -549,6 +559,50 @@ async function carregarDashboard() {
 
   renderChartCategorias(resumo.porCategoria || []);
   try { await renderChartMensal(); } catch (e) { console.error('[CHART]', e); }
+}
+
+// ── Dashboard: detalhamento do saldo por conta ──────────────────────────────
+async function toggleDetalheSaldo() {
+  _detalheSaldoAberto = !_detalheSaldoAberto;
+  const btn = document.getElementById('dash-detalhe-toggle');
+  if (btn) {
+    btn.classList.toggle('aberto', _detalheSaldoAberto);
+    btn.lastChild.textContent = _detalheSaldoAberto ? ' ocultar detalhamento' : ' ver detalhamento';
+  }
+  if (_detalheSaldoAberto) {
+    await renderDetalheSaldo();
+  } else {
+    document.getElementById('dash-detalhe-contas')?.classList.add('hidden');
+  }
+}
+
+function fecharDetalheSaldo() {
+  _detalheSaldoAberto = false;
+  document.getElementById('dash-detalhe-toggle')?.classList.remove('aberto');
+  document.getElementById('dash-detalhe-contas')?.classList.add('hidden');
+}
+
+async function renderDetalheSaldo() {
+  const el = document.getElementById('dash-detalhe-contas');
+  if (!el) return;
+
+  if (!_detalheContasCache) {
+    try { _detalheContasCache = await api('/api/contas'); }
+    catch { _detalheContasCache = []; }
+  }
+
+  const contas = _detalheContasCache || [];
+  if (!contas.length) {
+    el.innerHTML = '<div class="dash-detalhe-vazio">Nenhuma conta cadastrada ainda.</div>';
+  } else {
+    el.innerHTML = contas.map(c => `
+      <div class="dash-detalhe-row">
+        <span class="dash-detalhe-nome">🏦 ${esc(c.nome)}</span>
+        <span class="dash-detalhe-valor">${_saldoOculto ? '••••••' : fmtMoeda(c.saldo)}</span>
+      </div>
+    `).join('');
+  }
+  el.classList.remove('hidden');
 }
 
 // ── Dashboard: últimas transações ────────────────────────────────────────────
@@ -2350,6 +2404,7 @@ function inicializar() {
         ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>'
         : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
     }
+    if (_detalheSaldoAberto) renderDetalheSaldo();
   });
 
   // Dashboard nav

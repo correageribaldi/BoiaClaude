@@ -542,6 +542,49 @@ html:not([data-theme="light"]) .modal-box {
 }
 .dash-eye-btn:hover { color: rgba(255,255,255,.9); }
 
+.dash-detalhe-toggle {
+  display: block;
+  margin: 8px auto 0;
+  background: none; border: none; cursor: pointer;
+  color: rgba(255,255,255,.55);
+  font-size: 12px;
+  padding: 4px 8px;
+  transition: color .15s;
+}
+.dash-detalhe-toggle:hover { color: rgba(255,255,255,.85); }
+.dash-detalhe-toggle.aberto #dash-detalhe-icon { display: inline-block; transform: rotate(180deg); }
+#dash-detalhe-icon { display: inline-block; transition: transform .15s; font-size: 9px; }
+
+.dash-detalhe-contas {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,.1);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.dash-detalhe-grupo-label {
+  font-size: 11px;
+  color: rgba(255,255,255,.4);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin: 4px 0 -1px;
+}
+.dash-detalhe-grupo-label:first-child { margin-top: 0; }
+.dash-detalhe-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: rgba(255,255,255,.85);
+}
+.dash-detalhe-row .dash-detalhe-nome {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding-right: 10px;
+}
+.dash-detalhe-row .dash-detalhe-valor { flex-shrink: 0; font-weight: 600; }
+.dash-detalhe-vazio { font-size: 12px; color: rgba(255,255,255,.45); text-align: center; }
+
 /* Receitas / Despesas */
 .dash-hero-bottom {
   display: flex; align-items: center;
