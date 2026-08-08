@@ -724,25 +724,47 @@ app.get('/api/pluggy/connect-token', autenticar, async (req, res) => {
       return res.status(400).json({ erro: 'Configure sua credencial Pluggy antes de conectar um banco.' });
     }
 
-    // webhookUrl (Marco 3): token único por usuário, gerado sob demanda na
-    // primeira vez. Sem PAINEL_BASE_URL configurada, segue sem webhookUrl —
-    // o Item ainda é criado normalmente, só não terá sync automático até a
-    // env var existir (loga para não falhar silenciosamente em produção).
-    let webhookUrl = null;
-    const baseUrl = process.env.PAINEL_BASE_URL;
-    if (baseUrl) {
-      const webhookToken = await db.obterOuCriarWebhookTokenPluggy(req.usuarioId);
-      webhookUrl = `${baseUrl.replace(/\/$/, '')}/webhook/pluggy/${webhookToken}`;
-    } else {
-      console.error('[WEB] PAINEL_BASE_URL não configurada — Item Pluggy será criado sem webhook (sem sync automático).');
+    // Webhook registrado a nível de aplicação (client), não por Item — ver
+    // pluggy.garantirWebhookRegistrado. Não passamos webhookUrl aqui (no
+    // options do connect_token) para não duplicar notificação: a doc confirma
+    // que webhookUrl por-item + webhook client-level juntos geram duas
+    // notificações do mesmo evento. Falha aqui não deve travar a conexão —
+    // loga e segue (o botão "Sincronizar agora" cobre o caso de ficar sem
+    // webhook, e o registro é retentado a cada nova conexão).
+    try {
+      await pluggy.garantirWebhookRegistrado(req.usuarioId);
+    } catch (err) {
+      console.error('[WEB] Falha ao garantir webhook registrado (conexão segue sem webhook automático):', err.message);
     }
 
-    const connectToken = await pluggy.gerarConnectToken(
-      credencial.clientId, credencial.clientSecret, req.usuarioId, webhookUrl
-    );
+    const connectToken = await pluggy.gerarConnectToken(credencial.clientId, credencial.clientSecret, req.usuarioId);
     res.json({ connectToken });
   } catch (err) {
     console.error('[WEB] GET /api/pluggy/connect-token:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+// URL do webhook do usuário, para colar manualmente no dashboard da Pluggy
+// (fallback caso o registro automático via POST /webhooks não seja possível
+// ou o usuário prefira gerenciar por lá). Gera o webhook_token mesmo que o
+// usuário nunca tenha tentado o registro automático — a URL precisa existir
+// de qualquer forma para fazer sentido colar em algum lugar.
+app.get('/api/pluggy/webhook-url', autenticar, async (req, res) => {
+  try {
+    const temCredencial = await db.usuarioTemCredencialPluggy(req.usuarioId);
+    if (!temCredencial) {
+      return res.status(400).json({ erro: 'Configure sua credencial Pluggy antes.' });
+    }
+    const baseUrl = process.env.PAINEL_BASE_URL;
+    if (!baseUrl) {
+      return res.status(500).json({ erro: 'PAINEL_BASE_URL não configurada no servidor.' });
+    }
+    const webhookToken = await db.obterOuCriarWebhookTokenPluggy(req.usuarioId);
+    const webhookUrl = `${baseUrl.replace(/\/$/, '')}/webhook/pluggy/${webhookToken}`;
+    res.json({ webhookUrl });
+  } catch (err) {
+    console.error('[WEB] GET /api/pluggy/webhook-url:', err.message);
     res.status(400).json({ erro: err.message });
   }
 });
@@ -771,6 +793,34 @@ app.get('/api/pluggy/items', autenticar, async (req, res) => {
   } catch (err) {
     console.error('[WEB] GET /api/pluggy/items:', err.message);
     res.status(500).json({ erro: err.message });
+  }
+});
+
+// Sincronização manual — ação explícita do usuário (botão no painel), por
+// isso roda de forma síncrona (responde só depois de terminar), diferente do
+// webhook (que responde 2XX antes de processar por causa do limite de 5s da
+// Pluggy). Cobre o caso de Items conectados antes de terem webhook associado
+// (achado em produção) e serve como "puxar agora" a qualquer momento.
+app.post('/api/pluggy/items/:itemId/sincronizar', autenticar, async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const item = await db.buscarPluggyItemDoUsuario(req.usuarioId, itemId);
+    if (!item) return res.status(404).json({ erro: 'Item não encontrado.' });
+
+    // Aproveita a ação explícita para garantir que o Item passa a notificar
+    // sozinho dali pra frente — sem isso, um Item antigo sem webhook exigiria
+    // clicar "Sincronizar agora" manualmente para sempre.
+    try {
+      await pluggy.garantirWebhookRegistrado(req.usuarioId);
+    } catch (err) {
+      console.error('[WEB] Falha ao garantir webhook registrado (sincronização manual segue de qualquer forma):', err.message);
+    }
+
+    const resultado = await pluggy.sincronizarItem(req.usuarioId, itemId);
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    console.error('[WEB] POST /api/pluggy/items/:itemId/sincronizar:', err.message);
+    res.status(400).json({ erro: err.message });
   }
 });
 
