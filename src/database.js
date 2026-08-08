@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const pluggyCrypto = require('./pluggyCrypto');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -782,6 +783,22 @@ async function initTables() {
     SET conta_id = c.id
     FROM contas c
     WHERE c.usuario_id = t.usuario_id AND c.padrao = TRUE AND t.conta_id IS NULL;
+  `);
+
+  // ─── Módulo Pluggy — Open Finance (Marco 1: credenciais por usuário) ─────────
+  // client_secret nunca em texto plano — cifrado (AES-256-GCM) em src/pluggyCrypto.js.
+  // Uma credencial por usuário (UNIQUE) — recriar é UPDATE, não nova linha.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pluggy_credenciais (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL UNIQUE,
+      client_id TEXT NOT NULL,
+      client_secret_encrypted TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_pluggy_credenciais_usuario ON pluggy_credenciais(usuario_id);
   `);
 }
 
@@ -3847,6 +3864,61 @@ async function metricsLogsCampanhas(dias = 7) {
   return r.rows;
 }
 
+// ─── Credenciais Pluggy — Open Finance (Marco 1) ──────────────────────────────
+// client_secret é cifrado antes de gravar e decifrado só no momento de uso
+// (buscarCredencialPluggy é para uso interno do backend — nunca expor via API).
+
+async function salvarCredencialPluggy(usuarioId, clientId, clientSecret) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const { iv, valorCifrado } = pluggyCrypto.encriptar(clientSecret);
+  const result = await pool.query(
+    `INSERT INTO pluggy_credenciais (usuario_id, client_id, client_secret_encrypted, iv, atualizado_em)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (usuario_id) DO UPDATE
+       SET client_id = EXCLUDED.client_id,
+           client_secret_encrypted = EXCLUDED.client_secret_encrypted,
+           iv = EXCLUDED.iv,
+           atualizado_em = NOW()
+     RETURNING id`,
+    [uid, clientId, valorCifrado, iv]
+  );
+  return result.rows[0]?.id || null;
+}
+
+// Uso interno apenas (jobs de sync, geração de API Key) — nunca expor o retorno via rota HTTP.
+async function buscarCredencialPluggy(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT client_id, client_secret_encrypted, iv
+     FROM pluggy_credenciais WHERE usuario_id = $1`,
+    [uid]
+  );
+  if (result.rows.length === 0) return null;
+  const { client_id, client_secret_encrypted, iv } = result.rows[0];
+  return {
+    clientId: client_id,
+    clientSecret: pluggyCrypto.decriptar(client_secret_encrypted, iv),
+  };
+}
+
+async function usuarioTemCredencialPluggy(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT 1 FROM pluggy_credenciais WHERE usuario_id = $1`,
+    [uid]
+  );
+  return result.rows.length > 0;
+}
+
+async function removerCredencialPluggy(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `DELETE FROM pluggy_credenciais WHERE usuario_id = $1`,
+    [uid]
+  );
+  return result.rowCount > 0;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -4039,4 +4111,9 @@ module.exports = {
   metricsUsuariosRisco,
   metricsFunilConversao,
   metricsLogsCampanhas,
+  // Credenciais Pluggy (Marco 1)
+  salvarCredencialPluggy,
+  buscarCredencialPluggy,
+  usuarioTemCredencialPluggy,
+  removerCredencialPluggy,
 };
