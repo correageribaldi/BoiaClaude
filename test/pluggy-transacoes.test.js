@@ -52,7 +52,9 @@ test('buscarTransacoesNovas: cursor "next" relativo (formato real) monta a URL c
     {
       body: {
         results: [{ id: 'tx-1', type: 'DEBIT', amount: 50, date: '2026-08-01', status: 'POSTED' }],
-        next: '?accountId=acc-123&after=MjAyNi0wOA%3D%3D',
+        // Base64 sintético (decodifica para "fake-cursor-2") — sem relação
+        // com nenhum cursor real observado em produção.
+        next: '?accountId=acc-123&after=ZmFrZS1jdXJzb3ItMg%3D%3D',
       },
     },
     {
@@ -73,7 +75,7 @@ test('buscarTransacoesNovas: cursor "next" relativo (formato real) monta a URL c
   // Bug corrigido: a segunda chamada usava baseUrl + "&after=" + encodeURIComponent(next
   // inteiro), gerando um "after" cujo valor era a própria query string re-encodada
   // (400 da Pluggy). Correto: usar o "next" direto como path+query.
-  assert.equal(requestsFeitos[1].path, '/v2/transactions?accountId=acc-123&after=MjAyNi0wOA%3D%3D');
+  assert.equal(requestsFeitos[1].path, '/v2/transactions?accountId=acc-123&after=ZmFrZS1jdXJzb3ItMg%3D%3D');
 });
 
 test('buscarTransacoesNovas: cursor "next" como URL absoluta é usado direto', async (t) => {
