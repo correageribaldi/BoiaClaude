@@ -213,6 +213,85 @@ async function buscarApiKeyDoUsuario(usuarioId) {
   return obterApiKey(credencial.clientId, credencial.clientSecret, usuarioId);
 }
 
+// ─── Webhook a nível de aplicação (client) — registro retroativo ─────────────
+//
+// Achado em produção (Marco 3.1): Items conectados ANTES do Marco 3 existir
+// nunca tiveram webhookUrl passado na criação (isso só entrou no options do
+// /connect_token a partir do Marco 3) — ficam UPDATED do lado da Pluggy, mas
+// o Cronos nunca é notificado, então nunca sincroniza. Não existe endpoint
+// para adicionar/alterar o webhookUrl de um Item já criado (confirmado —
+// webhookUrl só é aceito na criação do Item/Connect Token).
+//
+// Solução: POST /webhooks (Create Webhook) registra uma subscription a nível
+// de CLIENT (API Key), não vinculada a nenhum Item específico — confirmado
+// na doc ("client-level Webhook configuration", sem campo de filtro por
+// clientUserId ou itemId). Como cada usuário Cronos tem seu próprio
+// client_id/client_secret (1 aplicação Pluggy por usuário), esse webhook já
+// nasce escopado a esse usuário — cobre todos os Items dele, inclusive os
+// criados antes deste código existir, dali em diante (webhook nunca reenvia
+// eventos passados — o histórico já existente é puxado pelo sync manual).
+//
+// Nível de confiança: alto mas não validado com uma chamada real ainda —
+// baseado em três fontes cruzadas da doc (webhooks-create, webhooks-list,
+// texto de docs/webhooks sobre "client-level Webhook configuration").
+// Confirmar observando se pluggy_items.ultimo_sync_em do Item retroativo se
+// move sozinho no próximo ciclo de auto-sync da Pluggy.
+
+async function listarWebhooksPluggy(apiKey) {
+  const resposta = await httpsRequestJson('GET', `${PLUGGY_API_BASE}/webhooks`, null, { 'X-API-KEY': apiKey });
+  if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
+    console.error('[PLUGGY] Falha ao listar webhooks. status:', resposta.statusCode);
+    throw new Error('Não foi possível consultar os webhooks já registrados na Pluggy.');
+  }
+  const body = resposta.body;
+  return Array.isArray(body) ? body : (body?.results || []);
+}
+
+async function criarWebhookPluggy(apiKey, url, event = 'all') {
+  const resposta = await httpsRequestJson('POST', `${PLUGGY_API_BASE}/webhooks`, { url, event }, { 'X-API-KEY': apiKey });
+  if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
+    console.error('[PLUGGY] Falha ao criar webhook client-level. status:', resposta.statusCode);
+    throw new Error('Não foi possível registrar o webhook na Pluggy.');
+  }
+  return resposta.body;
+}
+
+// Função pura: um webhook conta como "já registrado" se existe um com a
+// mesma URL e não desabilitado. Extraída para ser testável sem I/O — mesma
+// razão de interpretarErroItem/decidirAcaoWebhook (Marco 3).
+function webhookJaRegistrado(webhooksExistentes, url) {
+  return webhooksExistentes.some((w) => w.url === url && !w.disabledAt);
+}
+
+// garantirWebhookRegistrado: garante que existe (cria se faltar) um webhook
+// client-level apontando para a URL do usuário. Idempotente — lista antes de
+// criar, para não duplicar (múltiplos webhooks para o mesmo evento geram
+// múltiplas notificações do mesmo evento, confirmado na doc). Gera o
+// webhook_token mesmo que o registro na Pluggy falhe adiante — o token
+// precisa existir de qualquer forma para (a) o endpoint /webhook/pluggy/:token
+// validar quando algo chamar, e (b) a URL fazer sentido se o usuário preferir
+// colar manualmente no dashboard da Pluggy dele (fallback quando o registro
+// automático não for possível/desejado).
+async function garantirWebhookRegistrado(usuarioId) {
+  const webhookToken = await db.obterOuCriarWebhookTokenPluggy(usuarioId);
+
+  const baseUrl = process.env.PAINEL_BASE_URL;
+  if (!baseUrl) {
+    throw new Error('PAINEL_BASE_URL não configurada — não é possível montar a URL do webhook.');
+  }
+  const webhookUrl = `${baseUrl.replace(/\/$/, '')}/webhook/pluggy/${webhookToken}`;
+
+  const apiKey = await buscarApiKeyDoUsuario(usuarioId);
+  const existentes = await listarWebhooksPluggy(apiKey);
+  const jaRegistrado = webhookJaRegistrado(existentes, webhookUrl);
+
+  if (!jaRegistrado) {
+    await criarWebhookPluggy(apiKey, webhookUrl, 'all');
+  }
+
+  return { webhookUrl, jaRegistrado };
+}
+
 // conectarItem: orquestra a criação de um Item novo a partir do itemId que o
 // widget devolveu no onSuccess (client-side). Busca os detalhes reais na
 // Pluggy (nunca confia em dado vindo só do frontend além do itemId), cria uma
@@ -433,6 +512,8 @@ async function processarWebhookEvent(usuarioId, payload) {
 module.exports = {
   gerarApiKey,
   gerarConnectToken,
+  garantirWebhookRegistrado,
+  webhookJaRegistrado,
   conectarItem,
   buscarTransacoesNovas,
   mapearTipoTransacaoPluggy,
