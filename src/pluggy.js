@@ -115,20 +115,32 @@ async function obterApiKey(clientId, clientSecret, clientUserId) {
   return apiKey;
 }
 
-// gerarConnectToken(clientId, clientSecret, clientUserId) -> connectToken (string)
+// gerarConnectToken(clientId, clientSecret, clientUserId, webhookUrl?) -> connectToken (string)
 //
 // clientUserId é o usuario_id do Cronos (resolvido pelo principal) — a Pluggy
 // devolve esse valor em todo evento de webhook do Item criado com esse token,
 // dando rastreabilidade de qual usuário Cronos é dono de qual Item.
-async function gerarConnectToken(clientId, clientSecret, clientUserId) {
+//
+// webhookUrl (opcional, Marco 3): registra o webhook já na criação do Item,
+// via options.webhookUrl do próprio /connect_token — confirmado em
+// docs.pluggy.ai/reference/connect-token-create ("Url to be notified of this
+// specific item changes"). Mais simples que uma chamada separada a
+// POST /webhooks (também existe, mas exigiria um segundo round-trip e não traz
+// vantagem aqui: cada usuário só tem uma URL de webhook, fixa, para todos os
+// seus Items). Sem webhookUrl, o Item é criado normalmente mas nunca notifica
+// — não há outro jeito de saber quando sincronizar.
+async function gerarConnectToken(clientId, clientSecret, clientUserId, webhookUrl = null) {
   const apiKey = await obterApiKey(clientId, clientSecret, clientUserId);
+
+  const options = { clientUserId };
+  if (webhookUrl) options.webhookUrl = webhookUrl;
 
   let resposta;
   try {
     resposta = await httpsRequestJson(
       'POST',
       `${PLUGGY_API_BASE}/connect_token`,
-      { options: { clientUserId } },
+      { options },
       { 'X-API-KEY': apiKey }
     );
   } catch (err) {
@@ -190,20 +202,26 @@ function rotuloTipoConta(subtype) {
   return 'Conta';
 }
 
-// conectarItem: orquestra a criação de um Item novo a partir do itemId que o
-// widget devolveu no onSuccess (client-side). Busca os detalhes reais na
-// Pluggy (nunca confia em dado vindo só do frontend além do itemId), cria uma
-// conta/cartão espelho por Account/CreditCard retornada, com saldo_inicial=0
-// (sync de transações — e portanto saldo real — é Marco 3).
-async function conectarItem(usuarioId, itemId) {
-  if (!itemId) throw new Error('itemId é obrigatório');
-
+// Busca a credencial do usuário e resolve a API Key (via cache) num só passo
+// — usado por toda função que precisa falar com a API Pluggy em nome de um
+// usuário (conectarItem, sincronizarItem, tratarErroItem).
+async function buscarApiKeyDoUsuario(usuarioId) {
   const credencial = await db.buscarCredencialPluggy(usuarioId);
   if (!credencial) {
     throw new Error('Nenhuma credencial Pluggy configurada. Configure em Configurações antes de conectar um banco.');
   }
+  return obterApiKey(credencial.clientId, credencial.clientSecret, usuarioId);
+}
 
-  const apiKey = await obterApiKey(credencial.clientId, credencial.clientSecret, usuarioId);
+// conectarItem: orquestra a criação de um Item novo a partir do itemId que o
+// widget devolveu no onSuccess (client-side). Busca os detalhes reais na
+// Pluggy (nunca confia em dado vindo só do frontend além do itemId), cria uma
+// conta/cartão espelho por Account/CreditCard retornada, com saldo_inicial=0
+// (sync de transações real acontece via webhook — ver sincronizarItem).
+async function conectarItem(usuarioId, itemId) {
+  if (!itemId) throw new Error('itemId é obrigatório');
+
+  const apiKey = await buscarApiKeyDoUsuario(usuarioId);
 
   const item = await buscarItemPluggy(apiKey, itemId);
   const connectorNome = item?.connector?.name || 'Banco conectado';
@@ -233,8 +251,195 @@ async function conectarItem(usuarioId, itemId) {
   return { connectorNome, status, itemId, contasCriadas: criadas };
 }
 
+// Teto de segurança contra paginação que nunca convirja (formato de cursor
+// inesperado, bug da API, etc) — nunca deveria ser atingido em uso normal.
+const LIMITE_TRANSACOES_POR_SYNC = 5000;
+
+// buscarTransacoesNovas(apiKey, accountId, desde?) -> Transaction[]
+//
+// GET /v2/transactions — endpoint atual (não-deprecated); o antigo
+// GET /transactions (page-based) está marcado deprecated na doc, disponível
+// só até 2026-12-31. Paginação é cursor-based (campo "next" na resposta,
+// não page/pageSize). "desde" filtra por data (parâmetro "from") — usado no
+// sync incremental para não rebuscar os mesmos 365 dias de histórico a cada
+// item/updated.
+//
+// Nota de confiança: não confirmei o formato exato do cursor "next" (URL
+// completa vs token) com uma chamada real — código aceita os dois formatos
+// defensivamente. Validar em sandbox real antes de depender disso em volume alto.
+async function buscarTransacoesNovas(apiKey, accountId, desde = null) {
+  const transacoes = [];
+  const baseUrl = `${PLUGGY_API_BASE}/v2/transactions?accountId=${encodeURIComponent(accountId)}`;
+  let proximaUrl = desde ? `${baseUrl}&from=${encodeURIComponent(desde)}` : baseUrl;
+
+  while (proximaUrl && transacoes.length < LIMITE_TRANSACOES_POR_SYNC) {
+    const resposta = await httpsRequestJson('GET', proximaUrl, null, { 'X-API-KEY': apiKey });
+    if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
+      console.error('[PLUGGY] Falha ao buscar transações. status:', resposta.statusCode);
+      throw new Error('Não foi possível buscar as transações. Tente novamente em instantes.');
+    }
+
+    const body = resposta.body;
+    const results = Array.isArray(body) ? body : (body?.results || []);
+    transacoes.push(...results);
+
+    const next = body?.next || null;
+    if (!next) {
+      proximaUrl = null;
+    } else if (String(next).startsWith('http')) {
+      proximaUrl = next;
+    } else {
+      proximaUrl = `${baseUrl}${desde ? `&from=${encodeURIComponent(desde)}` : ''}&after=${encodeURIComponent(next)}`;
+    }
+  }
+
+  return transacoes;
+}
+
+// Transaction.type -> tipo do Cronos. Função pura, testável sem I/O.
+function mapearTipoTransacaoPluggy(type) {
+  return type === 'CREDIT' ? 'receita' : 'despesa';
+}
+
+// Transaction.status -> status do Cronos. PENDING = fatura aberta/parcela
+// futura, POSTED (ou qualquer outro valor) = já liquidada — assume 'pago'
+// como fallback seguro por ser histórico bancário real, já aconteceu.
+function mapearStatusTransacaoPluggy(status) {
+  return status === 'PENDING' ? 'pendente' : 'pago';
+}
+
+// sincronizarItem: busca transações novas de todas as contas/cartões
+// mapeados de um Item e grava em transacoes (dedup + categoria resolvida).
+// Chamado a partir de item/created (primeiro sync, até 365 dias de histórico)
+// e item/updated (sync incremental, usa ultimo_sync_em como "desde").
+async function sincronizarItem(usuarioId, itemId) {
+  const apiKey = await buscarApiKeyDoUsuario(usuarioId);
+
+  const item = await buscarItemPluggy(apiKey, itemId);
+  await db.atualizarStatusPluggyItem(itemId, item?.status || 'UPDATED', null);
+
+  const mapaItem = await db.buscarPluggyItemPorItemId(itemId);
+  if (!mapaItem) {
+    // Webhook chegou antes do callback do widget persistir o Item (corrida
+    // rara) — não há pluggy_contas_map ainda para sincronizar. Auto-corrige
+    // no próximo item/updated (a Pluggy reenvia periodicamente).
+    return { transacoesSincronizadas: 0 };
+  }
+
+  const desde = mapaItem.ultimo_sync_em
+    ? new Date(mapaItem.ultimo_sync_em).toISOString().slice(0, 10)
+    : null;
+
+  const contasMapeadas = await db.listarContasMapPorItem(mapaItem.id);
+  let total = 0;
+
+  for (const mapa of contasMapeadas) {
+    const transacoesPluggy = await buscarTransacoesNovas(apiKey, mapa.pluggy_account_id, desde);
+
+    for (const tx of transacoesPluggy) {
+      if (!tx?.id) continue;
+      const tipo = mapearTipoTransacaoPluggy(tx.type);
+      const categoria = await db.resolverCategoriaPluggy(usuarioId, tx.category, tipo);
+
+      await db.upsertTransacaoPluggy(usuarioId, {
+        pluggyTransactionId: tx.id,
+        tipo,
+        valor: Math.abs(Number(tx.amount) || 0),
+        descricao: tx.description || 'Transação Pluggy',
+        categoria,
+        data: String(tx.date || '').slice(0, 10),
+        status: mapearStatusTransacaoPluggy(tx.status),
+        contaId: mapa.tipo === 'conta' ? mapa.cronos_conta_id : null,
+        cartaoId: mapa.tipo === 'cartao' ? mapa.cronos_cartao_id : null,
+      });
+      total++;
+    }
+  }
+
+  await db.marcarPluggyItemSincronizado(mapaItem.id);
+  return { transacoesSincronizadas: total };
+}
+
+// interpretarErroItem: decide status + mensagem amigável a partir do Item
+// retornado pela Pluggy num evento item/error. Função pura (sem I/O) —
+// extraída de tratarErroItem justamente para ser testável sem mockar rede.
+function interpretarErroItem(item) {
+  if (item?.executionStatus === 'INVALID_CREDENTIALS' || item?.status === 'LOGIN_ERROR') {
+    return {
+      status: item?.status || 'LOGIN_ERROR',
+      mensagem: 'Credencial do banco expirada ou inválida. Reconecte em Configurações.',
+    };
+  }
+  if (item?.status === 'WAITING_USER_INPUT' || item?.status === 'WAITING_USER_ACTION') {
+    return {
+      status: item.status,
+      mensagem: 'Confirmação pendente (autenticação de dois fatores). Reconecte para concluir.',
+    };
+  }
+  return {
+    status: item?.status || 'ERROR',
+    mensagem: 'Erro na conexão com o banco. Tente reconectar em Configurações.',
+  };
+}
+
+// tratarErroItem: item/error — busca o Item para saber o motivo exato
+// (credencial inválida vs MFA pendente vs outro) e grava uma mensagem
+// amigável em pluggy_items.erro_mensagem para a UI exibir. Se a busca falhar
+// (rede fora, credencial já removida), ainda assim grava um status/mensagem
+// genéricos — silêncio total seria pior que uma mensagem menos específica.
+async function tratarErroItem(usuarioId, itemId) {
+  let resultado = interpretarErroItem(null);
+
+  try {
+    const apiKey = await buscarApiKeyDoUsuario(usuarioId);
+    const item = await buscarItemPluggy(apiKey, itemId);
+    resultado = interpretarErroItem(item);
+  } catch (err) {
+    console.error('[PLUGGY] Erro ao detalhar item/error:', err.message);
+  }
+
+  await db.atualizarStatusPluggyItem(itemId, resultado.status, resultado.mensagem);
+}
+
+// decidirAcaoWebhook: mapeia o "event" do payload para a ação a tomar. Função
+// pura — separada de processarWebhookEvent para ser testável sem I/O.
+function decidirAcaoWebhook(event) {
+  if (event === 'item/created' || event === 'item/updated') return 'sincronizar';
+  if (event === 'item/error') return 'erro';
+  if (event === 'transactions/deleted') return 'deletar';
+  return 'ignorar';
+}
+
+// processarWebhookEvent: roteamento dos eventos tratados neste marco. Eventos
+// não listados (waiting_user_input, connector/status_updated, payment_*) caem
+// em 'ignorar' — o endpoint HTTP já respondeu 2XX antes de nos chamar, então
+// não processá-los não gera retry desnecessário da Pluggy.
+async function processarWebhookEvent(usuarioId, payload) {
+  const { event, itemId } = payload || {};
+  if (!itemId) return;
+
+  const acao = decidirAcaoWebhook(event);
+
+  if (acao === 'sincronizar') {
+    await sincronizarItem(usuarioId, itemId);
+  } else if (acao === 'erro') {
+    await tratarErroItem(usuarioId, itemId);
+  } else if (acao === 'deletar') {
+    const ids = Array.isArray(payload?.transactionIds) ? payload.transactionIds : [];
+    await db.removerTransacoesPluggyPorIds(ids);
+  }
+}
+
 module.exports = {
   gerarApiKey,
   gerarConnectToken,
   conectarItem,
+  buscarTransacoesNovas,
+  mapearTipoTransacaoPluggy,
+  mapearStatusTransacaoPluggy,
+  interpretarErroItem,
+  decidirAcaoWebhook,
+  sincronizarItem,
+  tratarErroItem,
+  processarWebhookEvent,
 };
