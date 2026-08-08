@@ -4,9 +4,121 @@ process.env.PLUGGY_ENCRYPTION_KEY = 'f'.repeat(64); // fixture de teste — NÃO
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const https = require('https');
 
 const db = require('../src/database');
 const pluggy = require('../src/pluggy');
+
+// ── buscarTransacoesNovas — paginação via https.request mockado ────────────────
+//
+// https.request é uma propriedade de um módulo core (singleton no processo) —
+// diferente de funções internas do próprio pluggy.js chamadas por binding
+// léxico (não mockáveis de fora, ver Marco 1/3), mockar https.request AQUI
+// funciona porque pluggy.js lê essa propriedade dinamicamente a cada chamada,
+// e o require('https') deste teste aponta para o mesmo objeto compartilhado.
+//
+// Simula o formato de "next" confirmado com chamada real em produção (ver
+// src/pluggy.js): path relativo completo começando com "?", ex.
+// "?accountId=X&after=BASE64" — não token isolado, não URL absoluta.
+function instalarMockHttps(t, paginas) {
+  const requestsFeitos = [];
+  let indice = 0;
+
+  t.mock.method(https, 'request', (options, callback) => {
+    requestsFeitos.push({ hostname: options.hostname, path: options.path });
+    const pagina = paginas[Math.min(indice, paginas.length - 1)];
+    indice++;
+
+    const req = new EventEmitter();
+    req.write = () => {};
+    req.end = () => {
+      const res = new EventEmitter();
+      res.statusCode = pagina.statusCode ?? 200;
+      queueMicrotask(() => {
+        callback(res);
+        res.emit('data', Buffer.from(JSON.stringify(pagina.body)));
+        res.emit('end');
+      });
+    };
+    return req;
+  });
+
+  return requestsFeitos;
+}
+
+test('buscarTransacoesNovas: cursor "next" relativo (formato real) monta a URL certa na segunda página, sem duplicar accountId', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [
+    {
+      body: {
+        results: [{ id: 'tx-1', type: 'DEBIT', amount: 50, date: '2026-08-01', status: 'POSTED' }],
+        next: '?accountId=acc-123&after=MjAyNi0wOA%3D%3D',
+      },
+    },
+    {
+      body: {
+        results: [{ id: 'tx-2', type: 'CREDIT', amount: 100, date: '2026-08-02', status: 'POSTED' }],
+        next: null,
+      },
+    },
+  ]);
+
+  const transacoes = await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-123');
+
+  assert.equal(transacoes.length, 2, 'deveria juntar os resultados das duas páginas');
+  assert.deepEqual(transacoes.map(t2 => t2.id), ['tx-1', 'tx-2']);
+
+  assert.equal(requestsFeitos.length, 2, 'deveria ter seguido a paginação (2 chamadas)');
+  assert.equal(requestsFeitos[0].path, '/v2/transactions?accountId=acc-123');
+  // Bug corrigido: a segunda chamada usava baseUrl + "&after=" + encodeURIComponent(next
+  // inteiro), gerando um "after" cujo valor era a própria query string re-encodada
+  // (400 da Pluggy). Correto: usar o "next" direto como path+query.
+  assert.equal(requestsFeitos[1].path, '/v2/transactions?accountId=acc-123&after=MjAyNi0wOA%3D%3D');
+});
+
+test('buscarTransacoesNovas: cursor "next" como URL absoluta é usado direto', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [
+    { body: { results: [{ id: 'tx-1', type: 'DEBIT', amount: 10, date: '2026-08-01', status: 'POSTED' }], next: 'https://api.pluggy.ai/v2/transactions?accountId=acc-999&after=xyz' } },
+    { body: { results: [], next: null } },
+  ]);
+
+  await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-999');
+
+  assert.equal(requestsFeitos[1].hostname, 'api.pluggy.ai');
+  assert.equal(requestsFeitos[1].path, '/v2/transactions?accountId=acc-999&after=xyz');
+});
+
+test('buscarTransacoesNovas: cursor "next" como token isolado (nunca observado, fallback defensivo)', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [
+    { body: { results: [], next: 'token-bare-sem-prefixo' } },
+    { body: { results: [], next: null } },
+  ]);
+
+  await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-111');
+
+  assert.equal(requestsFeitos[1].path, '/v2/transactions?accountId=acc-111&after=token-bare-sem-prefixo');
+});
+
+test('buscarTransacoesNovas: sem "next" para na primeira página', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [
+    { body: { results: [{ id: 'tx-unica', type: 'DEBIT', amount: 5, date: '2026-08-01', status: 'POSTED' }], next: null } },
+  ]);
+
+  const transacoes = await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-222');
+
+  assert.equal(transacoes.length, 1);
+  assert.equal(requestsFeitos.length, 1);
+});
+
+test('buscarTransacoesNovas: "desde" vira parâmetro "from" só na primeira chamada', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [
+    { body: { results: [], next: null } },
+  ]);
+
+  await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-333', '2026-08-01');
+
+  assert.equal(requestsFeitos[0].path, '/v2/transactions?accountId=acc-333&from=2026-08-01');
+});
 
 // ── mapearTipoTransacaoPluggy / mapearStatusTransacaoPluggy (funções puras) ────
 

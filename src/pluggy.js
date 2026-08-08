@@ -343,9 +343,12 @@ const LIMITE_TRANSACOES_POR_SYNC = 5000;
 // sync incremental para não rebuscar os mesmos 365 dias de histórico a cada
 // item/updated.
 //
-// Nota de confiança: não confirmei o formato exato do cursor "next" (URL
-// completa vs token) com uma chamada real — código aceita os dois formatos
-// defensivamente. Validar em sandbox real antes de depender disso em volume alto.
+// Formato do cursor "next" confirmado com chamada real (produção, credencial
+// do Federico, conta com histórico grande o bastante para paginar): vem como
+// path relativo completo — "?accountId=X&after=BASE64" — começando com "?",
+// não uma URL absoluta nem um token isolado. Monta-se direto contra
+// PLUGGY_API_BASE + "/v2/transactions", sem recolar accountId/from (o "next"
+// já é a query string inteira e correta devolvida pela própria Pluggy).
 async function buscarTransacoesNovas(apiKey, accountId, desde = null) {
   const transacoes = [];
   const baseUrl = `${PLUGGY_API_BASE}/v2/transactions?accountId=${encodeURIComponent(accountId)}`;
@@ -367,7 +370,14 @@ async function buscarTransacoesNovas(apiKey, accountId, desde = null) {
       proximaUrl = null;
     } else if (String(next).startsWith('http')) {
       proximaUrl = next;
+    } else if (String(next).startsWith('?')) {
+      // Formato real confirmado — path relativo já pronto, junta direto na
+      // origin (nunca recolar em cima de baseUrl, que duplicaria accountId/
+      // from e faria o "after" virar valor de outro "after", corrompido).
+      proximaUrl = `${PLUGGY_API_BASE}/v2/transactions${next}`;
     } else {
+      // Fallback defensivo — token bare, formato nunca observado em produção
+      // até agora. Mantido caso a Pluggy mude de novo.
       proximaUrl = `${baseUrl}${desde ? `&from=${encodeURIComponent(desde)}` : ''}&after=${encodeURIComponent(next)}`;
     }
   }
