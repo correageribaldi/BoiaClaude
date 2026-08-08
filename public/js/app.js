@@ -958,10 +958,14 @@ async function carregarPluggyItems() {
     const row = document.createElement('div');
     row.className = 'cartao-row';
     const label = PLUGGY_STATUS_LABEL[item.status] || `Status: ${esc(item.status || 'desconhecido')}`;
+    const detalheErro = item.erro_mensagem
+      ? `<span class="cartao-meta" style="color:var(--danger,#e74c3c)">${esc(item.erro_mensagem)}</span>`
+      : '';
     row.innerHTML = `
       <div class="cartao-info">
         <span class="cartao-nome">🏦 ${esc(item.connector_nome || 'Banco conectado')}</span>
         <span class="cartao-meta">${esc(label)}</span>
+        ${detalheErro}
       </div>
     `;
     list.appendChild(row);
