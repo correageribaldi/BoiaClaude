@@ -967,8 +967,70 @@ async function carregarPluggyItems() {
         <span class="cartao-meta">${esc(label)}</span>
         ${detalheErro}
       </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="action-btn" title="Sincronizar agora" onclick="sincronizarItemPluggy('${esc(item.item_id)}', this)">🔄</button>
+      </div>
     `;
     list.appendChild(row);
+  }
+}
+
+// Sincronização manual: ação explícita do usuário, então espera terminar
+// (diferente do webhook, que responde antes de processar) — pode demorar na
+// primeira vez (até 365 dias de histórico). Também serve para Items
+// conectados antes de terem webhook associado (nada de errado em clicar de
+// novo depois — sincronizarItem é incremental via ultimo_sync_em).
+async function sincronizarItemPluggy(itemId, btn) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    const resultado = await api(`/api/pluggy/items/${encodeURIComponent(itemId)}/sincronizar`, { method: 'POST' });
+    const n = resultado.transacoesSincronizadas || 0;
+    toast(n > 0 ? `Sincronizado! ${n} transação(ões) processada(s).` : 'Sincronizado — nenhuma transação nova.', 'success');
+    carregarPluggyItems();
+    carregarContas();
+    carregarCartoes();
+    carregarTransacoes();
+    if (tabAtual === 'dashboard') carregarDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+// URL do webhook (avançado) — expande sob demanda e busca só na primeira vez
+// que abrir (evita gerar/consultar o webhook_token sem necessidade).
+async function toggleWebhookUrlAvancado() {
+  const wrap = document.getElementById('pluggy-webhook-url-wrap');
+  const vaiAbrir = wrap.classList.contains('hidden');
+  wrap.classList.toggle('hidden');
+  if (!vaiAbrir) return;
+
+  const input = document.getElementById('pluggy-webhook-url');
+  if (input.value) return;
+
+  try {
+    const { webhookUrl } = await api('/api/pluggy/webhook-url');
+    input.value = webhookUrl;
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function copiarWebhookUrlPluggy() {
+  const input = document.getElementById('pluggy-webhook-url');
+  if (!input.value) return;
+  input.select();
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(input.value)
+      .then(() => toast('URL copiada!', 'success'))
+      .catch(() => toast('Não foi possível copiar — selecione e copie manualmente.', 'error'));
+  } else {
+    document.execCommand('copy');
+    toast('URL copiada!', 'success');
   }
 }
 
