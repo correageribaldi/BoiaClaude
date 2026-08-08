@@ -800,6 +800,40 @@ async function initTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_pluggy_credenciais_usuario ON pluggy_credenciais(usuario_id);
   `);
+
+  // ─── Módulo Pluggy — Open Finance (Marco 2: Items e contas/cartões espelho) ──
+  // Um Item pode ter múltiplas Accounts/CreditCards (ex: conta corrente + cartão
+  // no mesmo banco) — cada uma vira uma linha própria em contas/cartoes.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pluggy_items (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      item_id TEXT NOT NULL UNIQUE,
+      connector_nome TEXT,
+      status TEXT,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_pluggy_items_usuario ON pluggy_items(usuario_id);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pluggy_contas_map (
+      id SERIAL PRIMARY KEY,
+      pluggy_item_id INTEGER NOT NULL REFERENCES pluggy_items(id) ON DELETE CASCADE,
+      pluggy_account_id TEXT NOT NULL UNIQUE,
+      tipo TEXT NOT NULL CHECK(tipo IN ('conta', 'cartao')),
+      cronos_conta_id INTEGER REFERENCES contas(id),
+      cronos_cartao_id INTEGER REFERENCES cartoes(id),
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (
+        (tipo = 'conta' AND cronos_conta_id IS NOT NULL AND cronos_cartao_id IS NULL)
+        OR
+        (tipo = 'cartao' AND cronos_cartao_id IS NOT NULL AND cronos_conta_id IS NULL)
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_pluggy_contas_map_item ON pluggy_contas_map(pluggy_item_id);
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -3919,6 +3953,118 @@ async function removerCredencialPluggy(usuarioId) {
   return result.rowCount > 0;
 }
 
+// ─── Items e contas/cartões espelho Pluggy (Marco 2) ──────────────────────────
+
+async function salvarPluggyItem(usuarioId, itemId, connectorNome, status) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO pluggy_items (usuario_id, item_id, connector_nome, status, atualizado_em)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (item_id) DO UPDATE
+       SET connector_nome = EXCLUDED.connector_nome,
+           status = EXCLUDED.status,
+           atualizado_em = NOW()
+     RETURNING id`,
+    [uid, itemId, connectorNome || null, status || null]
+  );
+  return result.rows[0].id;
+}
+
+async function listarPluggyItems(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `SELECT id, item_id, connector_nome, status, criado_em, atualizado_em
+     FROM pluggy_items WHERE usuario_id = $1 ORDER BY criado_em DESC`,
+    [uid]
+  );
+  return result.rows;
+}
+
+// Retorna o primeiro nome disponível entre nomeBase, "nomeBase (2)", "nomeBase (3)"...
+// dado um conjunto de nomes já em uso. Comparação exata (case-sensitive), mesmo
+// critério do UNIQUE(usuario_id, nome) em contas. Função pura — sem I/O — para
+// ser testável isoladamente.
+function proximoNomeDisponivel(nomeBase, nomesEmUso) {
+  const usados = new Set(nomesEmUso);
+  if (!usados.has(nomeBase)) return nomeBase;
+  let n = 2;
+  while (usados.has(`${nomeBase} (${n})`)) n++;
+  return `${nomeBase} (${n})`;
+}
+
+// criarContaPluggy / criarCartaoPluggy: criam a conta/cartão espelho de uma
+// Account/CreditCard da Pluggy, com saldo_inicial=0 (Marco 2 não sincroniza
+// transações — saldo real só fica correto depois do Marco 3 popular
+// transacoes; calcularSaldosPorConta já soma isso automaticamente).
+//
+// Idempotentes por pluggy_account_id: se o mesmo Account já foi mapeado antes
+// (reprocessamento do mesmo callback, duplo clique etc), reaproveita a conta/
+// cartão existente em vez de criar duplicata.
+
+async function criarContaPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nomeSugerido, tipo = null) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const existenteRes = await pool.query(
+    `SELECT c.id, c.nome, c.tipo, c.saldo_inicial::float, c.ativo, c.padrao
+     FROM pluggy_contas_map m
+     JOIN contas c ON c.id = m.cronos_conta_id
+     WHERE m.pluggy_account_id = $1`,
+    [pluggyAccountId]
+  );
+  if (existenteRes.rows.length > 0) return existenteRes.rows[0];
+
+  const nomesRes = await pool.query(`SELECT nome FROM contas WHERE usuario_id = $1`, [uid]);
+  const nome = proximoNomeDisponivel(nomeSugerido, nomesRes.rows.map(r => r.nome));
+
+  const contaRes = await pool.query(
+    `INSERT INTO contas (usuario_id, nome, tipo, saldo_inicial)
+     VALUES ($1, $2, $3, 0)
+     RETURNING id, nome, tipo, saldo_inicial::float, ativo, padrao`,
+    [uid, nome, tipo || null]
+  );
+  const conta = contaRes.rows[0];
+
+  await pool.query(
+    `INSERT INTO pluggy_contas_map (pluggy_item_id, pluggy_account_id, tipo, cronos_conta_id)
+     VALUES ($1, $2, 'conta', $3)`,
+    [pluggyItemDbId, pluggyAccountId, conta.id]
+  );
+
+  return conta;
+}
+
+async function criarCartaoPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nomeSugerido) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const existenteRes = await pool.query(
+    `SELECT c.id, c.nome, c.limite_total::float, c.dia_fechamento, c.dia_vencimento
+     FROM pluggy_contas_map m
+     JOIN cartoes c ON c.id = m.cronos_cartao_id
+     WHERE m.pluggy_account_id = $1`,
+    [pluggyAccountId]
+  );
+  if (existenteRes.rows.length > 0) return existenteRes.rows[0];
+
+  const nomesRes = await pool.query(`SELECT nome FROM cartoes WHERE usuario_id = $1`, [uid]);
+  const nome = proximoNomeDisponivel(nomeSugerido, nomesRes.rows.map(r => r.nome));
+
+  const cartaoRes = await pool.query(
+    `INSERT INTO cartoes (usuario_id, nome)
+     VALUES ($1, $2)
+     RETURNING id, nome, limite_total::float, dia_fechamento, dia_vencimento`,
+    [uid, nome]
+  );
+  const cartao = cartaoRes.rows[0];
+
+  await pool.query(
+    `INSERT INTO pluggy_contas_map (pluggy_item_id, pluggy_account_id, tipo, cronos_cartao_id)
+     VALUES ($1, $2, 'cartao', $3)`,
+    [pluggyItemDbId, pluggyAccountId, cartao.id]
+  );
+
+  return cartao;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -4116,4 +4262,10 @@ module.exports = {
   buscarCredencialPluggy,
   usuarioTemCredencialPluggy,
   removerCredencialPluggy,
+  // Items e contas/cartões espelho Pluggy (Marco 2)
+  salvarPluggyItem,
+  listarPluggyItems,
+  proximoNomeDisponivel,
+  criarContaPluggy,
+  criarCartaoPluggy,
 };
