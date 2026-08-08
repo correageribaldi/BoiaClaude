@@ -902,6 +902,8 @@ async function carregarPluggyStatus() {
   const badge = document.getElementById('pluggy-status-badge');
   const btnConfigurar = document.getElementById('pluggy-btn-configurar');
   const btnRemover = document.getElementById('pluggy-btn-remover');
+  const btnConectar = document.getElementById('pluggy-btn-conectar');
+  const itemsWrap = document.getElementById('pluggy-items-wrap');
 
   btnConfigurar.classList.remove('hidden');
 
@@ -910,12 +912,114 @@ async function carregarPluggyStatus() {
     badge.classList.remove('empty-state');
     btnConfigurar.textContent = 'Substituir credencial';
     btnRemover.classList.remove('hidden');
+    btnConectar.classList.remove('hidden');
+    carregarPluggyItems();
   } else {
     badge.textContent = 'Nenhuma credencial configurada.';
     badge.classList.add('empty-state');
     btnConfigurar.textContent = 'Configurar credencial';
     btnRemover.classList.add('hidden');
+    btnConectar.classList.add('hidden');
+    itemsWrap.classList.add('hidden');
   }
+}
+
+// Status do Item traduzido do vocabulário bruto da Pluggy para rótulo em
+// português — se a Pluggy retornar um status novo/desconhecido, cai no
+// fallback genérico em vez de quebrar a UI.
+const PLUGGY_STATUS_LABEL = {
+  UPDATING: '🔄 Sincronizando',
+  UPDATED: '✅ Conectado',
+  LOGIN_ERROR: '⚠️ Erro de login — reconecte',
+  OUTDATED: '⚠️ Desatualizado',
+  WAITING_USER_INPUT: '⏳ Aguardando confirmação (MFA)',
+  WAITING_USER_ACTION: '⏳ Aguardando ação no app do banco',
+};
+
+async function carregarPluggyItems() {
+  let items;
+  try { items = await api('/api/pluggy/items'); }
+  catch { return; }
+
+  const wrap = document.getElementById('pluggy-items-wrap');
+  const list = document.getElementById('pluggy-items-list');
+  const empty = document.getElementById('pluggy-items-empty');
+
+  wrap.classList.remove('hidden');
+  list.innerHTML = '';
+
+  if (!items.length) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'cartao-row';
+    const label = PLUGGY_STATUS_LABEL[item.status] || `Status: ${esc(item.status || 'desconhecido')}`;
+    row.innerHTML = `
+      <div class="cartao-info">
+        <span class="cartao-nome">🏦 ${esc(item.connector_nome || 'Banco conectado')}</span>
+        <span class="cartao-meta">${esc(label)}</span>
+      </div>
+    `;
+    list.appendChild(row);
+  }
+}
+
+async function conectarBancoPluggy() {
+  const btn = document.getElementById('pluggy-btn-conectar');
+  if (typeof PluggyConnect === 'undefined') {
+    toast('Não foi possível carregar o widget da Pluggy. Recarregue a página.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Abrindo conexão...';
+
+  let connectToken;
+  try {
+    const resposta = await api('/api/pluggy/connect-token');
+    connectToken = resposta.connectToken;
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '+ Conectar banco/cartão';
+    return;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '+ Conectar banco/cartão';
+
+  const pluggyConnect = new PluggyConnect({
+    connectToken,
+    includeSandbox: false,
+    onSuccess: async (itemData) => {
+      // Formato exato de onSuccess não é 100% documentado — cobre as duas
+      // formas mais prováveis (itemData.item.id e itemData.id).
+      const itemId = itemData?.item?.id || itemData?.id;
+      if (!itemId) {
+        toast('Conexão concluída, mas não foi possível identificar o banco. Contate o suporte.', 'error');
+        return;
+      }
+      try {
+        await api('/api/pluggy/item-callback', { method: 'POST', body: JSON.stringify({ itemId }) });
+        toast('Banco conectado! As transações começam a sincronizar em breve.', 'success');
+        carregarPluggyItems();
+        carregarContas();
+        carregarCartoes();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    },
+    onError: (error) => {
+      console.error('[PLUGGY]', error);
+      toast('Não foi possível conectar o banco. Tente novamente.', 'error');
+    },
+  });
+
+  pluggyConnect.init();
 }
 
 function abrirModalPluggy() {
