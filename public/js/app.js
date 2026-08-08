@@ -14,6 +14,7 @@ let _saldoAtual = null;
 let _meNome = '';
 let _detalheSaldoAberto = false;
 let _detalheContasCache = null;
+let _detalheCartoesCache = null;
 
 // ── Tema claro / escuro ────────────────────────────────────────────────────
 function getTheme() { return localStorage.getItem('cronos_theme') || 'dark'; }
@@ -492,6 +493,7 @@ async function carregarDashboard() {
   const { mes, ano } = estado.dash;
   document.getElementById('dash-mes-label').textContent = MESES[mes - 1] + ' ' + ano;
   _detalheContasCache = null; // saldo por conta pode ter mudado desde o último load
+  _detalheCartoesCache = null; // uso de cartão pode ter mudado desde o último load
 
   let data;
   try { data = await api(`/api/dashboard?mes=${mes}&ano=${ano}`); }
@@ -590,17 +592,29 @@ async function renderDetalheSaldo() {
     try { _detalheContasCache = await api('/api/contas'); }
     catch { _detalheContasCache = []; }
   }
+  if (!_detalheCartoesCache) {
+    try { _detalheCartoesCache = await api('/api/cartoes/uso'); }
+    catch { _detalheCartoesCache = []; }
+  }
 
   const contas = _detalheContasCache || [];
-  if (!contas.length) {
+  const cartoes = _detalheCartoesCache || [];
+  if (!contas.length && !cartoes.length) {
     el.innerHTML = '<div class="dash-detalhe-vazio">Nenhuma conta cadastrada ainda.</div>';
   } else {
-    el.innerHTML = contas.map(c => `
+    const linhasContas = contas.map(c => `
       <div class="dash-detalhe-row">
         <span class="dash-detalhe-nome">🏦 ${esc(c.nome)}</span>
         <span class="dash-detalhe-valor">${_saldoOculto ? '••••••' : fmtMoeda(c.saldo)}</span>
       </div>
     `).join('');
+    const linhasCartoes = cartoes.map(c => `
+      <div class="dash-detalhe-row">
+        <span class="dash-detalhe-nome">💳 ${esc(c.nome)}</span>
+        <span class="dash-detalhe-valor">${_saldoOculto ? '••••••' : fmtMoeda(c.valorUsado)}</span>
+      </div>
+    `).join('');
+    el.innerHTML = linhasContas + linhasCartoes;
   }
   el.classList.remove('hidden');
 }

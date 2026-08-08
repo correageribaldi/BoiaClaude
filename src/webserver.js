@@ -671,6 +671,19 @@ app.delete('/api/cartoes/:id', autenticar, async (req, res) => {
   }
 });
 
+app.get('/api/cartoes/uso', autenticar, async (req, res) => {
+  try {
+    const cartoes = await db.listarCartoes(req.usuarioId);
+    const comUso = await Promise.all(cartoes.map(async (c) => {
+      const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
+      return { id: c.id, nome: c.nome, valorUsado: uso.total, limiteTotal: c.limite_total };
+    }));
+    res.json(comUso);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Pluggy (Open Finance) — Marco 1: credenciais por usuário ─────────────────
 // client_secret nunca é devolvido por nenhuma dessas rotas, em nenhuma hipótese
 // (nem mascarado) — é write-only do ponto de vista da API.
