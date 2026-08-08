@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const crypto = require('crypto');
 const pluggyCrypto = require('./pluggyCrypto');
 
 const pool = new Pool({
@@ -833,6 +834,30 @@ async function initTables() {
       )
     );
     CREATE INDEX IF NOT EXISTS idx_pluggy_contas_map_item ON pluggy_contas_map(pluggy_item_id);
+  `);
+
+  // ─── Módulo Pluggy — Open Finance (Marco 3: webhook e sync de transações) ────
+  // webhook_token: 1 por usuário (não por Item) -- precisa existir ANTES do
+  // Item ser criado, para ir dentro de options.webhookUrl na geração do Connect
+  // Token (só assim a Pluggy já nasce notificando esse Item sem uma chamada
+  // POST /webhooks separada). Ver src/pluggy.js (gerarConnectToken).
+  await pool.query(`
+    ALTER TABLE pluggy_credenciais ADD COLUMN IF NOT EXISTS webhook_token TEXT UNIQUE;
+  `);
+
+  // erro_mensagem: detalhe amigável de item/error, para a UI explicar o que
+  // aconteceu além do status bruto. ultimo_sync_em: usado como filtro "from"
+  // na busca de transações do próximo sync incremental (evita rebuscar os
+  // mesmos 365 dias de histórico a cada item/updated).
+  await pool.query(`
+    ALTER TABLE pluggy_items ADD COLUMN IF NOT EXISTS erro_mensagem TEXT;
+    ALTER TABLE pluggy_items ADD COLUMN IF NOT EXISTS ultimo_sync_em TIMESTAMPTZ;
+  `);
+
+  // Dedup de transações sincronizadas — UNIQUE em coluna nullable permite
+  // múltiplos NULL (transações manuais) sem conflito entre si no Postgres.
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS pluggy_transaction_id TEXT UNIQUE;
   `);
 }
 
@@ -3973,7 +3998,7 @@ async function salvarPluggyItem(usuarioId, itemId, connectorNome, status) {
 async function listarPluggyItems(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `SELECT id, item_id, connector_nome, status, criado_em, atualizado_em
+    `SELECT id, item_id, connector_nome, status, erro_mensagem, ultimo_sync_em, criado_em, atualizado_em
      FROM pluggy_items WHERE usuario_id = $1 ORDER BY criado_em DESC`,
     [uid]
   );
@@ -4063,6 +4088,163 @@ async function criarCartaoPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nom
   );
 
   return cartao;
+}
+
+// ─── Webhook e sincronização de transações Pluggy (Marco 3) ───────────────────
+
+// webhook_token é 1 por usuário (não por Item) — gerado sob demanda na
+// primeira vez que for necessário (ao gerar um Connect Token). Alta entropia
+// (24 bytes) porque é o único mecanismo de autenticação do endpoint de
+// webhook — sem ele, qualquer requisição é rejeitada com 401 sem processar.
+async function obterOuCriarWebhookTokenPluggy(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT webhook_token FROM pluggy_credenciais WHERE usuario_id = $1`,
+    [uid]
+  );
+  if (res.rows.length === 0) {
+    throw new Error('Nenhuma credencial Pluggy configurada para este usuário.');
+  }
+  if (res.rows[0].webhook_token) return res.rows[0].webhook_token;
+
+  const token = crypto.randomBytes(24).toString('hex');
+  await pool.query(
+    `UPDATE pluggy_credenciais SET webhook_token = $2 WHERE usuario_id = $1`,
+    [uid, token]
+  );
+  return token;
+}
+
+// Uso interno do endpoint público de webhook — resolve o token da URL para o
+// usuário dono, sem confiar em nenhum outro dado do payload para autenticação.
+async function buscarUsuarioIdPorWebhookToken(token) {
+  if (!token) return null;
+  const res = await pool.query(
+    `SELECT usuario_id FROM pluggy_credenciais WHERE webhook_token = $1`,
+    [token]
+  );
+  return res.rows[0]?.usuario_id || null;
+}
+
+async function buscarPluggyItemPorItemId(itemId) {
+  const res = await pool.query(
+    `SELECT id, usuario_id, status, ultimo_sync_em
+     FROM pluggy_items WHERE item_id = $1`,
+    [itemId]
+  );
+  return res.rows[0] || null;
+}
+
+// status gravado é o valor bruto retornado pela Pluggy (ex: "UPDATED",
+// "LOGIN_ERROR") — a tradução para rótulo em português acontece só na UI
+// (public/js/app.js, PLUGGY_STATUS_LABEL), não aqui.
+async function atualizarStatusPluggyItem(itemId, status, erroMensagem = null) {
+  const res = await pool.query(
+    `UPDATE pluggy_items SET status = $2, erro_mensagem = $3, atualizado_em = NOW()
+     WHERE item_id = $1 RETURNING id`,
+    [itemId, status || null, erroMensagem]
+  );
+  return res.rows[0]?.id || null;
+}
+
+async function marcarPluggyItemSincronizado(pluggyItemDbId) {
+  await pool.query(
+    `UPDATE pluggy_items SET ultimo_sync_em = NOW() WHERE id = $1`,
+    [pluggyItemDbId]
+  );
+}
+
+async function listarContasMapPorItem(pluggyItemDbId) {
+  const res = await pool.query(
+    `SELECT pluggy_account_id, tipo, cronos_conta_id, cronos_cartao_id
+     FROM pluggy_contas_map WHERE pluggy_item_id = $1`,
+    [pluggyItemDbId]
+  );
+  return res.rows;
+}
+
+async function buscarMapeamentoContaPorAccountId(pluggyAccountId) {
+  const res = await pool.query(
+    `SELECT tipo, cronos_conta_id, cronos_cartao_id FROM pluggy_contas_map WHERE pluggy_account_id = $1`,
+    [pluggyAccountId]
+  );
+  return res.rows[0] || null;
+}
+
+const CATEGORIA_GENERICA_PLUGGY_POR_TIPO = {
+  despesa: 'Outros',
+  receita: 'Outras Receitas',
+};
+
+// Tenta casar a categoria da Pluggy com uma subcategoria já cadastrada do
+// usuário (fuzzy via ILIKE, mesmo padrão de buscarContasPorNome), respeitando
+// o tipo despesa/receita. Sem match único (0 ou >1 resultados) ou sem
+// categoria vinda da Pluggy (category exige plano Pro — pode vir null), cai
+// no fallback genérico já usado no fluxo manual (CATEGORIA_GENERICA_POR_TIPO
+// em src/agente-financeiro.js). Nunca cria subcategoria nova a partir do nome
+// da Pluggy — evitaria poluir a lista curada de categorias do usuário, que
+// sustenta a distribuição de orçamento por percentual.
+async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo) {
+  const generica = CATEGORIA_GENERICA_PLUGGY_POR_TIPO[tipo] || 'Outros';
+  if (!categoriaPluggy) return generica;
+
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT categoria FROM limites_categoria
+     WHERE usuario_id = $1 AND ativo = TRUE
+       AND (tipo = $2 OR tipo = 'ambos' OR tipo IS NULL)
+       AND categoria ILIKE $3
+     LIMIT 2`,
+    [uid, tipo, `%${categoriaPluggy}%`]
+  );
+
+  if (res.rows.length === 1) return res.rows[0].categoria;
+  return generica; // 0 ou >1 matches — ambíguo demais para decidir sozinho
+}
+
+// Dedup por pluggy_transaction_id: UPDATE se já existe (valor/status/categoria
+// podem mudar entre syncs — ex: fatura que estava PENDING vira POSTED), INSERT
+// se é nova. Mesmo padrão de numero_usuario via subquery de adicionarTransacao
+// (linha ~875).
+async function upsertTransacaoPluggy(usuarioId, dados) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const {
+    pluggyTransactionId, tipo, valor, descricao, categoria, data, status, contaId, cartaoId,
+  } = dados;
+
+  const existente = await pool.query(
+    `SELECT id FROM transacoes WHERE pluggy_transaction_id = $1`,
+    [pluggyTransactionId]
+  );
+
+  if (existente.rows.length > 0) {
+    await pool.query(
+      `UPDATE transacoes
+       SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6
+       WHERE pluggy_transaction_id = $1`,
+      [pluggyTransactionId, valor, descricao, categoria, data, status]
+    );
+    return { id: existente.rows[0].id, novo: false };
+  }
+
+  const res = await pool.query(
+    `INSERT INTO transacoes
+       (usuario_id, tipo, valor, descricao, categoria, data, status, conta_id, cartao_id, pluggy_transaction_id, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+       (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
+     RETURNING id`,
+    [uid, tipo, valor, descricao, categoria || 'Outros', data, status, contaId || null, cartaoId || null, pluggyTransactionId]
+  );
+  return { id: res.rows[0].id, novo: true };
+}
+
+async function removerTransacoesPluggyPorIds(pluggyTransactionIds) {
+  if (!pluggyTransactionIds?.length) return 0;
+  const res = await pool.query(
+    `DELETE FROM transacoes WHERE pluggy_transaction_id = ANY($1::text[])`,
+    [pluggyTransactionIds]
+  );
+  return res.rowCount;
 }
 
 module.exports = {
@@ -4268,4 +4450,15 @@ module.exports = {
   proximoNomeDisponivel,
   criarContaPluggy,
   criarCartaoPluggy,
+  // Webhook e sincronização de transações Pluggy (Marco 3)
+  obterOuCriarWebhookTokenPluggy,
+  buscarUsuarioIdPorWebhookToken,
+  buscarPluggyItemPorItemId,
+  atualizarStatusPluggyItem,
+  marcarPluggyItemSincronizado,
+  listarContasMapPorItem,
+  buscarMapeamentoContaPorAccountId,
+  resolverCategoriaPluggy,
+  upsertTransacaoPluggy,
+  removerTransacoesPluggyPorIds,
 };
