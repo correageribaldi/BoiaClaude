@@ -426,6 +426,19 @@
 
         <div class="accordion-item">
           <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>🔗 Pluggy (Open Finance)</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <p class="accordion-desc">Conecte contas e cartões automaticamente via Open Finance. Crie suas credenciais em <a href="https://dashboard.pluggy.ai" target="_blank" rel="noopener noreferrer">dashboard.pluggy.ai</a> e cole aqui.</p>
+            <div id="pluggy-status-badge" class="empty-state">Carregando...</div>
+            <button class="btn btn-primary hidden" style="margin-top:12px" id="pluggy-btn-configurar" onclick="abrirModalPluggy()">Configurar credencial</button>
+            <button class="btn btn-secondary hidden" style="margin-top:8px" id="pluggy-btn-remover" onclick="removerCredencialPluggy()">Remover credencial</button>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
             <span>💰 Investimentos</span>
             <span class="accordion-icon">›</span>
           </button>
@@ -809,6 +822,28 @@
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="fecharModalConta()">Cancelar</button>
       <button class="btn btn-primary" onclick="salvarConta()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal de credencial Pluggy ────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-pluggy-credenciais">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3>Credencial Pluggy</h3>
+      <button class="modal-close" onclick="fecharModalPluggy()">✕</button>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Client ID</label>
+      <input type="text" id="pluggy-client-id" class="input" placeholder="Client ID da Pluggy" autocomplete="off">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Client Secret</label>
+      <input type="password" id="pluggy-client-secret" class="input" placeholder="Client Secret da Pluggy" autocomplete="off">
+    </div>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalPluggy()">Cancelar</button>
+      <button class="btn btn-primary" id="pluggy-btn-salvar" onclick="salvarCredencialPluggy()">Salvar e testar</button>
     </div>
   </div>
 </div>

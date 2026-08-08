@@ -890,7 +890,73 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas()]);
+  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarPluggyStatus()]);
+}
+
+// ── Pluggy (Open Finance) ───────────────────────────────────────────────────
+async function carregarPluggyStatus() {
+  let status;
+  try { status = await api('/api/pluggy/credenciais'); }
+  catch { return; }
+
+  const badge = document.getElementById('pluggy-status-badge');
+  const btnConfigurar = document.getElementById('pluggy-btn-configurar');
+  const btnRemover = document.getElementById('pluggy-btn-remover');
+
+  btnConfigurar.classList.remove('hidden');
+
+  if (status.configurado) {
+    badge.textContent = '✅ Credencial configurada';
+    badge.classList.remove('empty-state');
+    btnConfigurar.textContent = 'Substituir credencial';
+    btnRemover.classList.remove('hidden');
+  } else {
+    badge.textContent = 'Nenhuma credencial configurada.';
+    badge.classList.add('empty-state');
+    btnConfigurar.textContent = 'Configurar credencial';
+    btnRemover.classList.add('hidden');
+  }
+}
+
+function abrirModalPluggy() {
+  // Campos sempre vazios ao abrir — write-only, nunca pré-popula com o que já foi salvo.
+  document.getElementById('pluggy-client-id').value = '';
+  document.getElementById('pluggy-client-secret').value = '';
+  document.getElementById('modal-pluggy-credenciais').classList.remove('hidden');
+}
+
+function fecharModalPluggy() {
+  document.getElementById('modal-pluggy-credenciais').classList.add('hidden');
+}
+
+async function salvarCredencialPluggy() {
+  const client_id = document.getElementById('pluggy-client-id').value.trim();
+  const client_secret = document.getElementById('pluggy-client-secret').value.trim();
+  if (!client_id || !client_secret) { toast('Preencha Client ID e Client Secret', 'error'); return; }
+
+  const btn = document.getElementById('pluggy-btn-salvar');
+  btn.disabled = true;
+  btn.textContent = 'Testando...';
+  try {
+    await api('/api/pluggy/credenciais', { method: 'POST', body: JSON.stringify({ client_id, client_secret }) });
+    toast('Credencial Pluggy salva!', 'success');
+    fecharModalPluggy();
+    carregarPluggyStatus();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Salvar e testar';
+  }
+}
+
+async function removerCredencialPluggy() {
+  if (!confirm('Remover a credencial Pluggy? Bancos conectados vão parar de sincronizar.')) return;
+  try {
+    await api('/api/pluggy/credenciais', { method: 'DELETE' });
+    toast('Credencial removida.', 'success');
+    carregarPluggyStatus();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ── Contas ───────────────────────────────────────────────────────────────────
