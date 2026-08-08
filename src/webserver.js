@@ -715,6 +715,49 @@ app.delete('/api/pluggy/credenciais', autenticar, async (req, res) => {
   }
 });
 
+// ── Pluggy (Open Finance) — Marco 2: fluxo de conexão ─────────────────────────
+
+app.get('/api/pluggy/connect-token', autenticar, async (req, res) => {
+  try {
+    const credencial = await db.buscarCredencialPluggy(req.usuarioId);
+    if (!credencial) {
+      return res.status(400).json({ erro: 'Configure sua credencial Pluggy antes de conectar um banco.' });
+    }
+    const connectToken = await pluggy.gerarConnectToken(credencial.clientId, credencial.clientSecret, req.usuarioId);
+    res.json({ connectToken });
+  } catch (err) {
+    console.error('[WEB] GET /api/pluggy/connect-token:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+// Chamado pelo frontend a partir do onSuccess do widget (client-side) — nunca
+// confia em dado vindo do frontend além do itemId: busca o Item e as Accounts
+// de verdade na API Pluggy (server-side, com a API Key do usuário) antes de
+// criar qualquer coisa.
+app.post('/api/pluggy/item-callback', autenticar, async (req, res) => {
+  try {
+    const { itemId } = req.body || {};
+    if (!itemId) return res.status(400).json({ erro: 'itemId é obrigatório' });
+
+    const resultado = await pluggy.conectarItem(req.usuarioId, itemId);
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    console.error('[WEB] POST /api/pluggy/item-callback:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+app.get('/api/pluggy/items', autenticar, async (req, res) => {
+  try {
+    const items = await db.listarPluggyItems(req.usuarioId);
+    res.json(items);
+  } catch (err) {
+    console.error('[WEB] GET /api/pluggy/items:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ── Caixinhas (Investimentos) ────────────────────────────────────────────────
 app.get('/api/caixinhas', autenticar, async (req, res) => {
   try {
