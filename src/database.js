@@ -4135,6 +4135,21 @@ async function buscarPluggyItemPorItemId(itemId) {
   return res.rows[0] || null;
 }
 
+// Uso do endpoint de sincronização manual — filtra por usuário na própria
+// query (não busca sem filtro e compara depois em JS), para não deixar
+// margem a um usuário autenticado sincronizar o Item de outro só por saber o
+// item_id (IDOR). Resolve pelo usuário principal antes de comparar, mesmo
+// mecanismo de contas compartilhadas usado no resto do arquivo.
+async function buscarPluggyItemDoUsuario(usuarioId, itemId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT id, usuario_id, status, ultimo_sync_em
+     FROM pluggy_items WHERE item_id = $1 AND usuario_id = $2`,
+    [itemId, uid]
+  );
+  return res.rows[0] || null;
+}
+
 // status gravado é o valor bruto retornado pela Pluggy (ex: "UPDATED",
 // "LOGIN_ERROR") — a tradução para rótulo em português acontece só na UI
 // (public/js/app.js, PLUGGY_STATUS_LABEL), não aqui.
@@ -4454,6 +4469,7 @@ module.exports = {
   obterOuCriarWebhookTokenPluggy,
   buscarUsuarioIdPorWebhookToken,
   buscarPluggyItemPorItemId,
+  buscarPluggyItemDoUsuario,
   atualizarStatusPluggyItem,
   marcarPluggyItemSincronizado,
   listarContasMapPorItem,
