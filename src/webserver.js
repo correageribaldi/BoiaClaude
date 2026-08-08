@@ -5,6 +5,7 @@ const db = require('./database');
 const pagamento = require('./pagamento');
 const cronAdmin = require('./cron-admin');
 const gcal = require('./google-calendar');
+const pluggy = require('./pluggy');
 
 const EULA_PDF_PATH = path.join(__dirname, '../docs/cronos-eula.pdf');
 
@@ -666,6 +667,50 @@ app.delete('/api/cartoes/:id', autenticar, async (req, res) => {
     res.json({ ok: true, nome });
   } catch (err) {
     console.error('[WEB] DELETE /api/cartoes/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Pluggy (Open Finance) — Marco 1: credenciais por usuário ─────────────────
+// client_secret nunca é devolvido por nenhuma dessas rotas, em nenhuma hipótese
+// (nem mascarado) — é write-only do ponto de vista da API.
+
+app.post('/api/pluggy/credenciais', autenticar, async (req, res) => {
+  try {
+    const { client_id, client_secret } = req.body || {};
+    if (!client_id || !client_secret) {
+      return res.status(400).json({ erro: 'client_id e client_secret são obrigatórios' });
+    }
+
+    // Testa a credencial de verdade na API Pluggy antes de gravar — evita
+    // salvar uma credencial inválida que só seria descoberta ao tentar conectar
+    // um banco (Marco 2).
+    await pluggy.gerarApiKey(client_id, client_secret);
+
+    await db.salvarCredencialPluggy(req.usuarioId, client_id, client_secret);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] POST /api/pluggy/credenciais:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
+app.get('/api/pluggy/credenciais', autenticar, async (req, res) => {
+  try {
+    const configurado = await db.usuarioTemCredencialPluggy(req.usuarioId);
+    res.json({ configurado });
+  } catch (err) {
+    console.error('[WEB] GET /api/pluggy/credenciais:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/pluggy/credenciais', autenticar, async (req, res) => {
+  try {
+    await db.removerCredencialPluggy(req.usuarioId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/pluggy/credenciais:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
