@@ -139,6 +139,38 @@ test('buscarTransacoesNovas: paginação com "desde" usa "createdAtFrom" no fall
   );
 });
 
+// ── Sync completo vs incremental (calcularDesdeSync + requisição montada) ─────
+
+test('calcularDesdeSync: incremental usa ultimo_sync_em como filtro de data', () => {
+  assert.equal(pluggy.calcularDesdeSync('2026-08-01T13:45:00.000Z', false), '2026-08-01');
+});
+
+test('calcularDesdeSync: modo completo IGNORA ultimo_sync_em (rebusca tudo)', () => {
+  assert.equal(pluggy.calcularDesdeSync('2026-08-01T13:45:00.000Z', true), null);
+});
+
+test('calcularDesdeSync: primeiro sync (sem ultimo_sync_em) também rebusca tudo', () => {
+  assert.equal(pluggy.calcularDesdeSync(null, false), null);
+  assert.equal(pluggy.calcularDesdeSync(undefined, false), null);
+});
+
+test('sync incremental monta a requisição com createdAtFrom; completo monta SEM', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [{ body: { results: [], next: null } }]);
+  const ultimoSync = '2026-08-01T13:45:00.000Z';
+
+  // incremental
+  await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-555', pluggy.calcularDesdeSync(ultimoSync, false));
+  // completo — mesmo Item, mesmo ultimo_sync_em
+  await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-555', pluggy.calcularDesdeSync(ultimoSync, true));
+
+  assert.equal(requestsFeitos[0].path, '/v2/transactions?accountId=acc-555&createdAtFrom=2026-08-01');
+  assert.equal(
+    requestsFeitos[1].path,
+    '/v2/transactions?accountId=acc-555',
+    'sem createdAtFrom a Pluggy devolve toda a janela — é assim que o histórico é recategorizado'
+  );
+});
+
 // ── mapearTipoTransacaoPluggy / mapearStatusTransacaoPluggy (funções puras) ────
 
 test('mapearTipoTransacaoPluggy: CREDIT vira receita', () => {

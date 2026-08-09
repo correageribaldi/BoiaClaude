@@ -535,6 +535,21 @@ async function buscarTransacoesNovas(apiKey, accountId, desde = null) {
   return transacoes;
 }
 
+// calcularDesdeSync: decide o filtro de data ("desde") de um sync. Função
+// pura, extraída para ser testável sem rede/Redis — mesmo motivo de
+// interpretarErroItem e decidirAcaoWebhook.
+//
+// - incremental (padrão): usa ultimo_sync_em, para não rebuscar o mesmo
+//   histórico a cada item/updated;
+// - completo: retorna null de propósito, que faz buscarTransacoesNovas OMITIR
+//   createdAtFrom e trazer toda a janela que a Pluggy ainda tem. É o que
+//   permite recategorizar lançamentos antigos;
+// - primeiro sync (ultimo_sync_em nulo): também null — já era o comportamento.
+function calcularDesdeSync(ultimoSyncEm, completo = false) {
+  if (completo || !ultimoSyncEm) return null;
+  return new Date(ultimoSyncEm).toISOString().slice(0, 10);
+}
+
 // Transaction.type -> tipo do Cronos. Função pura, testável sem I/O.
 function mapearTipoTransacaoPluggy(type) {
   return type === 'CREDIT' ? 'receita' : 'despesa';
@@ -551,7 +566,16 @@ function mapearStatusTransacaoPluggy(status) {
 // mapeados de um Item e grava em transacoes (dedup + categoria resolvida).
 // Chamado a partir de item/created (primeiro sync, até 365 dias de histórico)
 // e item/updated (sync incremental, usa ultimo_sync_em como "desde").
-async function sincronizarItem(usuarioId, itemId) {
+//
+// opcoes.completo (default false): ignora ultimo_sync_em e rebusca TODA a
+// janela disponível na Pluggy (até 365 dias), deixando o upsert reescrever a
+// categoria das transações que já existem. É como o usuário recategoriza um
+// histórico que foi importado antes de o Cronos saber traduzir categoria — e
+// respeita categoria_manual, então correção feita à mão continua de pé.
+// Nunca é acionado por webhook: é caro (rebusca tudo, ~milhares de linhas) e
+// só faz sentido como ação explícita do usuário.
+async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
+  const completo = opcoes.completo === true;
   const apiKey = await buscarApiKeyDoUsuario(usuarioId);
 
   const item = await buscarItemPluggy(apiKey, itemId);
@@ -562,12 +586,10 @@ async function sincronizarItem(usuarioId, itemId) {
     // Webhook chegou antes do callback do widget persistir o Item (corrida
     // rara) — não há pluggy_contas_map ainda para sincronizar. Auto-corrige
     // no próximo item/updated (a Pluggy reenvia periodicamente).
-    return { transacoesSincronizadas: 0 };
+    return { transacoesSincronizadas: 0, completo };
   }
 
-  const desde = mapaItem.ultimo_sync_em
-    ? new Date(mapaItem.ultimo_sync_em).toISOString().slice(0, 10)
-    : null;
+  const desde = calcularDesdeSync(mapaItem.ultimo_sync_em, completo);
 
   const contasMapeadas = await db.listarContasMapPorItem(mapaItem.id);
 
@@ -668,7 +690,7 @@ async function sincronizarItem(usuarioId, itemId) {
   }
 
   await db.marcarPluggyItemSincronizado(mapaItem.id);
-  return { transacoesSincronizadas: total };
+  return { transacoesSincronizadas: total, completo };
 }
 
 // interpretarErroItem: decide status + mensagem amigável a partir do Item
@@ -752,6 +774,7 @@ module.exports = {
   traduzirCategoriaPluggy,
   acharGrupoRaizCategoria,
   categoriaPrincipalParaGrupoRaiz,
+  calcularDesdeSync,
   mapearTipoTransacaoPluggy,
   mapearStatusTransacaoPluggy,
   interpretarErroItem,

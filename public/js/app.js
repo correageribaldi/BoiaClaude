@@ -1042,7 +1042,8 @@ async function carregarPluggyItems() {
         ${detalheErro}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
-        <button class="action-btn" title="Sincronizar agora" onclick="sincronizarItemPluggy('${esc(item.item_id)}', this)">🔄</button>
+        <button class="action-btn" title="Sincronizar agora (só o que é novo)" onclick="sincronizarItemPluggy('${esc(item.item_id)}', this)">🔄</button>
+        <button class="action-btn" title="Re-sincronizar tudo e recategorizar o histórico (mais demorado)" onclick="resincronizarTudoPluggy('${esc(item.item_id)}', this)">♻️</button>
       </div>
     `;
     list.appendChild(row);
@@ -1054,14 +1055,21 @@ async function carregarPluggyItems() {
 // primeira vez (até 365 dias de histórico). Também serve para Items
 // conectados antes de terem webhook associado (nada de errado em clicar de
 // novo depois — sincronizarItem é incremental via ultimo_sync_em).
-async function sincronizarItemPluggy(itemId, btn) {
+async function sincronizarItemPluggy(itemId, btn, completo = false) {
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⏳';
   try {
-    const resultado = await api(`/api/pluggy/items/${encodeURIComponent(itemId)}/sincronizar`, { method: 'POST' });
+    const resultado = await api(`/api/pluggy/items/${encodeURIComponent(itemId)}/sincronizar`, {
+      method: 'POST',
+      body: JSON.stringify({ completo }),
+    });
     const n = resultado.transacoesSincronizadas || 0;
-    toast(n > 0 ? `Sincronizado! ${n} transação(ões) processada(s).` : 'Sincronizado — nenhuma transação nova.', 'success');
+    if (completo) {
+      toast(`Re-sincronização completa: ${n} lançamento(s) reprocessado(s).`, 'success');
+    } else {
+      toast(n > 0 ? `Sincronizado! ${n} transação(ões) processada(s).` : 'Sincronizado — nenhuma transação nova.', 'success');
+    }
     carregarPluggyItems();
     carregarContas();
     carregarCartoes();
@@ -1073,6 +1081,23 @@ async function sincronizarItemPluggy(itemId, btn) {
     btn.disabled = false;
     btn.textContent = original;
   }
+}
+
+// Re-sincronização completa: rebusca TODO o histórico que a Pluggy ainda tem
+// (até 365 dias) em vez de só o incremental, para recategorizar lançamentos
+// antigos — os que foram importados antes de o Cronos saber traduzir a
+// categoria e ficaram em "Outros". Confirmação explícita porque é bem mais
+// pesada que o sync normal e pode mudar a categoria de muitos lançamentos de
+// uma vez. Categoria corrigida à mão nunca é sobrescrita.
+async function resincronizarTudoPluggy(itemId, btn) {
+  const ok = confirm(
+    'Re-sincronizar tudo?\n\n'
+    + 'Rebusca todo o histórico disponível na Pluggy e recategoriza os lançamentos antigos.\n'
+    + 'Demora bem mais que a sincronização normal — pode levar alguns minutos.\n\n'
+    + 'As categorias que você corrigiu manualmente são preservadas.'
+  );
+  if (!ok) return;
+  return sincronizarItemPluggy(itemId, btn, true);
 }
 
 // URL do webhook (avançado) — expande sob demanda e busca só na primeira vez

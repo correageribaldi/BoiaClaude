@@ -827,9 +827,15 @@ app.get('/api/pluggy/items', autenticar, async (req, res) => {
 // webhook (que responde 2XX antes de processar por causa do limite de 5s da
 // Pluggy). Cobre o caso de Items conectados antes de terem webhook associado
 // (achado em produção) e serve como "puxar agora" a qualquer momento.
+//
+// body { completo: true } faz a re-sincronização COMPLETA: ignora
+// ultimo_sync_em e rebusca toda a janela da Pluggy, recategorizando o
+// histórico já importado (respeitando categoria corrigida à mão). É bem mais
+// pesada que o incremental, por isso é opt-in e nunca o padrão.
 app.post('/api/pluggy/items/:itemId/sincronizar', autenticar, async (req, res) => {
   try {
     const { itemId } = req.params;
+    const completo = req.body?.completo === true;
     const item = await db.buscarPluggyItemDoUsuario(req.usuarioId, itemId);
     if (!item) return res.status(404).json({ erro: 'Item não encontrado.' });
 
@@ -842,7 +848,7 @@ app.post('/api/pluggy/items/:itemId/sincronizar', autenticar, async (req, res) =
       console.error('[WEB] Falha ao garantir webhook registrado (sincronização manual segue de qualquer forma):', err.message);
     }
 
-    const resultado = await pluggy.sincronizarItem(req.usuarioId, itemId);
+    const resultado = await pluggy.sincronizarItem(req.usuarioId, itemId, { completo });
     res.json({ ok: true, ...resultado });
   } catch (err) {
     console.error('[WEB] POST /api/pluggy/items/:itemId/sincronizar:', err.message);
