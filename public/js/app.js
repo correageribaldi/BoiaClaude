@@ -2261,7 +2261,33 @@ async function adminRetomar(usuarioId) {
 // ── Navegação ─────────────────────────────────────────────────────────────────
 let tabAtual = 'dashboard';
 
-function ativarTab(tab) {
+// Reseta filtros/paginação/busca da aba Transações para o estado padrão ("Todas")
+// e sincroniza a UI dos filter-tabs. Usado sempre que a aba é aberta pela navegação
+// normal, para não deixar filtro de uma visita anterior "grudado" silenciosamente.
+function resetFiltrosTx() {
+  estado.tx.filtroStatus = '';
+  estado.tx.filtroTipo = '';
+  estado.tx.filtroRecorrente = false;
+  estado.tx.busca = '';
+  estado.tx.pagina = 1;
+  const busca = document.getElementById('tx-search');
+  if (busca) busca.value = '';
+  syncFiltroTabUI();
+}
+
+// Garante que o filter-tab destacado na UI reflita o filtro realmente aplicado
+// em estado.tx (evita "Todas" ficar marcado enquanto a lista está filtrada).
+function syncFiltroTabUI() {
+  const e = estado.tx;
+  document.querySelectorAll('.filter-tab').forEach(btn => {
+    const match = (btn.dataset.filter ?? '') === e.filtroStatus
+      && (btn.dataset.filterTipo ?? '') === e.filtroTipo
+      && (btn.dataset.filterRecorrente === '1') === !!e.filtroRecorrente;
+    btn.classList.toggle('active', match);
+  });
+}
+
+function ativarTab(tab, opts = {}) {
   tabAtual = tab;
   localStorage.setItem('cronos_tab_ativa', tab);
   document.querySelectorAll('.tab-content').forEach(s => s.classList.add('hidden'));
@@ -2274,7 +2300,15 @@ function ativarTab(tab) {
     carregarUltimasTx();
     carregarProximosLembretes();
   }
-  if (tab === 'transactions') carregarTransacoes();
+  if (tab === 'transactions') {
+    // Só preserva filtro/página quando quem chamou pediu explicitamente
+    // (ex: atalhos de "a pagar/a receber" do dashboard). Navegação normal
+    // pela aba sempre volta pra "Todas" — sem isso, um filtro aplicado uma
+    // vez ficava grudado em qualquer troca de aba seguinte.
+    if (!opts.manterFiltro) resetFiltrosTx();
+    else syncFiltroTabUI();
+    carregarTransacoes();
+  }
   if (tab === 'categories') carregarCategorias();
   if (tab === 'agenda') carregarAgenda();
   if (tab === 'admin') carregarAdmin();
@@ -2434,13 +2468,13 @@ function inicializar() {
     const e = estado.dash;
     estado.tx.mes = e.mes; estado.tx.ano = e.ano;
     estado.tx.filtroStatus = 'pendente'; estado.tx.filtroTipo = 'receita'; estado.tx.pagina = 1;
-    ativarTab('transactions');
+    ativarTab('transactions', { manterFiltro: true });
   });
   document.getElementById('alert-pagar')?.addEventListener('click', () => {
     const e = estado.dash;
     estado.tx.mes = e.mes; estado.tx.ano = e.ano;
     estado.tx.filtroStatus = 'pendente'; estado.tx.filtroTipo = 'despesa'; estado.tx.pagina = 1;
-    ativarTab('transactions');
+    ativarTab('transactions', { manterFiltro: true });
   });
 
   // Transações nav
