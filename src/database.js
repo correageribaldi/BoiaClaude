@@ -881,6 +881,18 @@ async function initTables() {
   await pool.query(`
     ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS pluggy_transaction_id TEXT UNIQUE;
   `);
+
+  // categoria_manual: marca que a categoria daquela linha foi escolhida pelo
+  // USUÁRIO (painel, WhatsApp ou IA), não pela sincronização. Bug de produção
+  // que motiva a coluna: upsertTransacaoPluggy reescrevia categoria a cada
+  // re-sync (comportamento correto para valor/status — PENDING→POSTED), o que
+  // destruía silenciosamente qualquer correção manual. Com a flag, o re-sync
+  // continua atualizando valor/status/data/descrição e só preserva a categoria.
+  // DEFAULT FALSE + NOT NULL não reescreve a tabela no PG 11+ (default é
+  // guardado no catálogo), então é seguro mesmo com histórico grande.
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS categoria_manual BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -1173,12 +1185,22 @@ async function buscarTransacoesPorDescricao(usuarioId, query, tipo) {
   return result.rows;
 }
 
+// Ponto único de edição de campo de transação — usado pelo painel
+// (src/webserver.js: PUT /api/transactions/:id), pelo fluxo WhatsApp
+// (src/handlers.js: aplicarEdicaoTx) e pelo function calling da IA
+// (src/agente-financeiro.js). Por isso a marcação de categoria manual mora
+// aqui: qualquer caminho de edição fica protegido do re-sync sem duplicar regra.
 async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const camposPermitidos = ['valor', 'data', 'descricao', 'categoria', 'conta_id'];
   if (!camposPermitidos.includes(campo)) throw new Error(`Campo inválido: ${campo}`);
+
+  // Literal fixo, não interpolação de entrada — campo já passou pelo whitelist
+  // acima (mesma proteção que o `SET ${campo}` existente).
+  const marcarManual = campo === 'categoria' ? ', categoria_manual = TRUE' : '';
+
   const result = await pool.query(
-    `UPDATE transacoes SET ${campo} = $1
+    `UPDATE transacoes SET ${campo} = $1${marcarManual}
      WHERE numero_usuario = $2 AND usuario_id = $3
      RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, cartao_id, conta_id`,
     [novoValor, numeroUsuario, uid]
@@ -4308,6 +4330,11 @@ async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categor
 // podem mudar entre syncs — ex: fatura que estava PENDING vira POSTED), INSERT
 // se é nova. Mesmo padrão de numero_usuario via subquery de adicionarTransacao
 // (linha ~875).
+//
+// Exceção da categoria: se categoria_manual = TRUE, o usuário já corrigiu essa
+// linha à mão — valor/status/data/descrição continuam sendo atualizados
+// normalmente (o banco é a fonte da verdade para eles), mas a categoria fica
+// como está. Sem isso, todo re-sync desfazia a correção em silêncio.
 async function upsertTransacaoPluggy(usuarioId, dados) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const {
@@ -4315,17 +4342,26 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   } = dados;
 
   const existente = await pool.query(
-    `SELECT id FROM transacoes WHERE pluggy_transaction_id = $1`,
+    `SELECT id, categoria_manual FROM transacoes WHERE pluggy_transaction_id = $1`,
     [pluggyTransactionId]
   );
 
   if (existente.rows.length > 0) {
-    await pool.query(
-      `UPDATE transacoes
-       SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6
-       WHERE pluggy_transaction_id = $1`,
-      [pluggyTransactionId, valor, descricao, categoria, data, status]
-    );
+    if (existente.rows[0].categoria_manual) {
+      await pool.query(
+        `UPDATE transacoes
+         SET valor = $2, descricao = $3, data = $4, status = $5
+         WHERE pluggy_transaction_id = $1`,
+        [pluggyTransactionId, valor, descricao, data, status]
+      );
+    } else {
+      await pool.query(
+        `UPDATE transacoes
+         SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6
+         WHERE pluggy_transaction_id = $1`,
+        [pluggyTransactionId, valor, descricao, categoria, data, status]
+      );
+    }
     return { id: existente.rows[0].id, novo: false };
   }
 

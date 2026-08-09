@@ -71,7 +71,7 @@ test('upsertTransacaoPluggy: transação nova faz INSERT com numero_usuario calc
   const queries = [];
   t.mock.method(db.pool, 'query', async (sql, params) => {
     queries.push({ sql, params });
-    if (sql.includes('SELECT id FROM transacoes WHERE pluggy_transaction_id')) return { rows: [] };
+    if (sql.includes('FROM transacoes WHERE pluggy_transaction_id')) return { rows: [] };
     if (sql.includes('INSERT INTO transacoes')) return { rows: [{ id: 42 }] };
     throw new Error(`Query inesperada: ${sql}`);
   });
@@ -102,7 +102,7 @@ test('upsertTransacaoPluggy: transação já existente (mesmo pluggy_transaction
   const queries = [];
   t.mock.method(db.pool, 'query', async (sql, params) => {
     queries.push({ sql, params });
-    if (sql.includes('SELECT id FROM transacoes WHERE pluggy_transaction_id')) return { rows: [{ id: 7 }] };
+    if (sql.includes('FROM transacoes WHERE pluggy_transaction_id')) return { rows: [{ id: 7 }] };
     if (sql.startsWith('\n      UPDATE transacoes') || sql.includes('UPDATE transacoes')) return { rows: [] };
     throw new Error(`Query inesperada: ${sql}`);
   });
