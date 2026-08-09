@@ -316,7 +316,11 @@ async function conectarItem(usuarioId, itemId) {
 
     if (account.type === 'CREDIT') {
       const nomeSugerido = `${connectorNome} • Cartão`;
-      const cartao = await db.criarCartaoPluggy(usuarioId, pluggyItemDbId, account.id, nomeSugerido);
+      // Bug de produção corrigido: limite_total nunca era populado na criação
+      // (ficava NULL) — creditLimit vem em creditData, direto da API.
+      const limiteTotal = typeof account.creditData?.creditLimit === 'number'
+        ? account.creditData.creditLimit : null;
+      const cartao = await db.criarCartaoPluggy(usuarioId, pluggyItemDbId, account.id, nomeSugerido, limiteTotal);
       criadas.push({ tipo: 'cartao', ...cartao });
     } else {
       const nomeSugerido = `${connectorNome} • ${rotuloTipoConta(account.subtype)}`;
@@ -421,12 +425,12 @@ async function sincronizarItem(usuarioId, itemId) {
 
   const contasMapeadas = await db.listarContasMapPorItem(mapaItem.id);
 
-  // Accounts atualizadas (com balance real) — só busca se houver alguma conta
-  // bancária mapeada, para não gastar uma chamada de API à toa em Items que só
-  // têm cartão. Usado para calibrar saldo_inicial logo abaixo.
-  const temContaBancaria = contasMapeadas.some((m) => m.tipo === 'conta');
+  // Accounts atualizadas (balance, e para cartão também creditData) — só
+  // busca se houver alguma conta/cartão mapeado (sempre verdade se chegou
+  // até aqui, mas evita uma chamada à toa em teoria). Usado para calibrar
+  // saldo_inicial (conta bancária) e limite/usado/disponível (cartão) abaixo.
   const accountsPorId = new Map();
-  if (temContaBancaria) {
+  if (contasMapeadas.length > 0) {
     for (const account of await buscarAccountsPluggy(apiKey, itemId)) {
       if (account?.id) accountsPorId.set(account.id, account);
     }
@@ -467,6 +471,24 @@ async function sincronizarItem(usuarioId, itemId) {
           await db.calibrarSaldoInicialConta(usuarioId, mapa.cronos_conta_id, account.balance);
         } catch (err) {
           console.error('[PLUGGY] Falha ao calibrar saldo_inicial da conta:', err.message);
+        }
+      }
+    } else if (mapa.tipo === 'cartao') {
+      // Números REAIS da API (balance = usado, creditData.creditLimit/
+      // availableCreditLimit) — nunca calculados a partir de transacoes
+      // (calcularUsoCartao é para cartão manual, sem relação com o ciclo de
+      // fatura real da Pluggy). Idempotente, mesma lógica de calibração acima.
+      const account = accountsPorId.get(mapa.pluggy_account_id);
+      if (account) {
+        const limiteTotal = typeof account.creditData?.creditLimit === 'number'
+          ? account.creditData.creditLimit : null;
+        const valorUsado = typeof account.balance === 'number' ? account.balance : null;
+        const disponivel = typeof account.creditData?.availableCreditLimit === 'number'
+          ? account.creditData.availableCreditLimit : null;
+        try {
+          await db.atualizarCartaoPluggyDados(usuarioId, mapa.cronos_cartao_id, { limiteTotal, valorUsado, disponivel });
+        } catch (err) {
+          console.error('[PLUGGY] Falha ao atualizar dados do cartão:', err.message);
         }
       }
     }
