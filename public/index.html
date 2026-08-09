@@ -334,7 +334,7 @@
           <select class="search-input tx-origem-select" id="tx-filtro-origem">
             <option value="">Todas as origens</option>
           </select>
-          <input class="search-input" id="tx-search" type="text" placeholder="Buscar por descrição..." />
+          <input class="search-input" id="tx-search" type="search" autocomplete="off" placeholder="Buscar por descrição..." />
         </div>
       </div>
 
@@ -380,7 +380,7 @@
             <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
               <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Adicionar nova categoria principal</p>
               <div class="create-bar">
-                <input class="search-input" id="catprincipal-nova-nome" type="text" placeholder="Nome da categoria..." maxlength="50" />
+                <input class="search-input" id="catprincipal-nova-nome" type="text" autocomplete="off" placeholder="Nome da categoria..." maxlength="50" />
                 <button class="btn btn-primary" id="catprincipal-criar" onclick="criarCategoriaPrincipal()">+ Criar</button>
               </div>
             </div>
@@ -402,7 +402,7 @@
                 <select class="search-input" id="sub-parent-select" style="flex:0 0 auto;width:auto;min-width:140px">
                   <option value="">Categoria...</option>
                 </select>
-                <input class="search-input" id="sub-nova-nome" type="text" placeholder="Nome da subcategoria..." maxlength="50" style="flex:1" />
+                <input class="search-input" id="sub-nova-nome" type="text" autocomplete="off" placeholder="Nome da subcategoria..." maxlength="50" style="flex:1" />
                 <button class="btn btn-primary" id="sub-criar">+ Criar</button>
               </div>
             </div>
@@ -571,7 +571,7 @@
         <div class="admin-row" style="margin-bottom:12px">
           <div class="input-group" style="flex:1">
             <label>Buscar por nome ou número</label>
-            <input type="text" id="adm-ind-busca" placeholder="Ex: João..." class="search-input">
+            <input type="search" autocomplete="off" id="adm-ind-busca" placeholder="Ex: João..." class="search-input">
           </div>
         </div>
         <div id="adm-ind-lista"></div>
@@ -632,7 +632,7 @@
       <div class="admin-card" style="margin-top:16px">
         <div class="admin-card-header">
           <h3>Usuários</h3>
-          <input class="search-input" id="adm-busca" type="text" placeholder="Buscar por nome ou número..." style="max-width:220px" />
+          <input class="search-input" id="adm-busca" type="search" autocomplete="off" placeholder="Buscar por nome ou número..." style="max-width:220px" />
         </div>
 
         <div class="table-wrap">
