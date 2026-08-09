@@ -1516,6 +1516,7 @@ async function calcularSaldosPorConta(usuarioId) {
              FROM transacoes t
              WHERE t.usuario_id = $1
                AND t.status = 'pago'
+               AND t.cartao_id IS NULL
                AND (
                  t.conta_id = c.id
                  OR (t.conta_id IS NULL AND c.padrao = TRUE)
