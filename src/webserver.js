@@ -675,6 +675,14 @@ app.get('/api/cartoes/uso', autenticar, async (req, res) => {
   try {
     const cartoes = await db.listarCartoes(req.usuarioId);
     const comUso = await Promise.all(cartoes.map(async (c) => {
+      // Cartão Pluggy: pluggy_valor_usado preenchido significa que já passou
+      // por sincronizarItem — usa o número real da API, sem calcular nada a
+      // partir de transacoes (calcularUsoCartao não tem relação com o ciclo
+      // de fatura real da Pluggy). Cartão manual (nunca sincronizou):
+      // continua exatamente como antes.
+      if (c.pluggy_valor_usado !== null && c.pluggy_valor_usado !== undefined) {
+        return { id: c.id, nome: c.nome, valorUsado: c.pluggy_valor_usado, limiteTotal: c.limite_total, disponivel: c.pluggy_disponivel };
+      }
       const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
       return { id: c.id, nome: c.nome, valorUsado: uso.total, limiteTotal: c.limite_total };
     }));

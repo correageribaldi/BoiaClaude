@@ -798,6 +798,16 @@ async function initTables() {
     WHERE cartao_id IS NOT NULL AND conta_id IS NOT NULL;
   `);
 
+  // Colunas para cartão espelho Pluggy: valores REAIS da API (Account.balance
+  // e Account.creditData.availableCreditLimit), nunca calculados a partir de
+  // transacoes — diferente de calcularUsoCartao (feito para cartão manual,
+  // sem relação com o ciclo de fatura real). Nullable: cartão manual nunca
+  // preenche essas colunas, continua usando calcularUsoCartao como sempre.
+  await pool.query(`
+    ALTER TABLE cartoes ADD COLUMN IF NOT EXISTS pluggy_valor_usado NUMERIC(12,2);
+    ALTER TABLE cartoes ADD COLUMN IF NOT EXISTS pluggy_disponivel NUMERIC(12,2);
+  `);
+
   // ─── Módulo Pluggy — Open Finance (Marco 1: credenciais por usuário) ─────────
   // client_secret nunca em texto plano — cifrado (AES-256-GCM) em src/pluggyCrypto.js.
   // Uma credencial por usuário (UNIQUE) — recriar é UPDATE, não nova linha.
@@ -2911,7 +2921,8 @@ async function criarCartao(usuarioId, nome, limiteTotal, diaFechamento, diaVenci
 async function listarCartoes(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const res = await pool.query(
-    `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento
+    `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento,
+            pluggy_valor_usado::float, pluggy_disponivel::float
      FROM cartoes WHERE usuario_id = $1 ORDER BY nome`,
     [uid]
   );
@@ -4080,7 +4091,7 @@ async function criarContaPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nome
   return conta;
 }
 
-async function criarCartaoPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nomeSugerido) {
+async function criarCartaoPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nomeSugerido, limiteTotal = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
 
   const existenteRes = await pool.query(
@@ -4095,11 +4106,14 @@ async function criarCartaoPluggy(usuarioId, pluggyItemDbId, pluggyAccountId, nom
   const nomesRes = await pool.query(`SELECT nome FROM cartoes WHERE usuario_id = $1`, [uid]);
   const nome = proximoNomeDisponivel(nomeSugerido, nomesRes.rows.map(r => r.nome));
 
+  // Bug de produção corrigido: cartão criado na conexão inicial nunca
+  // populava limite_total (ficava NULL) — o valor real (Account.creditData.
+  // creditLimit) só chegava a partir daqui, se algum chamador passasse.
   const cartaoRes = await pool.query(
-    `INSERT INTO cartoes (usuario_id, nome)
-     VALUES ($1, $2)
+    `INSERT INTO cartoes (usuario_id, nome, limite_total)
+     VALUES ($1, $2, $3)
      RETURNING id, nome, limite_total::float, dia_fechamento, dia_vencimento`,
-    [uid, nome]
+    [uid, nome, limiteTotal]
   );
   const cartao = cartaoRes.rows[0];
 
@@ -4324,6 +4338,27 @@ async function calibrarSaldoInicialConta(usuarioId, contaId, balanceReal) {
   return novoSaldoInicial;
 }
 
+// Atualiza limite/usado/disponível de um cartão espelho Pluggy com os valores
+// REAIS da API (Account.balance, Account.creditData.creditLimit/
+// availableCreditLimit) — nunca calculados a partir de transacoes. Chamado a
+// cada sync bem-sucedido de uma Account tipo CREDIT (mesmo raciocínio de
+// calibrarSaldoInicialConta: idempotente, recalcula do zero, sempre converge).
+// limiteTotal usa COALESCE para não apagar um valor já existente se a API não
+// trouxer creditLimit numa chamada específica; valorUsado/disponivel são
+// sempre sobrescritos (só existem quando vêm da Pluggy, não há "manual" a
+// preservar).
+async function atualizarCartaoPluggyDados(usuarioId, cartaoId, { limiteTotal, valorUsado, disponivel }) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  await pool.query(
+    `UPDATE cartoes
+     SET limite_total = COALESCE($2, limite_total),
+         pluggy_valor_usado = $3,
+         pluggy_disponivel = $4
+     WHERE id = $1 AND usuario_id = $5`,
+    [cartaoId, limiteTotal, valorUsado, disponivel, uid]
+  );
+}
+
 module.exports = {
   pool,
   initTables,
@@ -4540,4 +4575,5 @@ module.exports = {
   upsertTransacaoPluggy,
   removerTransacoesPluggyPorIds,
   calibrarSaldoInicialConta,
+  atualizarCartaoPluggyDados,
 };
