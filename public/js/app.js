@@ -611,7 +611,7 @@ async function renderDetalheSaldo() {
     const linhasCartoes = cartoes.map(c => `
       <div class="dash-detalhe-row">
         <span class="dash-detalhe-nome">💳 ${esc(c.nome)}</span>
-        <span class="dash-detalhe-valor">${_saldoOculto ? '••••••' : fmtMoeda(c.valorUsado)}</span>
+        <span class="dash-detalhe-valor">${_saldoOculto ? '••••••' : (c.disponivel !== null && c.disponivel !== undefined ? `${fmtMoeda(c.disponivel)} disponível` : fmtMoeda(c.valorUsado))}</span>
       </div>
     `).join('');
     el.innerHTML = linhasContas + linhasCartoes;

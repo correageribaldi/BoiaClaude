@@ -681,10 +681,15 @@ app.get('/api/cartoes/uso', autenticar, async (req, res) => {
       // de fatura real da Pluggy). Cartão manual (nunca sincronizou):
       // continua exatamente como antes.
       if (c.pluggy_valor_usado !== null && c.pluggy_valor_usado !== undefined) {
-        return { id: c.id, nome: c.nome, valorUsado: c.pluggy_valor_usado, limiteTotal: c.limite_total, disponivel: c.pluggy_disponivel };
+        const disponivelPluggy = (c.pluggy_disponivel !== null && c.pluggy_disponivel !== undefined)
+          ? c.pluggy_disponivel
+          : (c.limite_total !== null && c.limite_total !== undefined ? c.limite_total - c.pluggy_valor_usado : null);
+        return { id: c.id, nome: c.nome, valorUsado: c.pluggy_valor_usado, limiteTotal: c.limite_total, disponivel: disponivelPluggy };
       }
       const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
-      return { id: c.id, nome: c.nome, valorUsado: uso.total, limiteTotal: c.limite_total };
+      const limiteTotal = c.limite_total;
+      const disponivel = limiteTotal !== null && limiteTotal !== undefined ? limiteTotal - uso.total : null;
+      return { id: c.id, nome: c.nome, valorUsado: uso.total, limiteTotal, disponivel };
     }));
     res.json(comUso);
   } catch (err) {
