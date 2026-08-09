@@ -30,6 +30,12 @@ const PLUGGY_AUTH_URL = `${PLUGGY_API_BASE}/auth`;
 // operação de vários passos como conectarItem).
 const API_KEY_CACHE_TTL_SEGUNDOS = 110 * 60;
 
+// Taxonomia de categorias da Pluggy é fixa e global (não muda por usuário/
+// client, ~130 entradas) — cache longo e com chave GLOBAL (não por usuário),
+// para que o primeiro usuário que sincronizar já beneficie todos os outros.
+const CATEGORIAS_CACHE_TTL_SEGUNDOS = 7 * 24 * 60 * 60; // 7 dias
+const CATEGORIAS_CACHE_KEY = 'pluggy:categorias';
+
 function httpsRequestJson(method, url, body, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -334,6 +340,85 @@ async function conectarItem(usuarioId, itemId) {
   return { connectorNome, status, itemId, contasCriadas: criadas };
 }
 
+// ─── Tradução de categoria (achado de produção: 100% das transações caíam em
+// "Outros" porque tx.category vem em inglês, ex. "Groceries", e
+// resolverCategoriaPluggy tentava fuzzy-match direto contra as categorias em
+// português do usuário — nunca batia) ───────────────────────────────────────
+//
+// GET /categories devolve a taxonomia oficial já com a tradução pronta
+// (descriptionTranslated), sem precisar manter um dicionário manual. Buscada
+// 1x por sync (não por transação) e cacheada globalmente (ver
+// CATEGORIAS_CACHE_KEY acima).
+
+// Achado ao testar esta função: a conexão Redis do projeto (src/queue.js) usa
+// maxRetriesPerRequest: null — exigência do BullMQ para não perder job, mas
+// tem o efeito colateral de nenhuma operação (get/set) rejeitar sozinha
+// quando o Redis está inacessível: fica tentando pra sempre em vez de dar
+// erro. Reproduzido no teste (Promise nunca resolvia sem Redis local).
+// redisComTimeout desiste depois de REDIS_TIMEOUT_MS e cai no catch — sem
+// isso, o comentário "Falha de Redis nunca quebra o fluxo" já em obterApiKey
+// (mesmo padrão, código do Marco 2/3) seria falso na prática se o Redis de
+// produção cair: travaria indefinidamente em vez de degradar sem cache. Não
+// mexi em obterApiKey aqui (fora do escopo desta tarefa, código já em
+// produção) — reportado como achado de robustez separado.
+const REDIS_TIMEOUT_MS = 1500;
+function redisComTimeout(promise) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao acessar Redis')), REDIS_TIMEOUT_MS)),
+  ]);
+}
+
+async function buscarCategoriasPluggy(apiKey) {
+  const redis = obterRedis();
+
+  try {
+    const cacheado = await redisComTimeout(redis.get(CATEGORIAS_CACHE_KEY));
+    if (cacheado) return JSON.parse(cacheado);
+  } catch (err) {
+    console.error('[PLUGGY] Redis indisponível para leitura de cache de categorias (seguindo sem cache):', err.message);
+  }
+
+  const resposta = await httpsRequestJson('GET', `${PLUGGY_API_BASE}/categories`, null, { 'X-API-KEY': apiKey });
+  if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
+    console.error('[PLUGGY] Falha ao buscar categorias. status:', resposta.statusCode);
+    throw new Error('Não foi possível buscar a lista de categorias da Pluggy.');
+  }
+  const body = resposta.body;
+  const categorias = Array.isArray(body) ? body : (body?.results || []);
+
+  try {
+    await redisComTimeout(redis.set(CATEGORIAS_CACHE_KEY, JSON.stringify(categorias), 'EX', CATEGORIAS_CACHE_TTL_SEGUNDOS));
+  } catch (err) {
+    console.error('[PLUGGY] Redis indisponível para gravar cache de categorias (seguindo sem cache):', err.message);
+  }
+
+  return categorias;
+}
+
+// Função pura: traduz category/categoryId (inglês, vindos da Transaction)
+// para o texto oficial em português (descriptionTranslated), usando a lista
+// já carregada por buscarCategoriasPluggy. Prefere casar por categoryId (mais
+// confiável que string — descriptions podem ter variações de grafia); cai
+// para busca por description (inglês) se o id não vier. categoryId
+// desconhecido (categoria nova que a Pluggy adicionou depois da última
+// atualização do cache) ou lista vazia retornam null — quem chama decide o
+// fallback (ver sincronizarItem: cai para tx.category bruto, que por sua vez
+// cai no genérico de resolverCategoriaPluggy se não bater em nada).
+function traduzirCategoriaPluggy(categoryId, categoryDescription, categoriasPluggy) {
+  if (!Array.isArray(categoriasPluggy) || categoriasPluggy.length === 0) return null;
+
+  if (categoryId) {
+    const porId = categoriasPluggy.find((c) => c.id === categoryId);
+    if (porId?.descriptionTranslated) return porId.descriptionTranslated;
+  }
+  if (categoryDescription) {
+    const porDescricao = categoriasPluggy.find((c) => c.description === categoryDescription);
+    if (porDescricao?.descriptionTranslated) return porDescricao.descriptionTranslated;
+  }
+  return null;
+}
+
 // Teto de segurança contra paginação que nunca convirja (formato de cursor
 // inesperado, bug da API, etc) — nunca deveria ser atingido em uso normal.
 const LIMITE_TRANSACOES_POR_SYNC = 5000;
@@ -431,9 +516,19 @@ async function sincronizarItem(usuarioId, itemId) {
   // até aqui, mas evita uma chamada à toa em teoria). Usado para calibrar
   // saldo_inicial (conta bancária) e limite/usado/disponível (cartão) abaixo.
   const accountsPorId = new Map();
+  // Categorias oficiais da Pluggy (para traduzir tx.category/categoryId antes
+  // do fuzzy-match) — buscada 1x por sync, não por transação (evita centenas/
+  // milhares de chamadas de API desnecessárias; ver buscarCategoriasPluggy
+  // para o cache global de mais alto nível, entre syncs).
+  let categoriasPluggy = [];
   if (contasMapeadas.length > 0) {
     for (const account of await buscarAccountsPluggy(apiKey, itemId)) {
       if (account?.id) accountsPorId.set(account.id, account);
+    }
+    try {
+      categoriasPluggy = await buscarCategoriasPluggy(apiKey);
+    } catch (err) {
+      console.error('[PLUGGY] Falha ao buscar categorias da Pluggy (seguindo sem tradução):', err.message);
     }
   }
 
@@ -445,7 +540,12 @@ async function sincronizarItem(usuarioId, itemId) {
     for (const tx of transacoesPluggy) {
       if (!tx?.id) continue;
       const tipo = mapearTipoTransacaoPluggy(tx.type);
-      const categoria = await db.resolverCategoriaPluggy(usuarioId, tx.category, tipo);
+      // Traduz para português oficial antes do fuzzy-match; sem tradução
+      // disponível (categoryId novo/desconhecido, ou categoria ausente — exige
+      // plano Pro), cai no texto bruto, que por sua vez cai no fallback
+      // genérico dentro de resolverCategoriaPluggy se não bater em nada.
+      const categoriaTraduzida = traduzirCategoriaPluggy(tx.categoryId, tx.category, categoriasPluggy) || tx.category;
+      const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo);
 
       await db.upsertTransacaoPluggy(usuarioId, {
         pluggyTransactionId: tx.id,
@@ -576,6 +676,8 @@ module.exports = {
   webhookJaRegistrado,
   conectarItem,
   buscarTransacoesNovas,
+  buscarCategoriasPluggy,
+  traduzirCategoriaPluggy,
   mapearTipoTransacaoPluggy,
   mapearStatusTransacaoPluggy,
   interpretarErroItem,
