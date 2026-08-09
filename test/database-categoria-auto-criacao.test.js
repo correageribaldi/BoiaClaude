@@ -168,13 +168,17 @@ test('resolverCategoriaPluggy: auto-criação em grupo "Investimentos" (segundo 
   assert.equal(insertPrincipal.params[1], 'Investimentos');
 });
 
-test('resolverCategoriaPluggy: múltiplos matches (ambíguo) ainda cai no fallback genérico, mesmo com categoriaPrincipalDestino', async (t) => {
+test('resolverCategoriaPluggy: múltiplos matches fuzzy SEM nenhum match exato (ambíguo) ainda cai no fallback genérico, mesmo com categoriaPrincipalDestino', async (t) => {
   mockResolverIdentidade(t);
   let tentouCriar = false;
 
+  // Nenhuma das duas contém exatamente "mercado" quando normalizada — "Mercado
+  // Livre" e "Hipermercado" batem no ILIKE '%mercado%', mas nenhuma é ===
+  // "mercado". Genuinamente ambíguo, diferente do caso "Compras"/"Compras
+  // online" (esse resolve por match exato, ver database-categoria-match-exato).
   t.mock.method(db.pool, 'query', async (sql) => {
     if (sql.includes('SELECT categoria FROM limites_categoria')) {
-      return { rows: [{ categoria: 'Mercado' }, { categoria: 'Supermercado' }] }; // 2 matches
+      return { rows: [{ categoria: 'Mercado Livre' }, { categoria: 'Hipermercado' }] };
     }
     if (sql.includes('INSERT INTO limites_categoria') || sql.includes('INSERT INTO categorias_principais')) {
       tentouCriar = true;

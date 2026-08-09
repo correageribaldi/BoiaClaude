@@ -54,10 +54,13 @@ test('resolverCategoriaPluggy: 0 matches cai no fallback genérico', async (t) =
   assert.equal(categoria, 'Outros');
 });
 
-test('resolverCategoriaPluggy: múltiplos matches (ambíguo) cai no fallback genérico', async (t) => {
+test('resolverCategoriaPluggy: múltiplos matches fuzzy SEM match exato (ambíguo) cai no fallback genérico', async (t) => {
   mockResolverIdentidade(t);
+  // Nem "Mercado Livre" nem "Hipermercado" são === "mercado" normalizado —
+  // genuinamente ambíguo. Ver test/database-categoria-match-exato.test.js
+  // para o caso "Compras"/"Compras online", que resolve por match exato.
   t.mock.method(db.pool, 'query', async () => ({
-    rows: [{ categoria: 'Mercado' }, { categoria: 'Supermercado' }],
+    rows: [{ categoria: 'Mercado Livre' }, { categoria: 'Hipermercado' }],
   }));
 
   const categoria = await db.resolverCategoriaPluggy('user1@c.us', 'mercado', 'despesa');

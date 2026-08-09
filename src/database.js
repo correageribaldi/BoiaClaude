@@ -4373,23 +4373,28 @@ async function buscarCategoriaAprendida(usuarioId, descricao, tipo) {
 // 0. Aprendizado do próprio usuário para aquele estabelecimento (ver acima) —
 //    tem prioridade sobre tudo, inclusive quando a Pluggy não manda categoria
 //    nenhuma (que é exatamente o caso das transações que caíram em "Outros").
-// 1. Tenta casar com uma subcategoria já cadastrada do usuário (fuzzy via
-//    ILIKE, mesmo padrão de buscarContasPorNome), respeitando o tipo
-//    despesa/receita — evita duplicar se o usuário já tem "Restaurantes",
-//    por exemplo.
-// 2. Sem match e com categoriaPrincipalDestino conhecida (decisão do
-//    Federico, reverte a postura anterior deste módulo): cria a subcategoria
-//    automaticamente com o nome traduzido da Pluggy, vinculada a essa
-//    principal (garantirCategoriaPrincipal + garantirSubcategoria, ambas já
-//    idempotentes). categoriaPrincipalDestino vem null para transferências
+// 1. Match EXATO (case/acento-insensível) contra uma subcategoria já
+//    cadastrada do usuário — ver resolverCategoriaPluggyPorTaxonomia. Tem que
+//    vir ANTES do fuzzy: senão "Compras" batendo ao mesmo tempo em "Compras" E
+//    "Compras online" cai na regra de ambiguidade do passo 2 e devolve o
+//    genérico, mesmo havendo correspondência óbvia (bug de produção, Marco 1).
+// 2. Sem match exato: tenta casar com uma subcategoria já cadastrada do
+//    usuário (fuzzy via ILIKE, mesmo padrão de buscarContasPorNome),
+//    respeitando o tipo despesa/receita — evita duplicar se o usuário já tem
+//    "Restaurantes", por exemplo.
+// 3. Sem match (exato nem fuzzy) e com categoriaPrincipalDestino conhecida
+//    (decisão do Federico, reverte a postura anterior deste módulo): cria a
+//    subcategoria automaticamente com o nome traduzido da Pluggy, vinculada a
+//    essa principal (garantirCategoriaPrincipal + garantirSubcategoria, ambas
+//    já idempotentes). categoriaPrincipalDestino vem null para transferências
 //    (grupos Pluggy 04/05 — o Cronos já tem tabela transferencias própria,
 //    não misturar) ou categoryId desconhecido — ver
 //    src/pluggy.js:categoriaPrincipalParaGrupoRaiz.
-// 3. Sem match e sem categoriaPrincipalDestino (ou sem categoria vinda da
-//    Pluggy — category exige plano Pro, pode vir null), ou match AMBÍGUO
-//    (>1 resultado — criar mais uma variação só pioraria a ambiguidade):
-//    fallback genérico já usado no fluxo manual (CATEGORIA_GENERICA_POR_TIPO
-//    em src/agente-financeiro.js).
+// 4. Sem match e sem categoriaPrincipalDestino (ou sem categoria vinda da
+//    Pluggy — category exige plano Pro, pode vir null), ou match fuzzy
+//    AMBÍGUO (>1 resultado, nenhum exato — criar mais uma variação só
+//    pioraria a ambiguidade): fallback genérico já usado no fluxo manual
+//    (CATEGORIA_GENERICA_POR_TIPO em src/agente-financeiro.js).
 // descricao: descrição CRUA da transação (a mesma que vai ser gravada), usada
 // só para consultar o aprendizado. Último parâmetro e opcional para não mexer
 // nos call sites que não têm essa informação.
@@ -4415,10 +4420,49 @@ async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categor
   return resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, categoriaPrincipalDestino, generica);
 }
 
-// Passos (1) match / (2) auto-criação / (3) fallback, com o usuário já
-// resolvido. Separado de resolverCategoriaPluggy só para não resolver a
-// identidade duas vezes quando o aprendizado já resolveu.
+// Normaliza para comparação de match EXATO de categoria: minúsculas + remove
+// diacríticos via NFD (mesmo idioma de src/estabelecimento.js:47), sem as
+// demais regras de normalizarEstabelecimento (remoção de prefixo de gateway,
+// sufixo de parcela etc. — aqui só comparamos duas strings curtas de
+// categoria, não descrições de transação).
+// RegExp via construtor (não regex literal) de propósito: evita depender de
+// como o editor/arquivo salva o caractere combinante em bytes, mesma
+// preocupação do comentário em src/estabelecimento.js:43-45.
+const REGEX_DIACRITICOS_NFD = new RegExp('[\\u0300-\\u036f]', 'g');
+
+function normalizarCategoriaParaComparacao(texto) {
+  return (texto || '').normalize('NFD').replace(REGEX_DIACRITICOS_NFD, '').trim().toLowerCase();
+}
+
+// Passos (1) match exato / (2) match fuzzy / (3) auto-criação / (4) fallback,
+// com o usuário já resolvido. Separado de resolverCategoriaPluggy só para não
+// resolver a identidade duas vezes quando o aprendizado já resolveu.
 async function resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, categoriaPrincipalDestino, generica) {
+  // (1) Match EXATO (case/acento-insensível) tem prioridade sobre o fuzzy, e
+  // precisa de query própria: ILIKE do Postgres ignora caixa mas NÃO
+  // diacríticos, então "Farmacia" (vindo traduzido da Pluggy) não bateria em
+  // "%Farmacia%" contra a subcategoria "Farmácia" do usuário. Trazer todas as
+  // candidatas e comparar normalizado em JS resolve os dois casos (caixa e
+  // acento) com uma comparação simples e testável, sem depender da extensão
+  // unaccent do Postgres (pode nem estar instalada no servidor).
+  //
+  // Sem esse passo, categoria "Compras" batendo ao mesmo tempo em "Compras" E
+  // "Compras online" via ILIKE cai direto na regra de ambiguidade abaixo e
+  // devolve o genérico "Outros", mesmo havendo uma correspondência exata
+  // óbvia — bug confirmado em produção (re-sync rebaixou transações que
+  // estavam certas em "Compras").
+  const candidatas = await pool.query(
+    `SELECT categoria FROM limites_categoria
+     WHERE usuario_id = $1 AND ativo = TRUE
+       AND (tipo = $2 OR tipo = 'ambos' OR tipo IS NULL)`,
+    [uid, tipo]
+  );
+  const alvo = normalizarCategoriaParaComparacao(categoriaPluggy);
+  const exata = candidatas.rows.find((r) => normalizarCategoriaParaComparacao(r.categoria) === alvo);
+  if (exata) return exata.categoria;
+
+  // (2) Sem match exato: fuzzy de sempre (ILIKE, mesmo padrão de
+  // buscarContasPorNome).
   const res = await pool.query(
     `SELECT categoria FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE
