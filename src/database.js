@@ -783,7 +783,19 @@ async function initTables() {
     UPDATE transacoes t
     SET conta_id = c.id
     FROM contas c
-    WHERE c.usuario_id = t.usuario_id AND c.padrao = TRUE AND t.conta_id IS NULL;
+    WHERE c.usuario_id = t.usuario_id AND c.padrao = TRUE
+      AND t.conta_id IS NULL AND t.cartao_id IS NULL;
+  `);
+
+  // Correção retroativa (bug de produção, achado ao investigar saldo errado
+  // após conexão Pluggy): a migração acima, ANTES de ganhar "AND t.cartao_id
+  // IS NULL", grudava conta_id = conta padrão em qualquer transação órfã de
+  // conta_id — inclusive as de cartão (que corretamente têm conta_id NULL,
+  // só cartao_id preenchido). Toda reinicialização do servidor recontaminava
+  // de novo. Idempotente: sem transações nessa condição, é um no-op.
+  await pool.query(`
+    UPDATE transacoes SET conta_id = NULL
+    WHERE cartao_id IS NOT NULL AND conta_id IS NOT NULL;
   `);
 
   // ─── Módulo Pluggy — Open Finance (Marco 1: credenciais por usuário) ─────────
