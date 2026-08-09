@@ -880,9 +880,15 @@ function fecharModalEditar() {
 async function salvarEdicaoTx() {
   const id = parseInt(document.getElementById('editar-tx-id').value);
   const conta_id = document.getElementById('editar-tx-conta').value;
+  // Ordem importa: `categoria` é aplicada ANTES de `descricao` de propósito.
+  // Editar a categoria grava o aprendizado por estabelecimento, e a chave sai
+  // da descrição que está no banco NAQUELE momento. Se a descrição fosse
+  // renomeada antes, o aprendizado seria gravado com o nome novo (escolhido
+  // pelo usuário) e nunca casaria com a descrição que a Pluggy manda nos
+  // próximos lançamentos do mesmo lugar.
   const campos = {
-    descricao: document.getElementById('editar-tx-descricao').value.trim(),
     categoria: document.getElementById('editar-tx-categoria').value,
+    descricao: document.getElementById('editar-tx-descricao').value.trim(),
     valor: parseFloat(document.getElementById('editar-tx-valor').value),
     data: document.getElementById('editar-tx-data').value,
     conta_id: conta_id ? parseInt(conta_id) : null,

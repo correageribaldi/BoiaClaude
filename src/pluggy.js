@@ -600,6 +600,11 @@ async function sincronizarItem(usuarioId, itemId) {
     for (const tx of transacoesPluggy) {
       if (!tx?.id) continue;
       const tipo = mapearTipoTransacaoPluggy(tx.type);
+      // Uma variável só para a descrição: é a mesma string que vai ser GRAVADA
+      // e a que alimenta a chave de estabelecimento do aprendizado. Se as duas
+      // divergissem, o usuário corrigiria um lançamento e o aprendizado nunca
+      // bateria com os próximos (falha silenciosa).
+      const descricao = tx.description || 'Transação Pluggy';
       // Traduz para português oficial antes do fuzzy-match; sem tradução
       // disponível (categoryId novo/desconhecido, ou categoria ausente — exige
       // plano Pro), cai no texto bruto, que por sua vez cai no fallback
@@ -610,13 +615,15 @@ async function sincronizarItem(usuarioId, itemId) {
       // transferências (grupos 04/05, feature própria do Cronos) ou
       // categoryId desconhecido, cai no fallback genérico de sempre.
       const categoriaPrincipalDestino = categoriaPrincipalParaGrupoRaiz(tx.categoryId, categoriasPluggy);
-      const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo, categoriaPrincipalDestino);
+      // descricao no fim: aprendizado do usuário para aquele estabelecimento
+      // tem prioridade sobre a categoria que a Pluggy sugere.
+      const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo, categoriaPrincipalDestino, descricao);
 
       await db.upsertTransacaoPluggy(usuarioId, {
         pluggyTransactionId: tx.id,
         tipo,
         valor: Math.abs(Number(tx.amount) || 0),
-        descricao: tx.description || 'Transação Pluggy',
+        descricao,
         categoria,
         data: String(tx.date || '').slice(0, 10),
         status: mapearStatusTransacaoPluggy(tx.status),

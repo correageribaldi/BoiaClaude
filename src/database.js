@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const pluggyCrypto = require('./pluggyCrypto');
+const { normalizarEstabelecimento } = require('./estabelecimento');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -893,6 +894,33 @@ async function initTables() {
   await pool.query(`
     ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS categoria_manual BOOLEAN NOT NULL DEFAULT FALSE;
   `);
+
+  // ─── Aprendizado de categoria por estabelecimento ────────────────────────────
+  // "Corrigi uma vez, todo lançamento futuro do mesmo lugar já vem certo."
+  // chave_estabelecimento é derivada da descrição por normalizarEstabelecimento
+  // (src/estabelecimento.js) — função pura, mesma chave na gravação e na leitura.
+  //
+  // tipo entra na UNIQUE de propósito: "Transferência enviada|FULANO" e
+  // "Transferência Recebida|FULANO" normalizam para a MESMA chave, mas são
+  // despesa e receita. Sem o tipo na chave, uma categoria de despesa vazaria
+  // para uma receita (e vice-versa) no próximo sync — categoria errada e do
+  // tipo errado. Duas linhas para o mesmo nome é o comportamento correto aqui.
+  //
+  // Sem índice adicional: a UNIQUE já cria um índice com usuario_id na primeira
+  // coluna, que atende tanto a consulta por (usuario_id, chave, tipo) quanto
+  // qualquer varredura por usuario_id.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS categoria_aprendida (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      chave_estabelecimento TEXT NOT NULL,
+      tipo TEXT NOT NULL CHECK(tipo IN ('despesa', 'receita')),
+      categoria TEXT NOT NULL,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (usuario_id, chave_estabelecimento, tipo)
+    );
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -1205,7 +1233,21 @@ async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
      RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, cartao_id, conta_id`,
     [novoValor, numeroUsuario, uid]
   );
-  return result.rows[0] || null;
+  const atualizada = result.rows[0] || null;
+
+  // Aprendizado por estabelecimento: corrigir uma vez vale para os PRÓXIMOS
+  // lançamentos do mesmo lugar (ver registrarCategoriaAprendida). Nunca derruba
+  // a edição em si — se o aprendizado falhar, a transação já foi atualizada e
+  // era isso que o usuário pediu.
+  if (atualizada && campo === 'categoria') {
+    try {
+      await registrarCategoriaAprendida(uid, atualizada.descricao, atualizada.tipo, atualizada.categoria);
+    } catch (err) {
+      console.error('[DB] Falha ao registrar categoria aprendida (edição preservada):', err.message);
+    }
+  }
+
+  return atualizada;
 }
 
 async function buscarTransacaoPorId(usuarioId, id) {
@@ -4275,7 +4317,62 @@ async function garantirCategoriaPrincipal(usuarioIdResolvido, nome, tipo) {
   );
 }
 
+// ─── Aprendizado de categoria por estabelecimento ────────────────────────────
+//
+// Ideia: o usuário corrige a categoria de UM lançamento e todo lançamento
+// FUTURO do mesmo estabelecimento já nasce naquela categoria. Não há
+// reprocessamento retroativo das transações antigas ao corrigir uma — só o
+// lançamento editado muda naquele momento (comportamento menos surpreendente:
+// uma edição no painel nunca reescreve dezenas de linhas que o usuário não
+// estava olhando). O histórico só é recategorizado quando o usuário pede
+// explicitamente uma re-sincronização completa.
+//
+// tipo faz parte da chave — ver o comentário da tabela em initTables.
+
+// Grava/atualiza o aprendizado. Retorna a chave usada (útil em teste e log) ou
+// null quando a descrição não permite derivar uma chave confiável.
+async function registrarCategoriaAprendida(usuarioId, descricao, tipo, categoria) {
+  const chave = normalizarEstabelecimento(descricao);
+  if (!chave || !categoria) return null;
+
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const tipoChave = tipo === 'receita' ? 'receita' : 'despesa';
+
+  await pool.query(
+    `INSERT INTO categoria_aprendida (usuario_id, chave_estabelecimento, tipo, categoria)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (usuario_id, chave_estabelecimento, tipo)
+     DO UPDATE SET categoria = EXCLUDED.categoria, atualizado_em = NOW()`,
+    [uid, chave, tipoChave, categoria]
+  );
+
+  return chave;
+}
+
+// Variante que recebe o usuário JÁ resolvido — usada dentro do laço de sync
+// (uma transação por iteração), onde resolver a identidade de novo a cada
+// chamada seria uma consulta a mais por transação sem ganho nenhum.
+async function buscarCategoriaAprendidaResolvida(uid, descricao, tipo) {
+  const chave = normalizarEstabelecimento(descricao);
+  if (!chave) return null;
+
+  const res = await pool.query(
+    `SELECT categoria FROM categoria_aprendida
+     WHERE usuario_id = $1 AND chave_estabelecimento = $2 AND tipo = $3`,
+    [uid, chave, tipo === 'receita' ? 'receita' : 'despesa']
+  );
+  return res.rows[0]?.categoria || null;
+}
+
+async function buscarCategoriaAprendida(usuarioId, descricao, tipo) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  return buscarCategoriaAprendidaResolvida(uid, descricao, tipo);
+}
+
 // Resolve a categoria de uma transação Pluggy para o Cronos:
+// 0. Aprendizado do próprio usuário para aquele estabelecimento (ver acima) —
+//    tem prioridade sobre tudo, inclusive quando a Pluggy não manda categoria
+//    nenhuma (que é exatamente o caso das transações que caíram em "Outros").
 // 1. Tenta casar com uma subcategoria já cadastrada do usuário (fuzzy via
 //    ILIKE, mesmo padrão de buscarContasPorNome), respeitando o tipo
 //    despesa/receita — evita duplicar se o usuário já tem "Restaurantes",
@@ -4293,11 +4390,35 @@ async function garantirCategoriaPrincipal(usuarioIdResolvido, nome, tipo) {
 //    (>1 resultado — criar mais uma variação só pioraria a ambiguidade):
 //    fallback genérico já usado no fluxo manual (CATEGORIA_GENERICA_POR_TIPO
 //    em src/agente-financeiro.js).
-async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categoriaPrincipalDestino = null) {
+// descricao: descrição CRUA da transação (a mesma que vai ser gravada), usada
+// só para consultar o aprendizado. Último parâmetro e opcional para não mexer
+// nos call sites que não têm essa informação.
+async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categoriaPrincipalDestino = null, descricao = null) {
   const generica = CATEGORIA_GENERICA_PLUGGY_POR_TIPO[tipo] || 'Outros';
-  if (!categoriaPluggy) return generica;
+
+  // Sem descrição para consultar aprendizado e sem categoria da Pluggy: não há
+  // o que decidir, cai no genérico sem tocar no banco.
+  if (!descricao && !categoriaPluggy) return generica;
 
   const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  // (0) Aprendizado do usuário — consultado ANTES do early return de categoria
+  // ausente de propósito: transação sem categoria na Pluggy é justamente a que
+  // mais se beneficia de "eu já disse o que é esse lugar".
+  if (descricao) {
+    const aprendida = await buscarCategoriaAprendidaResolvida(uid, descricao, tipo);
+    if (aprendida) return aprendida;
+  }
+
+  if (!categoriaPluggy) return generica;
+
+  return resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, categoriaPrincipalDestino, generica);
+}
+
+// Passos (1) match / (2) auto-criação / (3) fallback, com o usuário já
+// resolvido. Separado de resolverCategoriaPluggy só para não resolver a
+// identidade duas vezes quando o aprendizado já resolveu.
+async function resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, categoriaPrincipalDestino, generica) {
   const res = await pool.query(
     `SELECT categoria FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE
@@ -4659,6 +4780,8 @@ module.exports = {
   listarContasMapPorItem,
   buscarMapeamentoContaPorAccountId,
   resolverCategoriaPluggy,
+  registrarCategoriaAprendida,
+  buscarCategoriaAprendida,
   garantirCategoriaPrincipal,
   upsertTransacaoPluggy,
   removerTransacoesPluggyPorIds,
