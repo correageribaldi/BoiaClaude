@@ -112,14 +112,31 @@ test('buscarTransacoesNovas: sem "next" para na primeira página', async (t) => 
   assert.equal(requestsFeitos.length, 1);
 });
 
-test('buscarTransacoesNovas: "desde" vira parâmetro "from" só na primeira chamada', async (t) => {
+test('buscarTransacoesNovas: "desde" vira parâmetro "createdAtFrom" (não "from") na primeira chamada', async (t) => {
   const requestsFeitos = instalarMockHttps(t, [
     { body: { results: [], next: null } },
   ]);
 
   await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-333', '2026-08-01');
 
-  assert.equal(requestsFeitos[0].path, '/v2/transactions?accountId=acc-333&from=2026-08-01');
+  // Bug de produção: "from" não existe no endpoint /v2/transactions — a
+  // Pluggy rejeita com 400 "property from should not exist". Nome correto,
+  // confirmado com chamada real, é "createdAtFrom".
+  assert.equal(requestsFeitos[0].path, '/v2/transactions?accountId=acc-333&createdAtFrom=2026-08-01');
+});
+
+test('buscarTransacoesNovas: paginação com "desde" usa "createdAtFrom" no fallback bare também', async (t) => {
+  const requestsFeitos = instalarMockHttps(t, [
+    { body: { results: [], next: 'token-bare-sem-prefixo' } },
+    { body: { results: [], next: null } },
+  ]);
+
+  await pluggy.buscarTransacoesNovas('api-key-fake', 'acc-444', '2026-08-01');
+
+  assert.equal(
+    requestsFeitos[1].path,
+    '/v2/transactions?accountId=acc-444&createdAtFrom=2026-08-01&after=token-bare-sem-prefixo'
+  );
 });
 
 // ── mapearTipoTransacaoPluggy / mapearStatusTransacaoPluggy (funções puras) ────

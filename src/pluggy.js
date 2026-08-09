@@ -343,9 +343,10 @@ const LIMITE_TRANSACOES_POR_SYNC = 5000;
 // GET /v2/transactions — endpoint atual (não-deprecated); o antigo
 // GET /transactions (page-based) está marcado deprecated na doc, disponível
 // só até 2026-12-31. Paginação é cursor-based (campo "next" na resposta,
-// não page/pageSize). "desde" filtra por data (parâmetro "from") — usado no
-// sync incremental para não rebuscar os mesmos 365 dias de histórico a cada
-// item/updated.
+// não page/pageSize). "desde" filtra por data (parâmetro "createdAtFrom" —
+// NÃO "from", que a API rejeita com 400 "property from should not exist",
+// bug de produção reproduzido e corrigido) — usado no sync incremental para
+// não rebuscar os mesmos 365 dias de histórico a cada item/updated.
 //
 // Formato do cursor "next" confirmado com chamada real (produção, credencial
 // do Federico, conta com histórico grande o bastante para paginar): vem como
@@ -356,7 +357,7 @@ const LIMITE_TRANSACOES_POR_SYNC = 5000;
 async function buscarTransacoesNovas(apiKey, accountId, desde = null) {
   const transacoes = [];
   const baseUrl = `${PLUGGY_API_BASE}/v2/transactions?accountId=${encodeURIComponent(accountId)}`;
-  let proximaUrl = desde ? `${baseUrl}&from=${encodeURIComponent(desde)}` : baseUrl;
+  let proximaUrl = desde ? `${baseUrl}&createdAtFrom=${encodeURIComponent(desde)}` : baseUrl;
 
   while (proximaUrl && transacoes.length < LIMITE_TRANSACOES_POR_SYNC) {
     const resposta = await httpsRequestJson('GET', proximaUrl, null, { 'X-API-KEY': apiKey });
@@ -382,7 +383,7 @@ async function buscarTransacoesNovas(apiKey, accountId, desde = null) {
     } else {
       // Fallback defensivo — token bare, formato nunca observado em produção
       // até agora. Mantido caso a Pluggy mude de novo.
-      proximaUrl = `${baseUrl}${desde ? `&from=${encodeURIComponent(desde)}` : ''}&after=${encodeURIComponent(next)}`;
+      proximaUrl = `${baseUrl}${desde ? `&createdAtFrom=${encodeURIComponent(desde)}` : ''}&after=${encodeURIComponent(next)}`;
     }
   }
 
