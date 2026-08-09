@@ -1018,7 +1018,11 @@ async function resumoMensal(usuarioId, mes, ano) {
   const fimMes = `${a}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
 
   // Compras no cartão excluídas do resumo da conta corrente (cartao_id IS NULL)
-  // evitando double-counting com o pagamento da fatura (que é uma despesa separada)
+  // evitando double-counting com o pagamento da fatura (que é uma despesa separada).
+  // Exclusão precisa ser SIMÉTRICA entre receita e despesa — bug de produção (mesma
+  // classe do fix em calcularSaldos): "(cartao_id IS NULL OR tipo = 'receita')" deixava
+  // QUALQUER receita passar, mesmo com cartao_id preenchido (ex: receita pendente
+  // sincronizada no cartão pela Pluggy) — inflava o widget "Receitas" do dashboard.
   const totaisResult = await pool.query(
     `SELECT
        tipo,
@@ -1028,7 +1032,7 @@ async function resumoMensal(usuarioId, mes, ano) {
      FROM transacoes
      WHERE usuario_id = $1
        AND data >= $2 AND data <= $3
-       AND (cartao_id IS NULL OR tipo = 'receita')
+       AND (cartao_id IS NULL OR descricao ILIKE 'Fatura %')
      GROUP BY tipo, status`,
     [uid, inicioMes, fimMes]
   );
@@ -1042,7 +1046,7 @@ async function resumoMensal(usuarioId, mes, ano) {
      FROM transacoes
      WHERE usuario_id = $1
        AND data >= $2 AND data <= $3
-       AND (cartao_id IS NULL OR tipo = 'receita')
+       AND (cartao_id IS NULL OR descricao ILIKE 'Fatura %')
      GROUP BY categoria, tipo
      ORDER BY total DESC`,
     [uid, inicioMes, fimMes]
