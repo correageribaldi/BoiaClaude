@@ -392,7 +392,8 @@ function iconeTx(descricao, categoria, tipo) {
 const estado = {
   dash: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear() },
   tx: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear(),
-        filtroStatus: '', filtroTipo: '', filtroRecorrente: false, busca: '', pagina: 1 },
+        filtroStatus: '', filtroTipo: '', filtroRecorrente: false, busca: '', pagina: 1,
+        filtroOrigemTipo: '', filtroOrigemId: null },
   ag: { mes: new Date().getMonth() + 1, ano: new Date().getFullYear() },
   charts: {},
 };
@@ -720,6 +721,8 @@ async function carregarTransacoes() {
   if (e.filtroTipo) params.set('tipo', e.filtroTipo);
   if (e.busca) params.set('descricao', e.busca);
   if (e.filtroRecorrente) params.set('recorrente', '1');
+  if (e.filtroOrigemTipo === 'conta' && e.filtroOrigemId) params.set('contaId', e.filtroOrigemId);
+  if (e.filtroOrigemTipo === 'cartao' && e.filtroOrigemId) params.set('cartaoId', e.filtroOrigemId);
 
   let transacoes;
   try { transacoes = await api('/api/transactions?' + params); }
@@ -2301,9 +2304,44 @@ function resetFiltrosTx() {
   estado.tx.filtroRecorrente = false;
   estado.tx.busca = '';
   estado.tx.pagina = 1;
+  estado.tx.filtroOrigemTipo = '';
+  estado.tx.filtroOrigemId = null;
   const busca = document.getElementById('tx-search');
   if (busca) busca.value = '';
+  const origemSel = document.getElementById('tx-filtro-origem');
+  if (origemSel) origemSel.value = '';
   syncFiltroTabUI();
+}
+
+// Popula o <select> de origem (conta/cartão) da aba Transações. Busca sempre
+// fresco na API (não reusa _contasCache/_detalheCartoesCache) para refletir
+// contas/cartões conectados via Pluggy na sessão atual, sem risco de cache
+// desatualizado. Preserva a seleção atual quando o valor ainda existe.
+async function carregarFiltroOrigemTx() {
+  const sel = document.getElementById('tx-filtro-origem');
+  if (!sel) return;
+  const valorAtual = sel.value;
+
+  let contas = [], cartoes = [];
+  try {
+    [contas, cartoes] = await Promise.all([
+      api('/api/contas').catch(() => []),
+      api('/api/cartoes/uso').catch(() => []),
+    ]);
+  } catch { /* mantém select apenas com "Todas as origens" */ }
+
+  const opts = ['<option value="">Todas as origens</option>'];
+  for (const c of contas) opts.push(`<option value="conta:${c.id}">🏦 ${esc(c.nome)}</option>`);
+  for (const c of cartoes) opts.push(`<option value="cartao:${c.id}">💳 ${esc(c.nome)}</option>`);
+  sel.innerHTML = opts.join('');
+
+  if (valorAtual && [...sel.options].some(o => o.value === valorAtual)) {
+    sel.value = valorAtual;
+  } else if (valorAtual) {
+    // Origem selecionada não existe mais (ex: cartão excluído) — volta pra "Todas".
+    estado.tx.filtroOrigemTipo = '';
+    estado.tx.filtroOrigemId = null;
+  }
 }
 
 // Garante que o filter-tab destacado na UI reflita o filtro realmente aplicado
@@ -2338,6 +2376,7 @@ function ativarTab(tab, opts = {}) {
     // vez ficava grudado em qualquer troca de aba seguinte.
     if (!opts.manterFiltro) resetFiltrosTx();
     else syncFiltroTabUI();
+    carregarFiltroOrigemTx();
     carregarTransacoes();
   }
   if (tab === 'categories') carregarCategorias();
@@ -2527,6 +2566,20 @@ function inicializar() {
       estado.tx.pagina = 1;
       carregarTransacoes();
     });
+  });
+
+  document.getElementById('tx-filtro-origem')?.addEventListener('change', e => {
+    const valor = e.target.value; // '' ou 'conta:<id>' ou 'cartao:<id>'
+    if (!valor) {
+      estado.tx.filtroOrigemTipo = '';
+      estado.tx.filtroOrigemId = null;
+    } else {
+      const [tipo, id] = valor.split(':');
+      estado.tx.filtroOrigemTipo = tipo;
+      estado.tx.filtroOrigemId = parseInt(id);
+    }
+    estado.tx.pagina = 1;
+    carregarTransacoes();
   });
 
   let buscaTimer;

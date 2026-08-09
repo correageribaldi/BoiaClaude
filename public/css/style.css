@@ -804,6 +804,17 @@ html:not([data-theme="light"]) .modal-box {
   color: var(--text);
 }
 .search-input:focus { border-color: var(--blue); }
+.filter-row-origem {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.filter-row-origem .search-input { width: auto; flex: 1 1 200px; }
+.tx-origem-select {
+  flex: 0 1 220px;
+  min-width: 160px;
+  cursor: pointer;
+}
 
 /* ── Table ───────────────────────────────────────────────────────────────── */
 .table-wrap {

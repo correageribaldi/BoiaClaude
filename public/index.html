@@ -330,7 +330,12 @@
           <button class="filter-tab" data-filter="pendente" data-filter-tipo="receita">A Receber</button>
           <button class="filter-tab" data-filter="" data-filter-tipo="" data-filter-recorrente="1">🔄 Recorrentes</button>
         </div>
-        <input class="search-input" id="tx-search" type="text" placeholder="Buscar por descrição..." />
+        <div class="filter-row-origem">
+          <select class="search-input tx-origem-select" id="tx-filtro-origem">
+            <option value="">Todas as origens</option>
+          </select>
+          <input class="search-input" id="tx-search" type="text" placeholder="Buscar por descrição..." />
+        </div>
       </div>
 
       <div class="table-wrap">
