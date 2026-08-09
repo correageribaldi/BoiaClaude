@@ -419,6 +419,66 @@ function traduzirCategoriaPluggy(categoryId, categoryDescription, categoriasPlug
   return null;
 }
 
+// Sobe a cadeia de parentId até achar a raiz (categoria sem parentId) —
+// usado para decidir a categoria principal Cronos de destino ao auto-criar
+// subcategoria a partir de uma transação Pluggy. Função pura, testável sem I/O.
+// Proteção contra ciclo (não deveria existir na taxonomia real, mas defensivo
+// contra dado inesperado): para se revisitar um id já visto.
+function acharGrupoRaizCategoria(categoryId, categoriasPluggy) {
+  if (!categoryId || !Array.isArray(categoriasPluggy)) return null;
+
+  let atual = categoriasPluggy.find((c) => c.id === categoryId);
+  if (!atual) return null;
+
+  const visitados = new Set();
+  while (atual.parentId && !visitados.has(atual.id)) {
+    visitados.add(atual.id);
+    const pai = categoriasPluggy.find((c) => c.id === atual.parentId);
+    if (!pai) break;
+    atual = pai;
+  }
+  return atual.id;
+}
+
+// Mapeamento grupo raiz Pluggy -> categoria principal Cronos (nomes exatos de
+// CATEGORIAS_PRINCIPAIS_PADRAO/CATEGORIA_PRINCIPAL_RECEITA em src/database.js).
+// null = não auto-criar subcategoria, cai no fallback genérico existente.
+// "Same person transfer" (04) e "Transfers" (05): o Cronos já tem conceito
+// próprio de transferência (tabela transferencias, feature separada) — não
+// misturar transferência bancária real com "categoria de gasto".
+const GRUPO_RAIZ_PARA_CATEGORIA_PRINCIPAL = {
+  '01000000': 'Receitas',          // Income
+  '02000000': 'Despesas Fixas',    // Loans and financing
+  '03000000': 'Investimentos',     // Investments
+  '04000000': null,                // Same person transfer
+  '05000000': null,                // Transfers
+  '06000000': 'Despesas Fixas',    // Legal obligations
+  '07000000': 'Despesas Fixas',    // Services
+  '08000000': 'Variáveis',         // Shopping
+  '09000000': 'Lazer',             // Digital services
+  '10000000': 'Variáveis',         // Groceries
+  '11000000': 'Variáveis',         // Food and drinks
+  '12000000': 'Lazer',             // Travel
+  '13000000': 'Variáveis',         // Donations
+  '14000000': 'Lazer',             // Gambling
+  '15000000': 'Despesas Fixas',    // Taxes
+  '16000000': 'Despesas Fixas',    // Bank fees
+  '17000000': 'Despesas Fixas',    // Housing
+  '18000000': 'Variáveis',         // Healthcare
+  '19000000': 'Variáveis',         // Transportation
+  '20000000': 'Despesas Fixas',    // Insurance
+  '21000000': 'Lazer',             // Leisure
+  '99999999': null,                // Other — fallback genérico, como hoje
+};
+
+// categoryId de uma transação -> nome da categoria principal Cronos de
+// destino (ou null se não deve auto-criar subcategoria). Função pura.
+function categoriaPrincipalParaGrupoRaiz(categoryId, categoriasPluggy) {
+  const raizId = acharGrupoRaizCategoria(categoryId, categoriasPluggy);
+  if (!raizId) return null;
+  return GRUPO_RAIZ_PARA_CATEGORIA_PRINCIPAL[raizId] ?? null;
+}
+
 // Teto de segurança contra paginação que nunca convirja (formato de cursor
 // inesperado, bug da API, etc) — nunca deveria ser atingido em uso normal.
 const LIMITE_TRANSACOES_POR_SYNC = 5000;
@@ -545,7 +605,12 @@ async function sincronizarItem(usuarioId, itemId) {
       // plano Pro), cai no texto bruto, que por sua vez cai no fallback
       // genérico dentro de resolverCategoriaPluggy se não bater em nada.
       const categoriaTraduzida = traduzirCategoriaPluggy(tx.categoryId, tx.category, categoriasPluggy) || tx.category;
-      const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo);
+      // Categoria principal Cronos de destino, para auto-criar subcategoria
+      // se não houver match com o que o usuário já tem — null para
+      // transferências (grupos 04/05, feature própria do Cronos) ou
+      // categoryId desconhecido, cai no fallback genérico de sempre.
+      const categoriaPrincipalDestino = categoriaPrincipalParaGrupoRaiz(tx.categoryId, categoriasPluggy);
+      const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo, categoriaPrincipalDestino);
 
       await db.upsertTransacaoPluggy(usuarioId, {
         pluggyTransactionId: tx.id,
@@ -678,6 +743,8 @@ module.exports = {
   buscarTransacoesNovas,
   buscarCategoriasPluggy,
   traduzirCategoriaPluggy,
+  acharGrupoRaizCategoria,
+  categoriaPrincipalParaGrupoRaiz,
   mapearTipoTransacaoPluggy,
   mapearStatusTransacaoPluggy,
   interpretarErroItem,

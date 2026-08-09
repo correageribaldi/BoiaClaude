@@ -27,6 +27,7 @@ test.after(() => {
 // GET /categories).
 const CATEGORIAS_AMOSTRA = [
   { id: '01000000', description: 'Income', descriptionTranslated: 'Receitas' },
+  { id: '03000000', description: 'Investments', descriptionTranslated: 'Investimentos' },
   { id: '05000000', description: 'Transfers', descriptionTranslated: 'Transferências' },
   { id: '08000000', description: 'Shopping', descriptionTranslated: 'Compras' },
   { id: '10000000', description: 'Groceries', descriptionTranslated: 'Supermercado' },
@@ -71,6 +72,51 @@ test('traduzirCategoriaPluggy: categoryId e description ambos ausentes retorna n
 
 test('traduzirCategoriaPluggy: lista de categorias vazia (cache nunca carregado) retorna null, não quebra', () => {
   assert.equal(pluggy.traduzirCategoriaPluggy('10000000', 'Groceries', []), null);
+});
+
+// ── acharGrupoRaizCategoria (função pura) ───────────────────────────────────────
+
+test('acharGrupoRaizCategoria: categoria já raiz (sem parentId) retorna ela mesma', () => {
+  assert.equal(pluggy.acharGrupoRaizCategoria('10000000', CATEGORIAS_AMOSTRA), '10000000');
+});
+
+test('acharGrupoRaizCategoria: categoria leaf sobe até a raiz via parentId', () => {
+  // Eating out (11010000) -> Food and drinks (11000000, raiz)
+  assert.equal(pluggy.acharGrupoRaizCategoria('11010000', CATEGORIAS_AMOSTRA), '11000000');
+});
+
+test('acharGrupoRaizCategoria: categoryId desconhecido retorna null', () => {
+  assert.equal(pluggy.acharGrupoRaizCategoria('id-que-nao-existe', CATEGORIAS_AMOSTRA), null);
+});
+
+test('acharGrupoRaizCategoria: categoryId ausente retorna null', () => {
+  assert.equal(pluggy.acharGrupoRaizCategoria(null, CATEGORIAS_AMOSTRA), null);
+});
+
+// ── categoriaPrincipalParaGrupoRaiz (função pura) ───────────────────────────────
+
+test('categoriaPrincipalParaGrupoRaiz: Groceries (raiz 10000000) -> Variáveis', () => {
+  assert.equal(pluggy.categoriaPrincipalParaGrupoRaiz('10000000', CATEGORIAS_AMOSTRA), 'Variáveis');
+});
+
+test('categoriaPrincipalParaGrupoRaiz: Eating out (sobe até 11000000, Food and drinks) -> Variáveis', () => {
+  assert.equal(pluggy.categoriaPrincipalParaGrupoRaiz('11010000', CATEGORIAS_AMOSTRA), 'Variáveis');
+});
+
+test('categoriaPrincipalParaGrupoRaiz: Income (01000000) -> Receitas', () => {
+  assert.equal(pluggy.categoriaPrincipalParaGrupoRaiz('01000000', CATEGORIAS_AMOSTRA), 'Receitas');
+});
+
+test('categoriaPrincipalParaGrupoRaiz: Investments (03000000) -> Investimentos', () => {
+  assert.equal(pluggy.categoriaPrincipalParaGrupoRaiz('03000000', CATEGORIAS_AMOSTRA), 'Investimentos');
+});
+
+test('categoriaPrincipalParaGrupoRaiz: Transfers (05000000) -> null (não auto-cria, feature própria do Cronos)', () => {
+  assert.equal(pluggy.categoriaPrincipalParaGrupoRaiz('05000000', CATEGORIAS_AMOSTRA), null);
+});
+
+test('categoriaPrincipalParaGrupoRaiz: categoryId desconhecido -> null (fallback genérico)', () => {
+  assert.equal(pluggy.categoriaPrincipalParaGrupoRaiz('id-que-nao-existe', CATEGORIAS_AMOSTRA), null);
 });
 
 // ── buscarCategoriasPluggy — via https.request mockado ──────────────────────────

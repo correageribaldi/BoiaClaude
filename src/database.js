@@ -4227,15 +4227,51 @@ const CATEGORIA_GENERICA_PLUGGY_POR_TIPO = {
   receita: 'Outras Receitas',
 };
 
-// Tenta casar a categoria da Pluggy com uma subcategoria já cadastrada do
-// usuário (fuzzy via ILIKE, mesmo padrão de buscarContasPorNome), respeitando
-// o tipo despesa/receita. Sem match único (0 ou >1 resultados) ou sem
-// categoria vinda da Pluggy (category exige plano Pro — pode vir null), cai
-// no fallback genérico já usado no fluxo manual (CATEGORIA_GENERICA_POR_TIPO
-// em src/agente-financeiro.js). Nunca cria subcategoria nova a partir do nome
-// da Pluggy — evitaria poluir a lista curada de categorias do usuário, que
-// sustenta a distribuição de orçamento por percentual.
-async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo) {
+// Garante (cria se faltar) uma categoria principal com o tipo CERTO. Diferente
+// de criarCategoriaPrincipal (grava sempre tipo='despesa', o default do
+// schema, quando a coluna não é especificada no INSERT — armadilha real se
+// usada para criar "Receitas") — usada pela auto-criação de subcategoria a
+// partir da Pluggy, onde o usuário pode não ter mais essa principal (ex:
+// excluiu "Investimentos" antes de conectar o banco). Idempotente.
+async function garantirCategoriaPrincipal(usuarioIdResolvido, nome, tipo) {
+  const existe = await pool.query(
+    `SELECT id FROM categorias_principais WHERE usuario_id = $1 AND nome = $2 AND ativo = TRUE`,
+    [usuarioIdResolvido, nome]
+  );
+  if (existe.rows.length > 0) return;
+
+  const padrao = CATEGORIAS_PRINCIPAIS_PADRAO.find((c) => c.nome === nome);
+  const ehReceita = nome === CATEGORIA_PRINCIPAL_RECEITA.nome;
+  const percentual = padrao ? padrao.percentual : (ehReceita ? CATEGORIA_PRINCIPAL_RECEITA.percentual : 0);
+  const ordem = padrao ? padrao.ordem : (ehReceita ? CATEGORIA_PRINCIPAL_RECEITA.ordem : 99);
+
+  await pool.query(
+    `INSERT INTO categorias_principais (usuario_id, nome, percentual, ordem, tipo)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (usuario_id, nome) DO UPDATE SET ativo = TRUE`,
+    [usuarioIdResolvido, nome, percentual, ordem, tipo]
+  );
+}
+
+// Resolve a categoria de uma transação Pluggy para o Cronos:
+// 1. Tenta casar com uma subcategoria já cadastrada do usuário (fuzzy via
+//    ILIKE, mesmo padrão de buscarContasPorNome), respeitando o tipo
+//    despesa/receita — evita duplicar se o usuário já tem "Restaurantes",
+//    por exemplo.
+// 2. Sem match e com categoriaPrincipalDestino conhecida (decisão do
+//    Federico, reverte a postura anterior deste módulo): cria a subcategoria
+//    automaticamente com o nome traduzido da Pluggy, vinculada a essa
+//    principal (garantirCategoriaPrincipal + garantirSubcategoria, ambas já
+//    idempotentes). categoriaPrincipalDestino vem null para transferências
+//    (grupos Pluggy 04/05 — o Cronos já tem tabela transferencias própria,
+//    não misturar) ou categoryId desconhecido — ver
+//    src/pluggy.js:categoriaPrincipalParaGrupoRaiz.
+// 3. Sem match e sem categoriaPrincipalDestino (ou sem categoria vinda da
+//    Pluggy — category exige plano Pro, pode vir null), ou match AMBÍGUO
+//    (>1 resultado — criar mais uma variação só pioraria a ambiguidade):
+//    fallback genérico já usado no fluxo manual (CATEGORIA_GENERICA_POR_TIPO
+//    em src/agente-financeiro.js).
+async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categoriaPrincipalDestino = null) {
   const generica = CATEGORIA_GENERICA_PLUGGY_POR_TIPO[tipo] || 'Outros';
   if (!categoriaPluggy) return generica;
 
@@ -4250,7 +4286,22 @@ async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo) {
   );
 
   if (res.rows.length === 1) return res.rows[0].categoria;
-  return generica; // 0 ou >1 matches — ambíguo demais para decidir sozinho
+
+  // >1 matches: ambíguo demais para decidir sozinho — cai no fallback sem
+  // criar nada (criar mais uma variação parecida só pioraria a ambiguidade).
+  if (res.rows.length > 1) return generica;
+
+  // 0 matches: nada parecido ainda — cria subcategoria nova se soubermos a
+  // categoria principal de destino (null para transferências/categoryId
+  // desconhecido, ver src/pluggy.js:categoriaPrincipalParaGrupoRaiz).
+  if (categoriaPrincipalDestino) {
+    const tipoPrincipal = tipo === 'receita' ? 'receita' : 'despesa';
+    await garantirCategoriaPrincipal(uid, categoriaPrincipalDestino, tipoPrincipal);
+    await garantirSubcategoria(uid, categoriaPluggy, categoriaPrincipalDestino, tipo);
+    return categoriaPluggy;
+  }
+
+  return generica;
 }
 
 // Dedup por pluggy_transaction_id: UPDATE se já existe (valor/status/categoria
@@ -4572,6 +4623,7 @@ module.exports = {
   listarContasMapPorItem,
   buscarMapeamentoContaPorAccountId,
   resolverCategoriaPluggy,
+  garantirCategoriaPrincipal,
   upsertTransacaoPluggy,
   removerTransacoesPluggyPorIds,
   calibrarSaldoInicialConta,
