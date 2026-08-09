@@ -420,6 +420,18 @@ async function sincronizarItem(usuarioId, itemId) {
     : null;
 
   const contasMapeadas = await db.listarContasMapPorItem(mapaItem.id);
+
+  // Accounts atualizadas (com balance real) — só busca se houver alguma conta
+  // bancária mapeada, para não gastar uma chamada de API à toa em Items que só
+  // têm cartão. Usado para calibrar saldo_inicial logo abaixo.
+  const temContaBancaria = contasMapeadas.some((m) => m.tipo === 'conta');
+  const accountsPorId = new Map();
+  if (temContaBancaria) {
+    for (const account of await buscarAccountsPluggy(apiKey, itemId)) {
+      if (account?.id) accountsPorId.set(account.id, account);
+    }
+  }
+
   let total = 0;
 
   for (const mapa of contasMapeadas) {
@@ -442,6 +454,21 @@ async function sincronizarItem(usuarioId, itemId) {
         cartaoId: mapa.tipo === 'cartao' ? mapa.cronos_cartao_id : null,
       });
       total++;
+    }
+
+    // Calibra saldo_inicial só de conta bancária (BANK) — cartão fica de fora,
+    // saldo de cartão é semântica diferente (fatura/ciclo), item já adiado.
+    // Recalcula do zero a cada sync (idempotente, sempre converge para o
+    // balance real da Pluggy) — não é um ajuste incremental que acumularia erro.
+    if (mapa.tipo === 'conta') {
+      const account = accountsPorId.get(mapa.pluggy_account_id);
+      if (account && typeof account.balance === 'number') {
+        try {
+          await db.calibrarSaldoInicialConta(usuarioId, mapa.cronos_conta_id, account.balance);
+        } catch (err) {
+          console.error('[PLUGGY] Falha ao calibrar saldo_inicial da conta:', err.message);
+        }
+      }
     }
   }
 

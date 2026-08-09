@@ -4280,6 +4280,46 @@ async function removerTransacoesPluggyPorIds(pluggyTransactionIds) {
   return res.rowCount;
 }
 
+// Recalibra saldo_inicial de uma conta espelho Pluggy para que
+// calcularSaldosPorConta volte a bater com o saldo real reportado pela
+// Pluggy (Account.balance) — a Pluggy só traz uma janela de histórico (até
+// 365 dias), não desde a abertura da conta, então a soma das transações
+// importadas sozinha não fecha com o saldo real (gap descoberto em produção:
+// saldo_inicial=0 fixo, decisão do Marco 2, subestimava o saldo real do
+// Federico na diferença do histórico não trazido).
+//
+// Fórmula espelha EXATAMENTE calcularSaldosPorConta (linha ~1508) menos o
+// próprio saldo_inicial — inclui transferências para não ficar sutilmente
+// errada se o usuário transferir manualmente de/para essa conta. Roda a cada
+// sync bem-sucedido de conta bancária (idempotente — recalcula do zero,
+// nunca acumula: sempre converge para o mesmo balance real, não importa
+// quantas vezes rodar).
+async function calibrarSaldoInicialConta(usuarioId, contaId, balanceReal) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const res = await pool.query(
+    `SELECT (
+       COALESCE((
+         SELECT SUM(CASE WHEN tipo = 'receita' THEN valor ELSE -valor END)
+         FROM transacoes
+         WHERE usuario_id = $1 AND conta_id = $2 AND status = 'pago' AND cartao_id IS NULL
+       ), 0)
+       + COALESCE((SELECT SUM(valor) FROM transferencias WHERE usuario_id = $1 AND conta_destino_id = $2), 0)
+       - COALESCE((SELECT SUM(valor) FROM transferencias WHERE usuario_id = $1 AND conta_origem_id = $2), 0)
+     )::float AS liquido`,
+    [uid, contaId]
+  );
+  const liquido = res.rows[0].liquido;
+  const novoSaldoInicial = Number(balanceReal) - liquido;
+
+  await pool.query(
+    `UPDATE contas SET saldo_inicial = $2 WHERE id = $1 AND usuario_id = $3`,
+    [contaId, novoSaldoInicial, uid]
+  );
+
+  return novoSaldoInicial;
+}
+
 module.exports = {
   pool,
   initTables,
@@ -4495,4 +4535,5 @@ module.exports = {
   resolverCategoriaPluggy,
   upsertTransacaoPluggy,
   removerTransacoesPluggyPorIds,
+  calibrarSaldoInicialConta,
 };
