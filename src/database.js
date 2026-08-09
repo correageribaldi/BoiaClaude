@@ -1327,7 +1327,7 @@ async function excluirTransacao(usuarioId, numeroUsuario) {
 
 async function consultarTransacoes(usuarioId, filtros = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const { tipo, categoria, dataInicio, dataFim, descricao, status, limite, recorrente } = filtros;
+  const { tipo, categoria, dataInicio, dataFim, descricao, status, limite, recorrente, contaId, cartaoId } = filtros;
   const dataInicioValida = normalizarDataISO(dataInicio);
   const dataFimValida = normalizarDataISO(dataFim);
 
@@ -1372,6 +1372,16 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   }
   if (recorrente) {
     query += ` AND recorrencia_id IS NOT NULL`;
+  }
+  // Filtro de origem: lançamento de cartão sempre tem cartao_id preenchido e
+  // conta_id NULL; lançamento de conta é o inverso (nunca os dois juntos).
+  if (contaId) {
+    query += ` AND conta_id = $${idx++}`;
+    params.push(contaId);
+  }
+  if (cartaoId) {
+    query += ` AND cartao_id = $${idx++}`;
+    params.push(cartaoId);
   }
 
   query += ` ORDER BY data DESC, id DESC LIMIT $${idx}`;

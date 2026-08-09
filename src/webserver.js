@@ -163,7 +163,9 @@ app.get('/api/resumo-anual', autenticar, async (req, res) => {
 // ── Transações ────────────────────────────────────────────────────────────────
 app.get('/api/transactions', autenticar, async (req, res) => {
   try {
-    const { tipo, status, dataInicio, dataFim, descricao, limite, recorrente } = req.query;
+    const { tipo, status, dataInicio, dataFim, descricao, limite, recorrente, contaId, cartaoId } = req.query;
+    const contaIdNum = parseInt(contaId) || null;
+    const cartaoIdNum = parseInt(cartaoId) || null;
     const transacoes = await db.consultarTransacoes(req.usuarioId, {
       tipo: tipo || null,
       status: status || null,
@@ -172,6 +174,8 @@ app.get('/api/transactions', autenticar, async (req, res) => {
       descricao: descricao || null,
       limite: parseInt(limite) || 200,
       recorrente: recorrente === '1' ? true : null,
+      contaId: contaIdNum,
+      cartaoId: cartaoIdNum,
     });
 
     // Adicionar projeções de recorrências quando não filtrando apenas por 'pago'
@@ -220,6 +224,7 @@ app.get('/api/transactions', autenticar, async (req, res) => {
             tipo: tipo || null, status: status || null,
             dataInicio: dataInicio || null, dataFim: dataFim || null,
             descricao: descricao || null, limite: parseInt(limite) || 200,
+            contaId: contaIdNum, cartaoId: cartaoIdNum,
           });
           resultado = transacoesAtualizadas.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
         } else {
@@ -261,6 +266,18 @@ app.get('/api/transactions', autenticar, async (req, res) => {
         }
       }
       resultado.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+    }
+
+    // Filtro de origem também sobre projeções (recorrência genérica e fatura
+    // de cartão), que não passam pelo WHERE do SQL acima. Projeção de
+    // recorrência não tem conta_id/cartao_id (regra genérica) — só aparece
+    // com "Todas as origens". Projeção de fatura tem cartao_id do cartão dono.
+    if (contaIdNum || cartaoIdNum) {
+      resultado = resultado.filter(t => {
+        if (contaIdNum) return t.conta_id === contaIdNum;
+        if (cartaoIdNum) return t.cartao_id === cartaoIdNum;
+        return true;
+      });
     }
 
     res.json(resultado);
