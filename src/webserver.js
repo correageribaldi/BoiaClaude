@@ -214,7 +214,8 @@ app.get('/api/transactions', autenticar, async (req, res) => {
             try {
               await db.adicionarTransacaoComRecorrencia(
                 req.usuarioId, proj.tipo, proj.valor, proj.descricao, proj.categoria,
-                proj.data, 'pendente', proj.recorrencia_id
+                proj.data, 'pendente', proj.recorrencia_id,
+                proj.cartao_id, proj.conta_id
               );
             } catch (err) {
               console.error('[WEB] Erro ao materializar projeção:', err.message);
@@ -364,7 +365,7 @@ app.post('/api/transactions/skip-occurrence', autenticar, async (req, res) => {
     if (!regra) return res.status(404).json({ erro: 'Recorrência não encontrada' });
     await db.adicionarTransacaoComRecorrencia(
       req.usuarioId, regra.tipo, regra.valor, regra.descricao, regra.categoria,
-      data, 'pago', recorrencia_id
+      data, 'pago', recorrencia_id, regra.cartao_id, regra.conta_id
     );
     res.json({ ok: true });
   } catch (err) {
@@ -1093,7 +1094,7 @@ app.get('/api/recorrencias', autenticar, async (req, res) => {
 
 app.post('/api/recorrencias', autenticar, async (req, res) => {
   try {
-    const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim } = req.body;
+    const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id } = req.body;
     if (!tipo || !valor || !descricao || !frequencia) {
       return res.status(400).json({ erro: 'tipo, valor, descricao e frequencia são obrigatórios' });
     }
@@ -1103,7 +1104,9 @@ app.post('/api/recorrencias', autenticar, async (req, res) => {
       dia_mes != null ? parseInt(dia_mes) : null,
       dia_semana != null ? parseInt(dia_semana) : null,
       data_inicio || new Date().toISOString().substring(0, 10),
-      data_fim || null
+      data_fim || null,
+      cartao_id != null ? parseInt(cartao_id) : null,
+      conta_id  != null ? parseInt(conta_id)  : null
     );
     res.json(resultado);
   } catch (err) {

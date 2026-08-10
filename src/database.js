@@ -919,6 +919,37 @@ async function initTables() {
     WHERE cartao_id IS NOT NULL AND conta_id IS NOT NULL;
   `);
 
+  // Migração: origem da recorrência (cartão OU conta). Mora aqui, e não junto do
+  // CREATE TABLE recorrencias, porque as FKs exigem que `cartoes` e `contas` já
+  // existam — ambas são criadas depois naquele bloco.
+  //
+  // Sem isso não dá para distinguir "fixa paga no cartão" de "fixa que sai da
+  // conta corrente", e a transação materializada pela regra nascia sempre sem
+  // origem. Nullable: recorrência antiga (genérica) continua válida com as duas
+  // colunas NULL.
+  await pool.query(`
+    ALTER TABLE recorrencias ADD COLUMN IF NOT EXISTS cartao_id INTEGER REFERENCES cartoes(id);
+    ALTER TABLE recorrencias ADD COLUMN IF NOT EXISTS conta_id  INTEGER REFERENCES contas(id);
+  `);
+
+  // Invariante de origem, no banco e não só no JS: mesma regra que vale para
+  // `transacoes` (cartão preenchido ⇒ conta NULL, e vice-versa). Já houve bug de
+  // produção com as duas colunas preenchidas ao mesmo tempo em transacoes —
+  // aqui a porta fica fechada desde o começo. CHECK não aceita IF NOT EXISTS,
+  // daí o DO block guardado por pg_constraint (idempotente).
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'recorrencias_origem_exclusiva'
+      ) THEN
+        ALTER TABLE recorrencias
+          ADD CONSTRAINT recorrencias_origem_exclusiva
+          CHECK (cartao_id IS NULL OR conta_id IS NULL);
+      END IF;
+    END $$;
+  `);
+
   // Colunas para cartão espelho Pluggy: valores REAIS da API (Account.balance
   // e Account.creditData.availableCreditLimit), nunca calculados a partir de
   // transacoes — diferente de calcularUsoCartao (feito para cartão manual,
@@ -1045,16 +1076,27 @@ async function initTables() {
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
 
-async function criarRecorrencia(usuarioId, tipo, valor, descricao, categoria, frequencia, diaMes, diaSemana, dataInicio, dataFim) {
+// Origem de um lançamento é exclusiva: ou cartão, ou conta, nunca as duas.
+// Regra única para transacoes e recorrencias — cartão vence, porque é a origem
+// que muda o comportamento financeiro (compra no cartão não sai da conta na
+// hora, sai na fatura).
+function normalizarOrigem(cartaoId, contaId) {
+  const cartao = cartaoId || null;
+  return { cartaoId: cartao, contaId: cartao ? null : (contaId || null) };
+}
+
+async function criarRecorrencia(usuarioId, tipo, valor, descricao, categoria, frequencia, diaMes, diaSemana, dataInicio, dataFim, cartaoId = null, contaId = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  const origem = normalizarOrigem(cartaoId, contaId);
   const result = await pool.query(
     `INSERT INTO recorrencias
-       (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     [uid, tipo, valor, descricao, categoria || 'Outros', frequencia,
      diaMes || null, diaSemana || null,
-     dataInicio || dataHojeBR(), dataFim || null]
+     dataInicio || dataHojeBR(), dataFim || null,
+     origem.cartaoId, origem.contaId]
   );
   return result.rows[0].id;
 }
@@ -1063,7 +1105,7 @@ async function listarRecorrencias(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT id, tipo, valor::float, descricao, categoria, frequencia,
-            dia_mes, dia_semana,
+            dia_mes, dia_semana, cartao_id, conta_id,
             TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
             TO_CHAR(data_fim,    'YYYY-MM-DD') as data_fim
      FROM recorrencias
@@ -1105,6 +1147,11 @@ function calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj) {
           categoria:      regra.categoria,
           data:           `${yyyy}-${mm}-${dd}`,
           recorrencia_id: regra.id,
+          // Origem herdada da regra: quem materializa a ocorrência precisa saber
+          // se o lançamento nasce no cartão ou na conta (regra antiga é genérica
+          // e traz os dois NULL).
+          cartao_id:      regra.cartao_id || null,
+          conta_id:       regra.conta_id  || null,
           status:         'projetado',
         });
       }
@@ -1114,16 +1161,21 @@ function calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj) {
   return ocorrencias;
 }
 
-// Cria transação com vínculo à regra de recorrência
-async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId, cartaoId = null) {
+// Cria transação com vínculo à regra de recorrência.
+// A origem (cartaoId/contaId) vem da regra — ver normalizarOrigem: cartão e
+// conta são mutuamente exclusivos, senão o lançamento entraria duas vezes no
+// saldo (uma direto na conta, outra pela fatura).
+async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId, cartaoId = null, contaId = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+  const origem = normalizarOrigem(cartaoId, contaId);
   const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, conta_id, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id, numero_usuario`,
     [uid, tipo, valor, descricao, categoria || 'Outros',
-     data || dataHojeBR(), status || 'pago', recorrenciaId || null, cartaoId || null]
+     data || dataHojeBR(), status || 'pago', recorrenciaId || null,
+     origem.cartaoId, origem.contaId]
   );
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
@@ -1404,6 +1456,7 @@ async function buscarRecorrenciaPorId(usuarioId, recorrenciaId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
     `SELECT id, tipo, valor::float, descricao, categoria, frequencia, dia_mes, dia_semana,
+            cartao_id, conta_id,
             TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
             TO_CHAR(data_fim, 'YYYY-MM-DD') as data_fim
      FROM recorrencias

@@ -3107,6 +3107,10 @@ async function salvarNovaTx() {
         frequencia: freq,
         data_inicio: data,
         data_fim: null,
+        // Origem da fixa: "paga no cartão" x "sai da conta". O backend normaliza
+        // (cartão preenchido zera a conta) — aqui só repassa o que o form tem.
+        cartao_id: cartao_id ? parseInt(cartao_id) : null,
+        conta_id: conta_id ? parseInt(conta_id) : null,
       };
       if (freq === 'mensal') body.dia_mes = dt.getDate();
       if (freq === 'semanal') body.dia_semana = dt.getDay();

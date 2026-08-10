@@ -91,7 +91,8 @@ async function criarPendentesDeRecorrencias() {
           // Criar transação pendente para o lembrete
           await db.adicionarTransacaoComRecorrencia(
             usuarioId, o.tipo, o.valor, o.descricao,
-            o.categoria, hojeISO, 'pendente', o.recorrencia_id
+            o.categoria, hojeISO, 'pendente', o.recorrencia_id,
+            o.cartao_id, o.conta_id
           );
           console.log(`[RECORRENCIA] Criada pendente lazy: ${o.descricao} (${usuarioId})`);
         }
