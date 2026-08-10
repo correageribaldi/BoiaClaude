@@ -283,10 +283,11 @@ app.get('/api/transactions', autenticar, async (req, res) => {
       resultado.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
     }
 
-    // Filtro de origem também sobre projeções (recorrência genérica e fatura
-    // de cartão), que não passam pelo WHERE do SQL acima. Projeção de
-    // recorrência não tem conta_id/cartao_id (regra genérica) — só aparece
-    // com "Todas as origens". Projeção de fatura tem cartao_id do cartão dono.
+    // Filtro de origem também sobre projeções (recorrência e fatura de cartão),
+    // que não passam pelo WHERE do SQL acima. A projeção de recorrência agora
+    // carrega a origem da regra, então a fixa do cartão aparece ao filtrar por
+    // aquele cartão; regra antiga, sem origem, só aparece em "Todas as origens".
+    // Projeção de fatura tem cartao_id do cartão dono.
     if (contaIdNum || cartaoIdNum) {
       resultado = resultado.filter(t => {
         if (contaIdNum) return t.conta_id === contaIdNum;
