@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const db = require('./database');
+const limites = require('./limites');
 const pagamento = require('./pagamento');
 const cronAdmin = require('./cron-admin');
 const gcal = require('./google-calendar');
@@ -384,12 +385,25 @@ app.get('/api/limites', autenticar, async (req, res) => {
 
 app.put('/api/limites', autenticar, async (req, res) => {
   try {
-    const { limites } = req.body;
-    if (!Array.isArray(limites)) return res.status(400).json({ erro: 'limites deve ser um array' });
-    await db.salvarLimitesBatch(req.usuarioId, limites);
+    const payload = req.body?.limites;
+    if (!Array.isArray(payload)) return res.status(400).json({ erro: 'limites deve ser um array' });
+    await db.salvarLimitesBatch(req.usuarioId, payload);
     res.json({ ok: true });
   } catch (err) {
     console.error('[WEB] PUT /api/limites:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Consumo dos tetos nas duas janelas (semana ISO + mês corrente). Sempre o
+// período ATUAL — não aceita mês/ano por querystring de propósito: teto é
+// controle do que dá para gastar de aqui até o fim da janela, não relatório
+// histórico (para histórico existem os gráficos do dashboard).
+app.get('/api/limites/consumo', autenticar, async (req, res) => {
+  try {
+    res.json(await db.listarConsumoLimites(req.usuarioId));
+  } catch (err) {
+    console.error('[WEB] GET /api/limites/consumo:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
@@ -533,18 +547,26 @@ app.post('/api/transactions', autenticar, async (req, res) => {
     if (!['receita', 'despesa'].includes(tipo)) {
       return res.status(400).json({ erro: 'tipo deve ser receita ou despesa' });
     }
+    let resultado;
     if (parcelas && parcelas > 1) {
-      const resultado = await db.adicionarTransacoesParcelas(
+      resultado = await db.adicionarTransacoesParcelas(
         req.usuarioId, valor, descricao, categoria || null, data, cartao_id || null, parcelas, conta_id || null
       );
-      res.json(resultado);
     } else {
-      const resultado = await db.adicionarTransacao(
+      resultado = await db.adicionarTransacao(
         req.usuarioId, tipo, parseFloat(valor), descricao, categoria || null,
         data, status || 'pendente', cartao_id || null, conta_id || null
       );
-      res.json(resultado);
     }
+
+    // Consumo dos tetos da categoria APÓS o lançamento (o front exibe o toast
+    // de alerta a partir daqui). null quando a categoria não tem teto — nunca
+    // impede a resposta de sucesso: o lançamento já foi gravado.
+    const limitesInfo = tipo === 'despesa'
+      ? await limites.resumoLimitesDaTransacao(req.usuarioId, categoria || null)
+      : null;
+
+    res.json({ ...resultado, limites: limitesInfo });
   } catch (err) {
     console.error('[WEB] POST /api/transactions:', err.message);
     res.status(500).json({ erro: err.message });

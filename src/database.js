@@ -2156,9 +2156,24 @@ async function limparDadosUsuario(usuarioId) {
   return true;
 }
 
-// Definir limite de gastos para uma categoria (principal ou subcategoria)
-async function definirLimite(usuarioId, categoria, valorLimite, parent = null) {
+// Definir limite de gastos para uma categoria (principal ou subcategoria).
+// opcoes.semanal = true grava o teto SEMANAL sem tocar no mensal (e vice-versa)
+// — os dois convivem na mesma linha e são independentes.
+async function definirLimite(usuarioId, categoria, valorLimite, parent = null, opcoes = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  if (opcoes.semanal) {
+    const result = await pool.query(
+      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, valor_limite_semanal)
+       VALUES ($1, $2, 0, $4, $3)
+       ON CONFLICT (usuario_id, categoria)
+       DO UPDATE SET valor_limite_semanal = $3, ativo = TRUE, parent = COALESCE($4, limites_categoria.parent)
+       RETURNING id`,
+      [uid, categoria, valorLimite, parent]
+    );
+    return result.rows[0].id;
+  }
+
   const result = await pool.query(
     `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
      VALUES ($1, $2, $3, $4)

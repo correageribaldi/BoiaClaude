@@ -7,6 +7,7 @@ const qrcode = require('qrcode-terminal');
 const { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados } = require('./handlers');
 const { transcreverAudio } = require('./ai');
 const db = require('./database');
+const notificador = require('./notificador');
 const pagamento = require('./pagamento');
 const { iniciarLembretes } = require('./lembretes');
 const { iniciarWebServer } = require('./webserver');
@@ -664,6 +665,10 @@ async function start() {
     console.error('❌ Erro ao conectar no PostgreSQL:', err.message);
     process.exit(1);
   }
+
+  // Envio proativo de WhatsApp para módulos de backend (alerta de limite ao
+  // fim de uma sincronização Pluggy, por exemplo) — ver src/notificador.js.
+  notificador.registrarWhatsappClient(client);
 
   // Iniciar servidor web (painel financeiro + webhook de pagamento)
   iniciarWebServer(client);

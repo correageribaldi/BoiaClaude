@@ -6,6 +6,7 @@
 const db = require('./database');
 const charts = require('./charts');
 const fmt = require('./formatters');
+const limites = require('./limites');
 const search = require('./search');
 
 // Importação lazy para evitar dependência circular (handlers.js importa agente-financeiro.js)
@@ -38,7 +39,8 @@ function limparEstado(usuarioId) { agenteEstados.delete(usuarioId); }
 // ── Contexto financeiro ──────────────────────────────────────────────────────
 
 async function buildFinancialContext(usuarioId) {
-  const [saldos, resumo, limites, recorrencias, cartoes, caixinhas, usuario, categoriasDespesa, categoriasReceita] =
+  // limitesCategoria (e não "limites") para não sombrear o módulo ./limites
+  const [saldos, resumo, limitesCategoria, recorrencias, cartoes, caixinhas, usuario, categoriasDespesa, categoriasReceita] =
     await Promise.all([
       db.calcularSaldos(usuarioId),
       db.resumoMensal(usuarioId),
@@ -74,8 +76,8 @@ async function buildFinancialContext(usuarioId) {
     lines.push(`Caixinhas: ${cxInfo.join(' | ')}`);
   }
 
-  if (limites.length > 0) {
-    const limitesAtivos = limites.filter(l => !l.parent).slice(0, 10);
+  if (limitesCategoria.length > 0) {
+    const limitesAtivos = limitesCategoria.filter(l => !l.parent).slice(0, 10);
     if (limitesAtivos.length > 0) {
       lines.push(`Limites: ${limitesAtivos.map(l => `${l.categoria} ${moeda(l.valor_limite)}`).join(', ')}`);
     }
@@ -265,12 +267,17 @@ const TOOLS = [
   {
     type: 'function', function: {
       name: 'definir_limite',
-      description: 'Definir limite de gastos mensal para uma categoria',
+      description: 'Definir teto de gastos de uma categoria. Aceita teto mensal, semanal ou os dois — são controles independentes. Ex: "no mercado quero gastar no máximo 500 por semana" → periodo="semana", valor_limite=500.',
       parameters: {
         type: 'object',
         properties: {
           categoria: { type: 'string', description: 'Nome da categoria' },
-          valor_limite: { type: 'number', description: 'Valor do limite mensal' },
+          valor_limite: { type: 'number', description: 'Valor do teto' },
+          periodo: {
+            type: 'string',
+            enum: ['mes', 'semana'],
+            description: 'Janela do teto. Padrão "mes" quando o usuário não disser.',
+          },
         },
         required: ['categoria', 'valor_limite'],
       },
@@ -629,12 +636,20 @@ async function executeTool(usuarioId, toolName, args) {
       const { categoriaFinal: categoria, aviso: avisoCategoria } = await validarCategoriaPorTipo(usuarioId, args.categoria, tipo);
       const avisos = `${avisoConta}${avisoCategoria ? `\n${avisoCategoria}` : ''}`;
 
+      // Consumo dos tetos da categoria (semana + mês) — mesma informação que o
+      // fluxo determinístico anexa em salvarTransacao. Calculado DEPOIS do
+      // insert, senão o gasto que acabou de entrar não apareceria na conta.
+      // Vai na msg da tool para o modelo repassar ao usuário; só para despesa.
+      const blocoLimite = async () => (
+        tipo === 'despesa' ? await limites.blocoLimitesDaTransacao(usuarioId, categoria) : ''
+      );
+
       if (parcelas && parcelas > 1) {
-        const result = await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, data || null, cartaoId, parcelas);
-        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}${avisos}` };
+        await db.adicionarTransacoesParcelas(usuarioId, valor, descricao, categoria, data || null, cartaoId, parcelas);
+        return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} em ${parcelas}x de ${moeda(valor / parcelas)}${avisos}${await blocoLimite()}` };
       }
       await db.adicionarTransacao(usuarioId, tipo, valor, descricao, categoria, data || null, status || 'pago', cartaoId, contaId);
-      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})${avisos}` };
+      return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})${avisos}${await blocoLimite()}` };
     }
     case 'consultar_transacoes': {
       const txs = await db.consultarTransacoes(usuarioId, {
@@ -690,12 +705,16 @@ async function executeTool(usuarioId, toolName, args) {
 
     // Limites
     case 'definir_limite': {
-      await db.definirLimite(usuarioId, args.categoria, args.valor_limite);
-      return { ok: true, msg: `Limite de ${moeda(args.valor_limite)}/mês definido para ${args.categoria}.` };
+      const porSemana = args.periodo === 'semana';
+      await db.definirLimite(usuarioId, args.categoria, args.valor_limite, null, { semanal: porSemana });
+      return {
+        ok: true,
+        msg: `Limite de ${moeda(args.valor_limite)}/${porSemana ? 'semana' : 'mês'} definido para ${args.categoria}.`,
+      };
     }
     case 'listar_limites': {
-      const limites = await db.listarLimites(usuarioId);
-      return { ok: true, data: limites };
+      const ativos = await db.listarLimites(usuarioId);
+      return { ok: true, data: ativos };
     }
     case 'remover_limite': {
       const result = await db.removerLimite(usuarioId, args.categoria);
@@ -1024,7 +1043,7 @@ async function handleConfirmacao(usuarioId, texto, estado, chatFn) {
 function descreverAcao(toolName, args) {
   switch (toolName) {
     case 'definir_limite':
-      return `📊 Definir limite de *${moeda(args.valor_limite)}/mês* para *${args.categoria}*`;
+      return `📊 Definir limite de *${moeda(args.valor_limite)}/${args.periodo === 'semana' ? 'semana' : 'mês'}* para *${args.categoria}*`;
     case 'remover_limite':
       return `🗑️ Remover limite de gastos de *${args.categoria}*`;
     case 'criar_recorrencia':

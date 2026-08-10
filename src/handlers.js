@@ -1,5 +1,6 @@
 const db = require('./database');
 const fmt = require('./formatters');
+const limites = require('./limites');
 const pagamento = require('./pagamento');
 const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding, chatAgente } = require('./ai');
 const agente = require('./agente-financeiro');
@@ -656,26 +657,39 @@ async function garantirSubcategoriaVinculada(usuarioId, categoria, tipo = 'despe
   }
 }
 
-// Verificar limites e retornar bloco de texto (subcategoria + principal)
+// Verificar limites e retornar bloco de texto anexado à confirmação de uma
+// despesa: teto da subcategoria (semana + mês) e, quando já está apertado, o
+// orçamento da categoria principal.
+//
+// Esta função existia desde sempre mas nunca foi chamada de lugar nenhum — era
+// a causa raiz de o usuário nunca ter visto um alerta de limite. Agora é
+// chamada por salvarTransacao/salvarTransacaoParcelada (WhatsApp), pelo agente
+// (function calling) e pelo POST /api/transactions (painel).
+//
+// O bloco da PRINCIPAL só entra a partir de 60%: ele é o rateio 50/30/20, um
+// número mais frouxo e menos acionável que o teto da subcategoria. Mostrá-lo
+// em toda despesa transformaria cada confirmação num relatório.
 async function verificarLimitesTransacao(usuarioId, categoria) {
   if (!categoria) return '';
-  let msg = '';
 
-  // 1. Limite da subcategoria individual
-  const limiteSubInfo = await db.verificarLimiteSub(usuarioId, categoria);
-  if (limiteSubInfo) msg += formatarBlocoLimite(limiteSubInfo, categoria, categoria);
+  let msg = await limites.blocoLimitesDaTransacao(usuarioId, categoria);
 
-  // 2. Limite da categoria principal (bucket)
-  const budgetCat = await resolverBudgetCategoria(categoria);
-  if (budgetCat) {
-    // Buscar todas as subcategorias da principal
-    const limites = await db.listarLimites(usuarioId);
-    const subcats = limites
-      .filter(l => l.parent === budgetCat)
-      .map(l => l.categoria);
-    if (!subcats.includes(categoria)) subcats.push(categoria);
-    const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
-    if (limiteInfo) msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
+  try {
+    const budgetCat = await resolverBudgetCategoria(categoria);
+    if (budgetCat) {
+      // Buscar todas as subcategorias da principal
+      const todosLimites = await db.listarLimites(usuarioId);
+      const subcats = todosLimites
+        .filter(l => l.parent === budgetCat)
+        .map(l => l.categoria);
+      if (!subcats.includes(categoria)) subcats.push(categoria);
+      const limiteInfo = await db.verificarLimite(usuarioId, budgetCat, subcats);
+      if (limiteInfo && limiteInfo.percentual >= 60) {
+        msg += formatarBlocoLimite(limiteInfo, categoria, budgetCat);
+      }
+    }
+  } catch (err) {
+    console.error('[LIMITES] Falha ao verificar orçamento da categoria principal:', err.message);
   }
 
   return msg;
@@ -4005,6 +4019,10 @@ async function salvarTransacaoParcelada(usuarioId, valor, descricao, categoria, 
   let msg = `${iconeHeader} *${descricao}* registrada em *${parcelas}x*${sufixo}!\n\n` +
     `💵 Total: ${fmt.formatarMoeda(valor)}\n📋 *Parcelas:*\n${listaParcelas}`;
 
+  // Só a 1ª parcela cai no período corrente — o consumo mostrado reflete isso,
+  // não o valor cheio da compra.
+  msg += await verificarLimitesTransacao(usuarioId, categoria);
+
   msg += '\n💡 _Para ver suas despesas, tente:_\n_"minhas despesas", "despesas desse mês" ou "resumo"_';
   msg += avisoConta || '';
 
@@ -4041,6 +4059,12 @@ async function salvarTransacao(usuarioId, tipo, valor, descricao, categoria, dat
   if (statusFinal === 'pendente') {
     const quando = tipo === 'receita' ? 'receber' : 'pagar';
     msg += `\n\n_Vou te lembrar quando chegar o dia de ${quando}! 📅_`;
+  }
+
+  // Consumo dos tetos da categoria (semana + mês). Vem ANTES da dica de uso:
+  // é a informação que o usuário pediu ao registrar o gasto, a dica é rodapé.
+  if (tipo === 'despesa') {
+    msg += await verificarLimitesTransacao(usuarioId, categoria);
   }
 
   if (tipo === 'despesa') {
