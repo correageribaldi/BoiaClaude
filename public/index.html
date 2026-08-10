@@ -285,6 +285,20 @@
         <div id="dash-limites-body" class="dash-list-body"></div>
       </div>
 
+      <!-- Previsão dos próximos meses: valores PROJETADOS (recorrências +
+           parcelas já lançadas + fatura de cartão estimada), nunca realizados.
+           Como os limites, é sempre "daqui pra frente" — some ao navegar para
+           outro mês, onde previsão do futuro não diz nada sobre o mês olhado. -->
+      <div class="dash-list-card hidden" id="dash-previsao-card">
+        <div class="dash-list-header">
+          <h3>🔮 Previsão dos próximos 6 meses</h3>
+          <span class="badge badge-projetado">Estimativa</span>
+        </div>
+        <div id="dash-previsao-body" class="dash-list-body">
+          <p class="empty-hint">Carregando...</p>
+        </div>
+      </div>
+
       <!-- Últimas transações + Próximos lembretes -->
       <div class="dash-lists-row">
         <div class="dash-list-card">

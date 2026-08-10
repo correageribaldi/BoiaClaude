@@ -150,6 +150,19 @@ app.get('/api/dashboard', autenticar, async (req, res) => {
   }
 });
 
+// Previsão dos próximos meses (card do dashboard). Valores PROJETADOS, não
+// realizados — a composição e a defesa contra dupla contagem estão em
+// db.projetarProximosMeses.
+app.get('/api/previsao', autenticar, async (req, res) => {
+  try {
+    const meses = parseInt(req.query.meses) || 6;
+    res.json(await db.projetarProximosMeses(req.usuarioId, meses));
+  } catch (err) {
+    console.error('[WEB] /api/previsao:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 app.get('/api/resumo-anual', autenticar, async (req, res) => {
   try {
     const ano = parseInt(req.query.ano) || new Date().getFullYear();

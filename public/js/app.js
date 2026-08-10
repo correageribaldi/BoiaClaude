@@ -564,7 +564,95 @@ async function carregarDashboard() {
   // Limites são sempre da semana/mês CORRENTES — não existe "limite de março
   // passado". Some quando o usuário navega para outro mês.
   carregarLimitesConsumo(ehMesAtual);
+  // Previsão é sempre "de hoje pra frente", pela mesma razão dos limites.
+  carregarPrevisao(ehMesAtual);
   try { await renderChartMensal(); } catch (e) { console.error('[CHART]', e); }
+}
+
+// ── Previsão dos próximos meses ─────────────────────────────────────────────
+//
+// Card de ESTIMATIVA: soma recorrências projetadas, lançamentos futuros já
+// conhecidos (parcelas) e fatura de cartão projetada. Quem monta e protege
+// contra dupla contagem é db.projetarProximosMeses — aqui é só renderização.
+const MESES_CURTO = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+
+// Sem "R$" nas células: são 4 colunas numéricas e o card precisa caber no
+// celular. A unidade fica no cabeçalho da tabela.
+function fmtValorPrev(v) {
+  return Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function carregarPrevisao(ehMesAtual = true) {
+  const card = document.getElementById('dash-previsao-card');
+  if (!card) return;
+  if (!ehMesAtual) { card.classList.add('hidden'); return; }
+
+  let dados;
+  try { dados = await api('/api/previsao?meses=6'); }
+  catch { card.classList.add('hidden'); return; }
+
+  card.classList.remove('hidden');
+  renderPrevisao(dados);
+}
+
+function renderPrevisao(dados) {
+  const body = document.getElementById('dash-previsao-body');
+  if (!body) return;
+
+  const meses = (dados && dados.meses) || [];
+  const semRecorrencia = !dados || !dados.totalRecorrencias;
+  const tudoZerado = meses.every(m => !m.receitas.total && !m.despesas.total);
+
+  // Estado vazio: o usuário ainda não marcou nada como fixo, então não há o que
+  // projetar. A mensagem tem de dizer o caminho, não só "sem dados".
+  if (semRecorrencia && tudoZerado) {
+    body.innerHTML = `
+      <p class="empty-hint" style="text-align:left">
+        Nada para projetar ainda.<br>
+        Marque suas despesas e receitas fixas como <strong>🔄 recorrentes</strong>
+        — no modal de uma transação existente ou ao criar uma nova — e a previsão
+        dos próximos meses aparece aqui.
+      </p>`;
+    return;
+  }
+
+  const hoje = new Date();
+  const chaveAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+
+  const linhas = meses.map(m => {
+    const ehAtual = m.chave === chaveAtual;
+    const rotulo = `${MESES_CURTO[m.mes - 1]}/${String(m.ano).slice(2)}`;
+    return `
+      <div class="prev-row">
+        <div class="prev-mes">${esc(rotulo)}${ehAtual ? '<small>mês atual</small>' : ''}</div>
+        <div class="prev-val receita">${fmtValorPrev(m.receitas.total)}</div>
+        <div class="prev-val despesa">${fmtValorPrev(m.despesas.total)}</div>
+        <div class="prev-val saldo ${m.saldo < 0 ? 'negativo' : 'positivo'}">${fmtValorPrev(m.saldo)}</div>
+      </div>`;
+  }).join('');
+
+  const avisoSemFixas = semRecorrencia
+    ? `<p class="prev-nota">Nenhuma despesa fixa cadastrada ainda — os números abaixo
+       vêm só de lançamentos já registrados. Marque uma transação como
+       <strong>🔄 recorrente</strong> para a previsão ficar completa.</p>`
+    : '';
+
+  body.innerHTML = `
+    ${avisoSemFixas}
+    <div class="prev-grid">
+      <div class="prev-row prev-head">
+        <div>Mês</div>
+        <div style="text-align:right">Receitas (R$)</div>
+        <div style="text-align:right">Despesas (R$)</div>
+        <div style="text-align:right">Saldo (R$)</div>
+      </div>
+      ${linhas}
+    </div>
+    <p class="prev-nota">
+      Valores <strong>projetados</strong>, não realizados: recorrências ativas +
+      lançamentos já registrados no mês (inclusive parcelas futuras) + fatura de
+      cartão estimada.
+    </p>`;
 }
 
 // ── Limites de gasto: barras de consumo no dashboard ────────────────────────

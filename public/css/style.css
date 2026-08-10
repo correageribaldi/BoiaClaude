@@ -692,6 +692,46 @@ html:not([data-theme="light"]) .modal-box {
 }
 .dash-lem-data { font-size: 11px; color: var(--text-muted); }
 
+/* ── Previsão dos próximos meses ────────────────────────────────────────── */
+/* overflow-x no container, não na página: valor alto (ex: 123.456,78) em 4
+   colunas não cabe em tela estreita, e cortar dígito de dinheiro não é opção. */
+.prev-grid { display: flex; flex-direction: column; overflow-x: auto; }
+.prev-row {
+  display: grid;
+  grid-template-columns: minmax(64px, 1.1fr) repeat(3, minmax(76px, 1fr));
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 300px;
+}
+.prev-row:last-child { border-bottom: none; }
+.prev-head {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding-bottom: 6px;
+}
+.prev-mes { font-size: 13px; font-weight: 500; white-space: nowrap; }
+.prev-mes small { display: block; font-size: 10px; color: var(--text-muted); font-weight: 400; }
+.prev-val { font-size: 13px; text-align: right; white-space: nowrap; }
+.prev-val.receita { color: var(--green); }
+.prev-val.despesa { color: var(--red); }
+.prev-val.saldo { font-weight: 600; }
+.prev-val.saldo.positivo { color: var(--green); }
+.prev-val.saldo.negativo { color: var(--red); }
+.prev-nota {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding-top: 10px;
+}
+@media (max-width: 420px) {
+  .prev-row { grid-template-columns: minmax(50px, .8fr) repeat(3, minmax(70px, 1fr)); gap: 4px; }
+  .prev-mes, .prev-val { font-size: 12px; }
+}
+
 /* ── FAB Speed Dial ─────────────────────────────────────────────────────── */
 .fab-container {
   position: fixed;

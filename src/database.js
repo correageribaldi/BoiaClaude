@@ -1874,6 +1874,155 @@ async function calcularSaldos(usuarioId) {
   };
 }
 
+// Projeção mês a mês para o card de previsão do painel.
+//
+// Não reimplementa matemática de data: usa calcularOcorrenciasNoPerodo (regras
+// recorrentes) e projetarFaturasCartao (parcelas pendentes viram fatura), os
+// mesmos motores que já rodam no mês corrente.
+//
+// Composição de cada mês, e por que cada parte não conta duas vezes:
+//
+//  1. LANÇADAS — transações que já existem no banco no mês (pagas e pendentes),
+//     inclusive parcelas futuras. Filtro `cartao_id IS NULL OR descricao ILIKE
+//     'Fatura %'`: compra no cartão não sai da conta na data da compra, sai na
+//     fatura. É o mesmo filtro de resumoMensal e calcularSaldos.
+//  2. FIXAS — ocorrências das regras recorrentes no mês, MENOS as que já viraram
+//     transação naquele mês (chave recorrencia_id + YYYY-MM). Sem esse corte, a
+//     parcela pendente futura já materializada com recorrencia_id seria somada
+//     duas vezes: uma como lançada, outra como projetada.
+//  3. FATURAS DE CARTÃO — projetarFaturasCartao soma as parcelas pendentes do
+//     cartão por mês. Não colide com (1) porque essas parcelas foram excluídas
+//     lá pelo filtro de cartão; e o cartão/mês que já tem transação "Fatura %"
+//     é pulado, senão a fatura entraria por (1) e por (3).
+//     Ocorrência de recorrência ainda NÃO materializada nunca está aqui — (3) só
+//     enxerga transação existente — então (2) e (3) são disjuntos por construção.
+//
+// Limitação herdada de projetarFaturasCartao: ela só olha `data >= NOW()`, então
+// a fatura projetada do mês corrente ignora compras já feitas neste mês. Mesmo
+// comportamento do saldoPrevisao de calcularSaldos — consistente com o resto do
+// painel.
+async function projetarProximosMeses(usuarioId, meses = 6) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const qtd = Math.min(Math.max(parseInt(meses, 10) || 6, 1), 24);
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const [anoBase, mesBase] = dataHojeBR().split('-').map(Number);
+
+  // new Date(ano, mes-1+i, 1) resolve a virada de ano sozinho (dez → jan/+1).
+  const janela = [];
+  for (let i = 0; i < qtd; i++) {
+    const d = new Date(anoBase, mesBase - 1 + i, 1);
+    const ano = d.getFullYear();
+    const mes = d.getMonth() + 1;
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    janela.push({
+      ano,
+      mes,
+      chave:     `${ano}-${pad(mes)}`,
+      inicio:    `${ano}-${pad(mes)}-01`,
+      fim:       `${ano}-${pad(mes)}-${pad(ultimoDia)}`,
+      inicioObj: new Date(ano, mes - 1, 1),
+      fimObj:    new Date(ano, mes, 0),
+      receitas:  { fixas: 0, lancadas: 0, total: 0 },
+      despesas:  { fixas: 0, lancadas: 0, faturasCartao: 0, total: 0 },
+      saldo:     0,
+    });
+  }
+  const porChave = new Map(janela.map(m => [m.chave, m]));
+  const inicioJanela = janela[0].inicio;
+  const fimJanela    = janela[janela.length - 1].fim;
+
+  // ── (1) Lançadas ───────────────────────────────────────────────────────────
+  const lancadasRes = await pool.query(
+    `SELECT TO_CHAR(data, 'YYYY-MM') as chave, tipo, SUM(valor)::float as total
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND data >= $2 AND data <= $3
+       AND (cartao_id IS NULL OR descricao ILIKE 'Fatura %')
+     GROUP BY chave, tipo`,
+    [uid, inicioJanela, fimJanela]
+  );
+  for (const row of lancadasRes.rows) {
+    const m = porChave.get(row.chave);
+    if (!m) continue;
+    if (row.tipo === 'receita') m.receitas.lancadas += row.total;
+    else m.despesas.lancadas += row.total;
+  }
+
+  // ── (2) Fixas (recorrências) ───────────────────────────────────────────────
+  const regras = await listarRecorrencias(uid);
+  if (regras.length > 0) {
+    const ocorrencias = calcularOcorrenciasNoPerodo(regras, janela[0].inicioObj, janela[janela.length - 1].fimObj);
+    if (ocorrencias.length > 0) {
+      const ids = [...new Set(ocorrencias.map(o => o.recorrencia_id))];
+      const existRes = await pool.query(
+        `SELECT DISTINCT recorrencia_id, TO_CHAR(data, 'YYYY-MM') as chave
+         FROM transacoes
+         WHERE usuario_id = $1
+           AND recorrencia_id = ANY($2::int[])
+           AND data >= $3 AND data <= $4`,
+        [uid, ids, inicioJanela, fimJanela]
+      );
+      const jaMaterializada = new Set(existRes.rows.map(r => `${r.recorrencia_id}|${r.chave}`));
+
+      for (const o of ocorrencias) {
+        const chave = o.data.substring(0, 7);
+        const m = porChave.get(chave);
+        if (!m) continue;
+        if (jaMaterializada.has(`${o.recorrencia_id}|${chave}`)) continue;
+        if (o.tipo === 'receita') m.receitas.fixas += o.valor;
+        else m.despesas.fixas += o.valor;
+      }
+    }
+  }
+
+  // ── (3) Faturas de cartão projetadas ───────────────────────────────────────
+  const cartoesRes = await pool.query(
+    `SELECT id FROM cartoes WHERE usuario_id = $1`, [uid]
+  );
+  if (cartoesRes.rows.length > 0) {
+    const cartaoIds = cartoesRes.rows.map(c => c.id);
+    const faturasRes = await pool.query(
+      `SELECT DISTINCT cartao_id, TO_CHAR(data, 'YYYY-MM') as chave
+       FROM transacoes
+       WHERE usuario_id = $1
+         AND cartao_id = ANY($2::int[])
+         AND descricao ILIKE 'Fatura %'
+         AND data >= $3 AND data <= $4`,
+      [uid, cartaoIds, inicioJanela, fimJanela]
+    );
+    const faturaJaLancada = new Set(faturasRes.rows.map(r => `${r.cartao_id}|${r.chave}`));
+
+    for (const cartaoId of cartaoIds) {
+      const projMap = await projetarFaturasCartao(cartaoId, qtd);
+      for (const m of janela) {
+        if (faturaJaLancada.has(`${cartaoId}|${m.chave}`)) continue;
+        const valor = projMap[m.chave];
+        if (valor && valor > 0) m.despesas.faturasCartao += valor;
+      }
+    }
+  }
+
+  const arredondar = (n) => Math.round(n * 100) / 100;
+  for (const m of janela) {
+    m.receitas.fixas    = arredondar(m.receitas.fixas);
+    m.receitas.lancadas = arredondar(m.receitas.lancadas);
+    m.receitas.total    = arredondar(m.receitas.fixas + m.receitas.lancadas);
+    m.despesas.fixas         = arredondar(m.despesas.fixas);
+    m.despesas.lancadas      = arredondar(m.despesas.lancadas);
+    m.despesas.faturasCartao = arredondar(m.despesas.faturasCartao);
+    m.despesas.total         = arredondar(m.despesas.fixas + m.despesas.lancadas + m.despesas.faturasCartao);
+    m.saldo = arredondar(m.receitas.total - m.despesas.total);
+    delete m.inicioObj;
+    delete m.fimObj;
+  }
+
+  return {
+    meses: janela,
+    totalRecorrencias: regras.length,
+  };
+}
+
 // Calcula o saldo de cada conta ativa do usuário.
 // Transações com conta_id NULL (histórico anterior ao módulo de Contas) contam
 // para a conta marcada como padrão (fallback histórico).
@@ -5176,6 +5325,7 @@ module.exports = {
   calcularOcorrenciasNoPerodo,
   adicionarTransacaoComRecorrencia,
   tornarTransacaoRecorrente,
+  projetarProximosMeses,
   criarAssinatura,
   buscarAssinatura,
   buscarAssinaturasPendentes,
