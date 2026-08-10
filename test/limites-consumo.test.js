@@ -200,6 +200,63 @@ test('registrarFaixaAlertada: faixa 0 (abaixo de 60%) nem toca no banco', async 
   assert.equal(tocou, false);
 });
 
+// ── Persistência dos tetos ───────────────────────────────────────────────────
+
+test('salvarLimitesBatch: sem valor_limite_semanal no payload, o teto semanal é PRESERVADO', async (t) => {
+  mockResolverIdentidade(t);
+  let capturada = null;
+  t.mock.method(db.pool, 'query', async (sql, params) => {
+    capturada = { sql, params };
+    return { rows: [] };
+  });
+
+  // É exatamente o que a tela de rateio 50/30/20 manda — se sobrescrevesse,
+  // apagaria em silêncio todos os tetos semanais a cada "Salvar orçamento".
+  await db.salvarLimitesBatch('u1@c.us', [{ categoria: 'Mercado', valor_limite: 2000, parent: 'Variáveis' }]);
+
+  assert.match(capturada.sql, /valor_limite_semanal = COALESCE\(\$5, limites_categoria\.valor_limite_semanal\)/);
+  assert.equal(capturada.params[4], null, 'chave ausente vira NULL → COALESCE preserva');
+});
+
+test('salvarLimitesBatch: 0 explícito REMOVE o teto semanal', async (t) => {
+  mockResolverIdentidade(t);
+  let capturada = null;
+  t.mock.method(db.pool, 'query', async (sql, params) => { capturada = { sql, params }; return { rows: [] }; });
+
+  await db.salvarLimitesBatch('u1@c.us', [
+    { categoria: 'Mercado', valor_limite: 2000, valor_limite_semanal: 0, parent: 'Variáveis' },
+  ]);
+
+  assert.equal(capturada.params[4], 0, '0 é enviado como valor, não como ausência');
+});
+
+test('definirLimite: periodo semana grava só o teto semanal e preserva o parent', async (t) => {
+  mockResolverIdentidade(t);
+  let capturada = null;
+  t.mock.method(db.pool, 'query', async (sql, params) => {
+    capturada = { sql, params };
+    return { rows: [{ id: 7 }] };
+  });
+
+  await db.definirLimite('u1@c.us', 'Mercado', 500, null, { semanal: true });
+
+  assert.match(capturada.sql, /DO UPDATE SET valor_limite_semanal = \$3/);
+  assert.ok(!/DO UPDATE SET valor_limite =/.test(capturada.sql), 'não pode zerar o teto mensal já existente');
+  assert.match(capturada.sql, /parent = COALESCE\(\$4, limites_categoria\.parent\)/);
+  assert.deepEqual(capturada.params, ['u1@c.us', 'Mercado', 500, null]);
+});
+
+test('definirLimite: sem periodo continua gravando o teto mensal (comportamento antigo)', async (t) => {
+  mockResolverIdentidade(t);
+  let capturada = null;
+  t.mock.method(db.pool, 'query', async (sql, params) => { capturada = { sql, params }; return { rows: [{ id: 8 }] }; });
+
+  await db.definirLimite('u1@c.us', 'Lazer', 300);
+
+  assert.match(capturada.sql, /DO UPDATE SET valor_limite = \$3/);
+  assert.ok(!capturada.sql.includes('valor_limite_semanal'));
+});
+
 test('registrarFaixaAlertada: janela nova gera chave nova (reset sem rotina de limpeza)', async (t) => {
   mockResolverIdentidade(t);
   const chaves = [];

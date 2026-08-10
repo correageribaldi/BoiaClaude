@@ -10,7 +10,7 @@
     // Aplicar tema salvo antes do CSS carregar (evita flash)
     (function(){var t=localStorage.getItem('cronos_theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');})();
   </script>
-  <link rel="stylesheet" href="/css/style.css?v=20260325e" />
+  <link rel="stylesheet" href="/css/style.css?v=20260809a" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
@@ -271,6 +271,20 @@
         </div>
       </div>
 
+      <!-- Limites de gastos: sempre semana/mês CORRENTES (some ao navegar
+           para outro mês, onde "quanto ainda posso gastar" não faz sentido) -->
+      <div class="dash-list-card hidden" id="dash-limites-card">
+        <div class="dash-list-header">
+          <h3>🎯 Limites de Gastos</h3>
+          <button class="btn-link" onclick="ativarTab('categories')">Configurar</button>
+        </div>
+        <div class="limites-tabs">
+          <button class="limites-tab ativo" id="limites-tab-semana" onclick="trocarJanelaLimites('semana')">Esta semana</button>
+          <button class="limites-tab" id="limites-tab-mes" onclick="trocarJanelaLimites('mes')">Este mês</button>
+        </div>
+        <div id="dash-limites-body" class="dash-list-body"></div>
+      </div>
+
       <!-- Últimas transações + Próximos lembretes -->
       <div class="dash-lists-row">
         <div class="dash-list-card">
@@ -406,6 +420,18 @@
                 <button class="btn btn-primary" id="sub-criar">+ Criar</button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>🎯 Limites de Gastos</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <p class="accordion-desc">Teto de gasto por subcategoria. Semanal e mensal são controles <strong>independentes</strong>: preencha um, o outro, ou os dois. Deixe <strong>0</strong> para não controlar aquela janela. A semana vai de <strong>segunda a domingo</strong> — como o mês tem cerca de 4,3 semanas, 4× o teto semanal não fecha com o mensal de propósito.</p>
+            <div id="limites-editor-container"></div>
+            <button class="btn btn-primary hidden" id="limites-editor-salvar" onclick="salvarTetosLimites()">Salvar limites</button>
           </div>
         </div>
 
@@ -1242,6 +1268,6 @@
   </div>
 </div>
 
-<script src="/js/app.js?v=20260808a"></script>
+<script src="/js/app.js?v=20260809a"></script>
 </body>
 </html>

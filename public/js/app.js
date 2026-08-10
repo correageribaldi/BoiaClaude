@@ -561,7 +561,86 @@ async function carregarDashboard() {
   }
 
   renderChartCategorias(resumo.porCategoria || []);
+  // Limites são sempre da semana/mês CORRENTES — não existe "limite de março
+  // passado". Some quando o usuário navega para outro mês.
+  carregarLimitesConsumo(ehMesAtual);
   try { await renderChartMensal(); } catch (e) { console.error('[CHART]', e); }
+}
+
+// ── Limites de gasto: barras de consumo no dashboard ────────────────────────
+//
+// Fica no dashboard, e não só em Configurações, porque teto é informação de
+// ACOMPANHAMENTO — o usuário olha todo dia ("posso ir ao mercado hoje?"). O
+// valor do teto, esse sim, é configuração e mora na aba Configurações.
+let _limitesConsumo = [];
+let _limitesJanela = 'semana'; // a janela curta é a que muda decisão do dia
+
+function classeDaFaixa(faixa) {
+  if (faixa >= 100) return 'estouro';
+  if (faixa >= 80) return 'alerta';
+  if (faixa >= 60) return 'atencao';
+  return 'ok';
+}
+
+async function carregarLimitesConsumo(ehMesAtual = true) {
+  const card = document.getElementById('dash-limites-card');
+  if (!card) return;
+
+  if (!ehMesAtual) { card.classList.add('hidden'); return; }
+
+  try { _limitesConsumo = await api('/api/limites/consumo'); }
+  catch { card.classList.add('hidden'); return; }
+
+  renderLimitesConsumo();
+}
+
+function trocarJanelaLimites(janela) {
+  _limitesJanela = janela;
+  for (const j of ['semana', 'mes']) {
+    document.getElementById(`limites-tab-${j}`)?.classList.toggle('ativo', j === janela);
+  }
+  renderLimitesConsumo();
+}
+
+function renderLimitesConsumo() {
+  const card = document.getElementById('dash-limites-card');
+  const body = document.getElementById('dash-limites-body');
+  if (!card || !body) return;
+
+  // Sem nenhum teto definido em nenhuma janela, o card não aparece: nada a
+  // acompanhar ainda (o caminho para criar é a aba Configurações).
+  const temAlgum = _limitesConsumo.some(l => l.semana || l.mes);
+  card.classList.toggle('hidden', !temAlgum);
+  if (!temAlgum) return;
+
+  const linhas = _limitesConsumo
+    .filter(l => l[_limitesJanela])
+    .map(l => ({ categoria: l.categoria, parent: l.parent, ...l[_limitesJanela] }))
+    .sort((a, b) => b.percentual - a.percentual); // quem está apertado primeiro
+
+  if (linhas.length === 0) {
+    const outra = _limitesJanela === 'semana' ? 'mensal' : 'semanal';
+    body.innerHTML = `<p class="empty-hint">Nenhum teto ${_limitesJanela === 'semana' ? 'semanal' : 'mensal'} definido — você só configurou o ${outra}.</p>`;
+    return;
+  }
+
+  let html = '';
+  for (const l of linhas) {
+    const classe = classeDaFaixa(l.faixa);
+    const largura = Math.min(l.percentual, 100);
+    const restante = l.restante >= 0
+      ? `Resta ${fmtMoeda(l.restante)}`
+      : `Estourou ${fmtMoeda(Math.abs(l.restante))}`;
+    html += `<div class="limite-row">
+      <div class="limite-row-topo">
+        <span class="limite-nome">${esc(l.categoria)} <span class="limite-parent">${esc(l.parent || '')}</span></span>
+        <span class="limite-pct limite-${classe}">${l.percentual}%</span>
+      </div>
+      <div class="limite-barra"><div class="limite-barra-fill limite-barra-${classe}" style="width:${largura}%"></div></div>
+      <div class="limite-valores">${fmtMoeda(l.gastos)} de ${fmtMoeda(l.limite)} · <span class="limite-${classe}">${restante}</span></div>
+    </div>`;
+  }
+  body.innerHTML = html;
 }
 
 // ── Dashboard: detalhamento do saldo por conta ──────────────────────────────
@@ -1427,7 +1506,110 @@ async function carregarOrcamento() {
     };
     renderOrcamento();
     renderSubcategorias();
+    renderEditorLimites();
   } catch { /* silencioso se não tem dados */ }
+}
+
+// ── Editor de tetos absolutos (semanal e mensal) ────────────────────────────
+//
+// Seção SEPARADA do rateio 50/30/20 logo acima, de propósito:
+//
+//  - o rateio distribui o salário em percentuais e usa sliders limitados pelo
+//    valor da categoria principal — não consegue expressar "Mercado R$500 por
+//    semana" (~R$2.150/mês), que pode passar da fatia da principal;
+//  - o rateio só aparece com salário cadastrado no mês; teto de gasto tem que
+//    funcionar mesmo no dia 1º, antes de qualquer receita entrar.
+//
+// O campo MENSAL daqui é o mesmo valor_limite que o slider ajusta — são duas
+// formas de editar o mesmo número, não dois números.
+function renderEditorLimites() {
+  const container = document.getElementById('limites-editor-container');
+  const btn = document.getElementById('limites-editor-salvar');
+  if (!container) return;
+
+  const grupos = (_orcamentoData.limites || []).filter(g => (g.subs || []).length > 0);
+  if (grupos.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted)">Crie subcategorias primeiro (seção “Subcategorias”) para definir tetos.</p>';
+    btn?.classList.add('hidden');
+    return;
+  }
+
+  btn?.classList.remove('hidden');
+  let html = '';
+  for (const g of grupos) {
+    html += `<div class="orcamento-card">`;
+    html += `<div class="orcamento-card-header"><span class="orcamento-cat-nome">${esc(g.categoria)}</span></div>`;
+    for (const sub of g.subs) {
+      const id = encodeURIComponent(sub.categoria);
+      html += `<div class="limite-edit-row">
+        <span class="limite-edit-nome">${esc(sub.categoria)}</span>
+        <span class="limite-edit-campo">
+          <label for="teto-sem-${id}">Semana</label>
+          <input type="number" min="0" step="10" id="teto-sem-${id}" data-cat="${esc(sub.categoria)}" data-janela="semanal" value="${sub.valor_limite_semanal || 0}">
+        </span>
+        <span class="limite-edit-campo">
+          <label for="teto-mes-${id}">Mês</label>
+          <input type="number" min="0" step="10" id="teto-mes-${id}" data-cat="${esc(sub.categoria)}" data-janela="mensal" value="${sub.valor_limite || 0}">
+        </span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+}
+
+// Toast de teto logo após lançar uma despesa pelo painel. Só fala quando há o
+// que dizer (60% ou mais) — abaixo disso o card do dashboard já mostra o
+// consumo e um toast a cada lançamento seria ruído.
+function mensagemLimiteDaTransacao(info) {
+  if (!info) return '';
+  const candidatas = [
+    { rotulo: 'nesta semana', dados: info.semana },
+    { rotulo: 'neste mês', dados: info.mes },
+  ].filter(c => c.dados && c.dados.faixa >= 60);
+  if (candidatas.length === 0) return '';
+
+  const pior = candidatas.sort((a, b) => b.dados.faixa - a.dados.faixa)[0];
+  const { dados } = pior;
+  const emoji = dados.faixa >= 100 ? '🚨' : dados.faixa >= 80 ? '⚠️' : '📊';
+  const cauda = dados.restante >= 0
+    ? `resta ${fmtMoeda(dados.restante)}`
+    : `estourou ${fmtMoeda(Math.abs(dados.restante))}`;
+  return `${emoji} ${info.categoria}: ${dados.percentual}% do limite ${pior.rotulo} — ${cauda}`;
+}
+
+async function salvarTetosLimites() {
+  const container = document.getElementById('limites-editor-container');
+  if (!container) return;
+
+  // Reconstrói a partir do DOM (e não do estado em memória) para que o payload
+  // sempre reflita exatamente o que está na tela na hora do clique.
+  const porCategoria = {};
+  for (const g of _orcamentoData.limites || []) {
+    for (const sub of g.subs || []) {
+      porCategoria[sub.categoria] = {
+        categoria: sub.categoria,
+        parent: g.categoria,
+        valor_limite: sub.valor_limite || 0,
+        valor_limite_semanal: sub.valor_limite_semanal || 0,
+      };
+    }
+  }
+
+  for (const input of container.querySelectorAll('input[data-cat]')) {
+    const alvo = porCategoria[input.dataset.cat];
+    if (!alvo) continue;
+    const valor = Math.max(0, Number(input.value) || 0);
+    if (input.dataset.janela === 'semanal') alvo.valor_limite_semanal = valor;
+    else alvo.valor_limite = valor;
+  }
+
+  try {
+    await api('/api/limites', { method: 'PUT', body: JSON.stringify({ limites: Object.values(porCategoria) }) });
+    toast('✅ Limites salvos!', 'success');
+    await carregarOrcamento();
+    if (tabAtual === 'dashboard') carregarLimitesConsumo();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ── Categorias Principais (slider percentual que soma 100%) ──────────────────
@@ -1620,11 +1802,18 @@ function renderSubcategorias() {
     html += `</div>`;
 
     if (g.subs.length > 0) {
+      // O max do slider acompanha o maior teto já gravado, não só a fatia da
+      // principal: um teto definido em "Limites de Gastos" pode passar da
+      // fatia (Mercado R$500/semana ≈ R$2.150/mês). Sem isso o range renderiza
+      // clampado e o próximo "Salvar" rebaixaria o valor em silêncio. O aviso
+      // de "Excedido em X" logo abaixo continua sinalizando o desequilíbrio.
+      const tetoMaximoSub = Math.max(...g.subs.map(s => s.valor_limite || 0), 0);
+      const maxSlider = Math.max(maxVal, tetoMaximoSub);
       for (const sub of g.subs) {
         const pct = maxVal > 0 ? Math.round((sub.valor_limite / maxVal) * 100) : 0;
         html += `<div class="orcamento-sub-row">`;
         html += `<span class="orcamento-sub-nome">${esc(sub.categoria)}</span>`;
-        html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxVal}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(catNome)}" oninput="atualizarSliderSub(this)">`;
+        html += `<input type="range" class="orcamento-slider-sub" min="0" max="${maxSlider}" step="10" value="${sub.valor_limite}" data-cat="${esc(sub.categoria)}" data-parent="${esc(catNome)}" oninput="atualizarSliderSub(this)">`;
         html += `<span class="orcamento-sub-valor" id="sub-val-${esc(sub.categoria)}">${fmtMoeda(sub.valor_limite)} (${pct}%)</span>`;
         html += `<button class="cat-del" title="Excluir" onclick="excluirSubcategoria('${esc(sub.categoria)}', '${esc(catNome)}')">🗑️</button>`;
         html += `</div>`;
@@ -2935,7 +3124,7 @@ async function salvarNovaTx() {
       await api('/api/recorrencias', { method: 'POST', body: JSON.stringify(body) });
       toast('Recorrência criada!', 'success');
     } else {
-      await api('/api/transactions', {
+      const criada = await api('/api/transactions', {
         method: 'POST',
         body: JSON.stringify({
           tipo: _novaTxTipo,
@@ -2949,7 +3138,8 @@ async function salvarNovaTx() {
           parcelas,
         }),
       });
-      toast('Transação criada!', 'success');
+      const avisoLimite = mensagemLimiteDaTransacao(criada?.limites);
+      toast(avisoLimite || 'Transação criada!', avisoLimite ? 'error' : 'success');
     }
     fecharModalNovaTx();
     _categoriasCache = null; // Invalidate cache

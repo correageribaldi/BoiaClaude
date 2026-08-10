@@ -1362,6 +1362,82 @@ html:not([data-theme="light"]) .modal-box {
 #orcamento-salvar { margin-top: 8px; width: 100%; }
 #orcamento-salvar:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ── Limites de gasto (barras de consumo + editor de teto) ──────────────── */
+.limites-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 10px;
+}
+.limites-tab {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.limites-tab.ativo {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.limite-row { padding: 10px 16px; border-top: 1px solid var(--border); }
+.limite-row:first-child { border-top: none; }
+.limite-row-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.limite-nome { font-size: 14px; font-weight: 600; color: var(--text); }
+.limite-parent { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+.limite-pct { font-size: 13px; font-weight: 700; }
+/* Barra saturada em 100%: o número ao lado já conta o estouro, uma barra
+   transbordando só confundiria. */
+.limite-barra {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.limite-barra-fill { height: 100%; border-radius: 4px; transition: width .25s; }
+.limite-valores { margin-top: 5px; font-size: 12px; color: var(--text-muted); }
+.limite-ok   { color: var(--green); }
+.limite-atencao { color: var(--blue); }
+.limite-alerta  { color: var(--orange); }
+.limite-estouro { color: var(--red); }
+.limite-barra-ok      { background: var(--green); }
+.limite-barra-atencao { background: var(--blue); }
+.limite-barra-alerta  { background: var(--orange); }
+.limite-barra-estouro { background: var(--red); }
+
+.limite-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.limite-edit-nome { flex: 1 1 130px; min-width: 110px; font-size: 13px; color: var(--text); }
+.limite-edit-campo { display: flex; align-items: center; gap: 5px; }
+.limite-edit-campo label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; }
+.limite-edit-campo input {
+  width: 92px;
+  padding: 6px 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+#limites-editor-salvar { margin-top: 12px; width: 100%; }
+
 /* ── Toggle bar (tipo receita/despesa) ──────────────────────────────────── */
 .toggle-bar {
   display: flex;
