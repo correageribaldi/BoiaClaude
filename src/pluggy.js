@@ -11,6 +11,7 @@
 
 const https = require('https');
 const db = require('./database');
+const limites = require('./limites');
 
 // Lazy require: ./queue abre conexão TCP real ao Redis assim que importado
 // (top-level, dentro do módulo). Se carregássemos isso no topo deste arquivo,
@@ -615,6 +616,10 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
   }
 
   let total = 0;
+  // Categorias de DESPESA tocadas por este lote. Um sync traz dezenas de
+  // transações; alertar uma a uma viraria spam, então guardamos quais
+  // categorias mexeram e avaliamos os tetos UMA vez, no fim.
+  const categoriasDespesaTocadas = new Set();
 
   for (const mapa of contasMapeadas) {
     const transacoesPluggy = await buscarTransacoesNovas(apiKey, mapa.pluggy_account_id, desde);
@@ -652,6 +657,7 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
         contaId: mapa.tipo === 'conta' ? mapa.cronos_conta_id : null,
         cartaoId: mapa.tipo === 'cartao' ? mapa.cronos_cartao_id : null,
       });
+      if (tipo === 'despesa' && categoria) categoriasDespesaTocadas.add(categoria);
       total++;
     }
 
@@ -690,7 +696,25 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
   }
 
   await db.marcarPluggyItemSincronizado(mapaItem.id);
-  return { transacoesSincronizadas: total, completo };
+
+  // Aviso consolidado de teto estourado: UMA mensagem por sincronização,
+  // listando só as categorias que SUBIRAM de faixa (60/80/100%) por causa
+  // deste lote — o alto-relevo é mantido em limites_alertas, então rodar o
+  // sync de novo com o mesmo estouro não repete o aviso, e a virada da
+  // semana/mês reabre naturalmente.
+  //
+  // avisarLimitesPosSync não lança (trata inclusive o WhatsApp desconectado,
+  // situação real em produção). O try/catch aqui é cinto e suspensório: em
+  // nenhuma hipótese a sincronização bancária pode ser perdida porque um aviso
+  // não saiu — ela já está marcada como concluída na linha acima.
+  let limitesAvisados = 0;
+  try {
+    limitesAvisados = await limites.avisarLimitesPosSync(usuarioId, [...categoriasDespesaTocadas]);
+  } catch (err) {
+    console.error('[PLUGGY] Erro inesperado no aviso de limites (sync já concluída):', err.message);
+  }
+
+  return { transacoesSincronizadas: total, completo, limitesAvisados };
 }
 
 // interpretarErroItem: decide status + mensagem amigável a partir do Item
