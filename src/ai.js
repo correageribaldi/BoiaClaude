@@ -109,7 +109,8 @@ NÃO confundir com editar_transacao (lançamento pontual de um mês específico)
 IMPORTANTE: Se o usuário pedir lista MAS com filtro de tipo ou período (ex: "minhas despesas", "despesas de março", "receitas dessa semana", "o que gastei essa semana"), use "consulta" com os filtros preenchidos, NÃO use "comando". Use "comando" com dica "lista" SOMENTE para pedidos genéricos sem filtro (ex: "lista", "meus lançamentos", "últimos lançamentos").
 
 5. LIMITE DE GASTOS (limitar gastos, limite de, controlar gastos com, não quero gastar mais que X com):
-{"acao": "definir_limite", "categoria": "nome da categoria", "valor": 0.00}
+{"acao": "definir_limite", "categoria": "nome da categoria", "valor": 0.00, "periodo": "mes|semana"}
+"periodo" é "semana" quando o usuário disser por semana/semanal/toda semana (ex: "no mercado no máximo 500 por semana"). Caso contrário, "mes". Semanal e mensal convivem: definir um não apaga o outro.
 
 6. LISTAR LIMITES (meus limites, quais são meus limites, limites ativos):
 {"acao": "listar_limites"}

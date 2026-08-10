@@ -1,6 +1,9 @@
 const db = require('./database');
 const fmt = require('./formatters');
-const limites = require('./limites');
+// ctrlLimites (e não "limites"): este arquivo já tem várias locais chamadas
+// `limites` (o array de db.listarLimites), e o shadowing seria invisível até
+// alguém tentar usar o módulo dentro de uma dessas funções.
+const ctrlLimites = require('./limites');
 const pagamento = require('./pagamento');
 const { interpretarMensagem, analisarImagem, formatarResultadosPesquisa, interpretarItemFinanceiro, categorizarExtrato, gerarDiagnosticoFinanceiro, extrairHorario, dataHojeBRISO, responderAssistente, analisarViabilidadeCompra, classificarCategoriaBudget, interpretarConfirmacaoPagamento, extrairValorMonetario, extrairNomeOnboarding, chatAgente } = require('./ai');
 const agente = require('./agente-financeiro');
@@ -672,7 +675,7 @@ async function garantirSubcategoriaVinculada(usuarioId, categoria, tipo = 'despe
 async function verificarLimitesTransacao(usuarioId, categoria) {
   if (!categoria) return '';
 
-  let msg = await limites.blocoLimitesDaTransacao(usuarioId, categoria);
+  let msg = await ctrlLimites.blocoLimitesDaTransacao(usuarioId, categoria);
 
   try {
     const budgetCat = await resolverBudgetCategoria(categoria);
@@ -5041,12 +5044,18 @@ async function handleBuscaLocal(usuarioId, resultado) {
   return msg;
 }
 
+// resultado.periodo === 'semana' grava o teto semanal (o mensal fica intacto).
+// Sem periodo, mensal — o comportamento de sempre.
 async function handleDefinirLimite(usuarioId, resultado) {
   const { categoria, valor } = resultado;
 
   if (!categoria || !valor || valor <= 0) {
     return '❌ Não consegui entender. Tenta algo como: "limitar gastos com Lazer em 500 reais"';
   }
+
+  const porSemana = resultado.periodo === 'semana';
+  const opcoes = { semanal: porSemana };
+  const rotulo = porSemana ? 'Limite semanal' : 'Limite mensal';
 
   // Se é uma categoria principal (Despesas Fixas, Variáveis, Lazer, etc.), salva sem parent
   const PRINCIPAIS_PADRAO = ['Despesas Fixas', 'Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
@@ -5055,29 +5064,33 @@ async function handleDefinirLimite(usuarioId, resultado) {
     ? catsPrincipaisDB.map(c => c.nome)
     : PRINCIPAIS_PADRAO;
   if (nomesPrincipais.includes(categoria)) {
-    await db.definirLimite(usuarioId, categoria, valor, null);
-    return `✅ *Limite definido!*\n\n📂 Categoria principal: ${categoria}\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
+    await db.definirLimite(usuarioId, categoria, valor, null, opcoes);
+    return `✅ *Limite definido!*\n\n📂 Categoria principal: ${categoria}\n💰 ${rotulo}: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
   }
 
   // Subcategoria: resolver a principal e salvar com parent
   const budgetCat = await resolverBudgetCategoria(categoria);
   const parent = budgetCat || 'Variáveis';
-  await db.definirLimite(usuarioId, categoria, valor, parent);
+  await db.definirLimite(usuarioId, categoria, valor, parent, opcoes);
 
-  // Verificar se soma das subs excede o limite da principal
+  // Verificar se soma das subs excede o limite da principal. Só faz sentido
+  // para o teto MENSAL: o rateio da principal é mensal, comparar com semanal
+  // acusaria estouro falso (o mês tem ~4,3 semanas).
   let aviso = '';
-  const limitePrincipal = await db.verificarLimite(usuarioId, parent);
-  if (limitePrincipal) {
-    const limites = await db.listarLimites(usuarioId);
-    const somaSubs = limites
-      .filter(l => l.parent === parent)
-      .reduce((s, l) => s + l.valor_limite, 0);
-    if (somaSubs > limitePrincipal.limite) {
-      aviso = `\n\n⚠️ _Atenção: a soma das subcategorias de ${parent} (${fmt.formatarMoeda(somaSubs)}) excede o limite da principal (${fmt.formatarMoeda(limitePrincipal.limite)}). Considere ajustar!_`;
+  if (!porSemana) {
+    const limitePrincipal = await db.verificarLimite(usuarioId, parent);
+    if (limitePrincipal) {
+      const limitesAtivos = await db.listarLimites(usuarioId);
+      const somaSubs = limitesAtivos
+        .filter(l => l.parent === parent)
+        .reduce((s, l) => s + l.valor_limite, 0);
+      if (somaSubs > limitePrincipal.limite) {
+        aviso = `\n\n⚠️ _Atenção: a soma das subcategorias de ${parent} (${fmt.formatarMoeda(somaSubs)}) excede o limite da principal (${fmt.formatarMoeda(limitePrincipal.limite)}). Considere ajustar!_`;
+      }
     }
   }
 
-  return `✅ *Limite definido!*\n\n📂 Subcategoria: ${categoria} _(dentro de ${parent})_\n💰 Limite mensal: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_${aviso}`;
+  return `✅ *Limite definido!*\n\n📂 Subcategoria: ${categoria} _(dentro de ${parent})_\n💰 ${rotulo}: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_${aviso}`;
 }
 
 async function handleListarLimites(usuarioId) {
@@ -5107,15 +5120,19 @@ async function handleListarLimites(usuarioId) {
     else msg += ` | ⚠️ Excedido em ${fmt.formatarMoeda(Math.abs(restante))}`;
     msg += '\n';
 
-    // Subcategorias
+    // Subcategorias — uma linha por janela com teto definido. Subcategoria
+    // sem nenhum teto (valor 0 nas duas) some da lista: ocupava espaço
+    // mostrando "R$ 0,00/R$ 0,00 (0%)".
     for (const sub of g.subs) {
-      const subInfo = await db.verificarLimiteSub(usuarioId, sub.categoria);
+      const subInfo = await db.verificarLimitesCategoria(usuarioId, sub.categoria);
       if (!subInfo) continue;
-      let subEmoji = '';
-      if (subInfo.percentual >= 100) subEmoji = '🚨';
-      else if (subInfo.percentual >= 80) subEmoji = '⚠️';
-      else subEmoji = '✅';
-      msg += `   ${subEmoji} ${sub.categoria}: ${fmt.formatarMoeda(subInfo.gastos)}/${fmt.formatarMoeda(sub.valor_limite)} (${subInfo.percentual}%)\n`;
+      for (const janela of ['semana', 'mes']) {
+        const dados = subInfo[janela];
+        if (!dados) continue;
+        const rotulo = janela === 'semana' ? '/sem' : '/mês';
+        msg += `   ${ctrlLimites.emojiDaFaixa(dados.faixa)} ${sub.categoria}${rotulo}: `;
+        msg += `${fmt.formatarMoeda(dados.gastos)}/${fmt.formatarMoeda(dados.limite)} (${dados.percentual}%)\n`;
+      }
     }
 
     // Valor livre (não alocado em subcategorias)
