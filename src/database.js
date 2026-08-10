@@ -1222,6 +1222,9 @@ async function resumoMensal(usuarioId, mes, ano) {
     [uid, inicioMes, fimMes]
   );
 
+  // Compra de cartão nunca está "em atraso" — quem vence é a fatura, não a
+  // compra individual (data = data da compra, não data de pagamento). Mesma
+  // exclusão simétrica usada em totaisResult/catResult acima e em calcularSaldos.
   const atrasadasResult = await pool.query(
     `SELECT tipo, COUNT(*)::int as quantidade, SUM(valor)::float as total
      FROM transacoes
@@ -1229,6 +1232,7 @@ async function resumoMensal(usuarioId, mes, ano) {
        AND status = 'pendente'
        AND data >= $2 AND data <= $3
        AND data < CURRENT_DATE
+       AND (cartao_id IS NULL OR descricao ILIKE 'Fatura %')
      GROUP BY tipo`,
     [uid, inicioMes, fimMes]
   );
@@ -1755,6 +1759,7 @@ async function buscarPendentesParaLembrete(rodada) {
      FROM transacoes t
      WHERE t.status = 'pendente'
        AND t.data <= CURRENT_DATE
+       AND (t.cartao_id IS NULL OR t.descricao ILIKE 'Fatura %')
        AND NOT EXISTS (
          SELECT 1 FROM lembretes_enviados le
          WHERE le.transacao_id = t.id
