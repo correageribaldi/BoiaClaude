@@ -63,8 +63,8 @@ async function buildFinancialContext(usuarioId) {
   if (cartoes.length > 0) {
     const cartoesInfo = [];
     for (const c of cartoes) {
-      const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
-      cartoesInfo.push(`${c.nome} (limite ${moeda(c.limite_total)}, usado ${moeda(uso.total)})`);
+      const uso = await db.obterUsoCartao(c);
+      cartoesInfo.push(`${c.nome} (limite ${moeda(c.limite_total)}, usado ${moeda(uso.valorUsado)}, disponível ${uso.disponivel !== null ? moeda(uso.disponivel) : 'desconhecido'})`);
     }
     lines.push(`Cartões: ${cartoesInfo.join(' | ')}`);
   }
@@ -825,14 +825,30 @@ async function executeTool(usuarioId, toolName, args) {
       const cartoes = await db.listarCartoes(usuarioId);
       const result = [];
       for (const c of cartoes) {
-        const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
-        result.push({ ...c, usado: uso.total });
+        const uso = await db.obterUsoCartao(c);
+        result.push({ ...c, usado: uso.valorUsado, disponivel: uso.disponivel });
       }
       return { ok: true, data: result };
     }
     case 'uso_cartao': {
-      const uso = await db.calcularUsoCartao(args.cartao_id, args.dia_fechamento);
-      return { ok: true, data: uso };
+      // Busca o cartão real do usuário em vez de confiar no dia_fechamento que
+      // veio dos args da IA — garante que cartão Pluggy usa o dado real da API
+      // (db.obterUsoCartao), não o cálculo de ciclo (que não se aplica a ele).
+      const cartoes = await db.listarCartoes(usuarioId);
+      const cartao = cartoes.find(c => c.id === args.cartao_id);
+      if (!cartao) return { ok: false, msg: 'Cartão não encontrado.' };
+      const uso = await db.obterUsoCartao(cartao);
+      return {
+        ok: true,
+        data: {
+          nome: cartao.nome,
+          valorUsado: uso.valorUsado,
+          limiteTotal: uso.limiteTotal,
+          disponivel: uso.disponivel,
+          qtd: uso.qtd,
+          origem: uso.origem,
+        },
+      };
     }
 
     // Caixinhas

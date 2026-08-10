@@ -4751,19 +4751,34 @@ async function handleUsoCartao(usuarioId, nomeCartao) {
 
   let msg = `💳 *Cartões de crédito:*\n\n`;
   for (const c of cartoes) {
-    const { total: faturaAtual, qtd, inicioStr } = await db.calcularUsoCartao(c.id, c.dia_fechamento);
-    const comprometido = await db.calcularCreditoComprometido(c.id);
-    const limite = c.limite_total;
-    const disponivel = limite ? limite - comprometido : null;
-    const pct = limite ? Math.round((comprometido / limite) * 100) : null;
+    // db.obterUsoCartao decide Pluggy (dado real da API) vs manual (ciclo
+    // calculado via calcularUsoCartao) — mesma função usada pelo painel e pela
+    // tool uso_cartao do agente, ver src/database.js.
+    const uso = await db.obterUsoCartao(c);
+    const limite = uso.limiteTotal;
+    let faturaAtual = uso.valorUsado;
+    let disponivel = uso.disponivel;
+    let pct;
+    let comprometidoExtra = null;
+    let qtdTexto = '';
+
+    if (uso.origem === 'pluggy') {
+      pct = limite ? Math.round((faturaAtual / limite) * 100) : null;
+    } else {
+      const comprometido = await db.calcularCreditoComprometido(c.id);
+      disponivel = limite ? limite - comprometido : null;
+      pct = limite ? Math.round((comprometido / limite) * 100) : null;
+      qtdTexto = ` (${uso.qtd} compras no ciclo)`;
+      if (comprometido > faturaAtual) comprometidoExtra = comprometido;
+    }
     const cor = pct !== null ? (pct >= 80 ? '🔴' : pct >= 50 ? '🟡' : '🟢') : '🔵';
 
     msg += `*${c.nome}*`;
     if (c.dia_vencimento) msg += ` — vence dia ${c.dia_vencimento}`;
     msg += `\n`;
-    msg += `  💸 Fatura atual: *${fmt.formatarMoeda(faturaAtual)}* (${qtd} compras no ciclo)\n`;
-    if (comprometido > faturaAtual) {
-      msg += `  ⏳ Total comprometido: *${fmt.formatarMoeda(comprometido)}* (inclui parcelas futuras)\n`;
+    msg += `  💸 Fatura atual: *${fmt.formatarMoeda(faturaAtual)}*${qtdTexto}\n`;
+    if (comprometidoExtra !== null) {
+      msg += `  ⏳ Total comprometido: *${fmt.formatarMoeda(comprometidoExtra)}* (inclui parcelas futuras)\n`;
     }
     if (limite) msg += `  💳 Limite: ${fmt.formatarMoeda(limite)} ${cor} ${pct}% comprometido\n`;
     if (disponivel !== null) msg += `  ✅ Disponível: *${fmt.formatarMoeda(disponivel)}*\n`;

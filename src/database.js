@@ -3269,7 +3269,8 @@ async function listarCartoes(usuarioId) {
 async function buscarCartoesPorNome(usuarioId, nome) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const res = await pool.query(
-    `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento
+    `SELECT id, nome, limite_total::float, dia_fechamento, dia_vencimento,
+            pluggy_valor_usado::float, pluggy_disponivel::float
      FROM cartoes WHERE usuario_id = $1 AND nome ILIKE $2`,
     [uid, `%${nome}%`]
   );
@@ -3581,6 +3582,45 @@ async function calcularUsoCartao(cartaoId, diaFechamento) {
     [cartaoId, inicioStr, hojeStr]
   );
   return { total: res.rows[0].total, qtd: res.rows[0].qtd, inicioStr, fimStr: hojeStr };
+}
+
+// Uso real de um cartão, seja ele Pluggy (dado real da API, gravado em
+// pluggy_valor_usado/pluggy_disponivel por sincronizarItem) ou manual (calculado
+// a partir do ciclo de fatura via calcularUsoCartao). Único ponto de decisão —
+// endpoint do painel (/api/cartoes/uso) e tools do agente de WhatsApp (uso_cartao,
+// listar_cartoes, buildFinancialContext) devem sempre passar por aqui, nunca
+// chamar calcularUsoCartao diretamente para um cartão que pode ser Pluggy.
+// `cartao` precisa vir de listarCartoes/buscarCartoesPorNome (colunas
+// pluggy_valor_usado/pluggy_disponivel selecionadas).
+async function obterUsoCartao(cartao) {
+  if (cartao.pluggy_valor_usado !== null && cartao.pluggy_valor_usado !== undefined) {
+    const disponivel = (cartao.pluggy_disponivel !== null && cartao.pluggy_disponivel !== undefined)
+      ? cartao.pluggy_disponivel
+      : (cartao.limite_total !== null && cartao.limite_total !== undefined
+        ? cartao.limite_total - cartao.pluggy_valor_usado
+        : null);
+    return {
+      origem: 'pluggy',
+      valorUsado: cartao.pluggy_valor_usado,
+      limiteTotal: cartao.limite_total,
+      disponivel,
+      qtd: null,
+    };
+  }
+  // Chamada via module.exports (não a referência local) para que testes que
+  // mockam db.calcularUsoCartao continuem funcionando normalmente.
+  const uso = await module.exports.calcularUsoCartao(cartao.id, cartao.dia_fechamento);
+  const limiteTotal = cartao.limite_total;
+  const disponivel = (limiteTotal !== null && limiteTotal !== undefined) ? limiteTotal - uso.total : null;
+  return {
+    origem: 'manual',
+    valorUsado: uso.total,
+    limiteTotal,
+    disponivel,
+    qtd: uso.qtd,
+    inicioStr: uso.inicioStr,
+    fimStr: uso.fimStr,
+  };
 }
 
 // Projetar faturas futuras de um cartão baseado nas parcelas pendentes por mês
@@ -5001,6 +5041,7 @@ module.exports = {
   deletarCartao,
   deletarCartaoCompleto,
   calcularUsoCartao,
+  obterUsoCartao,
   calcularCreditoComprometido,
   projetarFaturasCartao,
   adicionarTransacoesParcelas,

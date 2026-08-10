@@ -716,22 +716,12 @@ app.delete('/api/cartoes/:id', autenticar, async (req, res) => {
 app.get('/api/cartoes/uso', autenticar, async (req, res) => {
   try {
     const cartoes = await db.listarCartoes(req.usuarioId);
+    // db.obterUsoCartao decide Pluggy (dado real da API) vs manual (calculado
+    // via calcularUsoCartao) — mesma função usada pelo agente de WhatsApp, ver
+    // src/database.js.
     const comUso = await Promise.all(cartoes.map(async (c) => {
-      // Cartão Pluggy: pluggy_valor_usado preenchido significa que já passou
-      // por sincronizarItem — usa o número real da API, sem calcular nada a
-      // partir de transacoes (calcularUsoCartao não tem relação com o ciclo
-      // de fatura real da Pluggy). Cartão manual (nunca sincronizou):
-      // continua exatamente como antes.
-      if (c.pluggy_valor_usado !== null && c.pluggy_valor_usado !== undefined) {
-        const disponivelPluggy = (c.pluggy_disponivel !== null && c.pluggy_disponivel !== undefined)
-          ? c.pluggy_disponivel
-          : (c.limite_total !== null && c.limite_total !== undefined ? c.limite_total - c.pluggy_valor_usado : null);
-        return { id: c.id, nome: c.nome, valorUsado: c.pluggy_valor_usado, limiteTotal: c.limite_total, disponivel: disponivelPluggy };
-      }
-      const uso = await db.calcularUsoCartao(c.id, c.dia_fechamento);
-      const limiteTotal = c.limite_total;
-      const disponivel = limiteTotal !== null && limiteTotal !== undefined ? limiteTotal - uso.total : null;
-      return { id: c.id, nome: c.nome, valorUsado: uso.total, limiteTotal, disponivel };
+      const uso = await db.obterUsoCartao(c);
+      return { id: c.id, nome: c.nome, valorUsado: uso.valorUsado, limiteTotal: uso.limiteTotal, disponivel: uso.disponivel };
     }));
     res.json(comUso);
   } catch (err) {

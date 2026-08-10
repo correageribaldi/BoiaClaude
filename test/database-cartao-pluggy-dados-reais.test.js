@@ -122,3 +122,83 @@ test('listarCartoes: retorna pluggy_valor_usado e pluggy_disponivel junto com os
   assert.equal(cartoes[0].pluggy_valor_usado, 1234.56);
   assert.equal(cartoes[1].pluggy_valor_usado, null, 'cartão manual não tem dado Pluggy');
 });
+
+// ── obterUsoCartao — bug real: WhatsApp devolvia 0 (ou a IA inventava valor)
+// para cartão Pluggy porque calcularUsoCartao é feito pra ciclo de cartão
+// manual (dia_fechamento). Esta função decide a fonte certa. ──────────────────
+
+test('obterUsoCartao: cartão Pluggy retorna os valores reais da API, sem calcular ciclo', async (t) => {
+  // Cenário sintético equivalente ao bug de produção: limite 7622.52, usado
+  // 4695.71, disponível 2926.81 (não os valores reais do Federico).
+  t.mock.method(db.pool, 'query', async () => {
+    throw new Error('não deveria consultar transacoes para cartão Pluggy');
+  });
+
+  const cartao = {
+    id: 50, nome: 'MeuPluggy • Cartão',
+    limite_total: 7622.52, dia_fechamento: null,
+    pluggy_valor_usado: 4695.71, pluggy_disponivel: 2926.81,
+  };
+
+  const uso = await db.obterUsoCartao(cartao);
+
+  assert.equal(uso.origem, 'pluggy');
+  assert.equal(uso.valorUsado, 4695.71);
+  assert.equal(uso.limiteTotal, 7622.52);
+  assert.equal(uso.disponivel, 2926.81);
+});
+
+test('obterUsoCartao: cartão Pluggy sem pluggy_disponivel gravado calcula limite - usado', async (t) => {
+  t.mock.method(db.pool, 'query', async () => {
+    throw new Error('não deveria consultar transacoes para cartão Pluggy');
+  });
+
+  const cartao = {
+    id: 51, nome: 'Outro Pluggy',
+    limite_total: 1000, dia_fechamento: null,
+    pluggy_valor_usado: 300, pluggy_disponivel: null,
+  };
+
+  const uso = await db.obterUsoCartao(cartao);
+
+  assert.equal(uso.origem, 'pluggy');
+  assert.equal(uso.disponivel, 700);
+});
+
+test('obterUsoCartao: cartão manual (nunca sincronizou Pluggy) continua usando calcularUsoCartao', async (t) => {
+  t.mock.method(db, 'calcularUsoCartao', async (cartaoId, diaFechamento) => {
+    assert.equal(cartaoId, 31);
+    assert.equal(diaFechamento, 10);
+    return { total: 450, qtd: 3, inicioStr: '2026-08-10', fimStr: '2026-08-09' };
+  });
+
+  const cartao = {
+    id: 31, nome: 'Cartão Manual',
+    limite_total: 2000, dia_fechamento: 10,
+    pluggy_valor_usado: null, pluggy_disponivel: null,
+  };
+
+  const uso = await db.obterUsoCartao(cartao);
+
+  assert.equal(uso.origem, 'manual');
+  assert.equal(uso.valorUsado, 450);
+  assert.equal(uso.limiteTotal, 2000);
+  assert.equal(uso.disponivel, 1550);
+  assert.equal(uso.qtd, 3);
+});
+
+test('obterUsoCartao: múltiplos cartões — cada um resolve pela própria fonte (Pluggy vs manual)', async (t) => {
+  t.mock.method(db, 'calcularUsoCartao', async () => ({ total: 100, qtd: 1, inicioStr: '2026-08-01', fimStr: '2026-08-09' }));
+
+  const cartoes = [
+    { id: 50, nome: 'Pluggy', limite_total: 7622.52, dia_fechamento: null, pluggy_valor_usado: 4695.71, pluggy_disponivel: 2926.81 },
+    { id: 31, nome: 'Manual', limite_total: 2000, dia_fechamento: 10, pluggy_valor_usado: null, pluggy_disponivel: null },
+  ];
+
+  const resultados = await Promise.all(cartoes.map(c => db.obterUsoCartao(c)));
+
+  assert.equal(resultados[0].origem, 'pluggy');
+  assert.equal(resultados[0].valorUsado, 4695.71);
+  assert.equal(resultados[1].origem, 'manual');
+  assert.equal(resultados[1].valorUsado, 100);
+});
