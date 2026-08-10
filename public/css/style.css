@@ -1456,18 +1456,54 @@ html:not([data-theme="light"]) .modal-box {
 .limite-barra-alerta  { background: var(--orange); }
 .limite-barra-estouro { background: var(--red); }
 
-.limite-edit-row {
+/* ── Limitadores (CRUD em Configurações) ─────────────────────────────────── */
+.limitador-card {
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.limitador-card-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.limitador-nome { font-size: 14px; font-weight: 600; color: var(--text); }
+.limitador-tetos { font-size: 12px; color: var(--text-muted); }
+.limitador-cats { margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+.limitador-acoes { margin-top: 6px; display: flex; gap: 12px; }
+.btn-link-perigo { color: var(--red); }
+
+.limitador-sugestao-titulo { margin: 10px 0 6px; font-size: 12px; color: var(--text-muted); }
+.limitador-sugestoes { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.btn-chip {
+  padding: 6px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-chip:hover { border-color: var(--blue); color: var(--blue); }
+
+#limitador-novo-btn { margin-top: 4px; width: 100%; }
+.limitador-form {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+}
+.limitador-form-linha {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
-.limite-edit-nome { flex: 1 1 130px; min-width: 110px; font-size: 13px; color: var(--text); }
-.limite-edit-campo { display: flex; align-items: center; gap: 5px; }
-.limite-edit-campo label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; }
-.limite-edit-campo input {
-  width: 92px;
+.limitador-form-linha label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; }
+.limitador-form-linha input {
   padding: 6px 8px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
@@ -1476,7 +1512,41 @@ html:not([data-theme="light"]) .modal-box {
   font-size: 13px;
   outline: none;
 }
-#limites-editor-salvar { margin-top: 12px; width: 100%; }
+#limitador-nome { flex: 1 1 160px; }
+#limitador-semanal, #limitador-mensal { width: 92px; }
+.limitador-form-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
+
+/* Rolagem própria: são 40+ opções, e a lista não pode empurrar os botões de
+   Salvar/Cancelar para fora da tela. */
+.limitador-opcoes {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+}
+.limitador-grupo + .limitador-grupo { margin-top: 10px; }
+.limitador-grupo-nome {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.limitador-opcao {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.limitador-opcao.bloqueada { opacity: .5; cursor: not-allowed; }
+.limitador-opcao em { font-style: normal; font-size: 11px; color: var(--text-muted); }
+.limitador-form-acoes { display: flex; gap: 8px; margin-top: 12px; }
+.limitador-form-acoes .btn { flex: 1; }
 
 /* ── Toggle bar (tipo receita/despesa) ──────────────────────────────────── */
 .toggle-bar {

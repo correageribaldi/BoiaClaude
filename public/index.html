@@ -443,9 +443,11 @@
             <span class="accordion-icon">›</span>
           </button>
           <div class="accordion-body hidden">
-            <p class="accordion-desc">Teto de gasto por subcategoria. Semanal e mensal são controles <strong>independentes</strong>: preencha um, o outro, ou os dois. Deixe <strong>0</strong> para não controlar aquela janela. A semana vai de <strong>segunda a domingo</strong> — como o mês tem cerca de 4,3 semanas, 4× o teto semanal não fecha com o mensal de propósito.</p>
-            <div id="limites-editor-container"></div>
-            <button class="btn btn-primary hidden" id="limites-editor-salvar" onclick="salvarTetosLimites()">Salvar limites</button>
+            <p class="accordion-desc">Um <strong>limitador</strong> é um grupo com nome seu — “Mercado”, “Combustível” — que junta as subcategorias que você quiser. O teto vale para o grupo inteiro. Semanal e mensal são controles <strong>independentes</strong>: preencha um, o outro, ou os dois. A semana vai de <strong>segunda a domingo</strong> — como o mês tem cerca de 4,3 semanas, 4× o teto semanal não fecha com o mensal de propósito.</p>
+            <div id="limitadores-lista"></div>
+            <div id="limitadores-sugestoes"></div>
+            <button class="btn btn-primary" id="limitador-novo-btn" onclick="abrirEditorLimitador(null)">+ Novo limitador</button>
+            <div id="limitador-form" class="limitador-form hidden"></div>
           </div>
         </div>
 

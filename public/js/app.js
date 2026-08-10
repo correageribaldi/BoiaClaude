@@ -676,7 +676,7 @@ async function carregarLimitesConsumo(ehMesAtual = true) {
 
   if (!ehMesAtual) { card.classList.add('hidden'); return; }
 
-  try { _limitesConsumo = await api('/api/limites/consumo'); }
+  try { _limitesConsumo = await api('/api/limitadores/consumo'); }
   catch { card.classList.add('hidden'); return; }
 
   renderLimitesConsumo();
@@ -703,7 +703,7 @@ function renderLimitesConsumo() {
 
   const linhas = _limitesConsumo
     .filter(l => l[_limitesJanela])
-    .map(l => ({ categoria: l.categoria, parent: l.parent, ...l[_limitesJanela] }))
+    .map(l => ({ limitador: l.limitador, categorias: l.categorias || [], ...l[_limitesJanela] }))
     .sort((a, b) => b.percentual - a.percentual); // quem está apertado primeiro
 
   if (linhas.length === 0) {
@@ -719,9 +719,12 @@ function renderLimitesConsumo() {
     const restante = l.restante >= 0
       ? `Resta ${fmtMoeda(l.restante)}`
       : `Estourou ${fmtMoeda(Math.abs(l.restante))}`;
+    // As categorias do grupo ficam no title: quem olha a barra quer o número,
+    // mas quando "Mercado" surpreende é a composição que explica.
     html += `<div class="limite-row">
       <div class="limite-row-topo">
-        <span class="limite-nome">${esc(l.categoria)} <span class="limite-parent">${esc(l.parent || '')}</span></span>
+        <span class="limite-nome" title="${esc(l.categorias.join(', '))}">${esc(l.limitador)}
+          <span class="limite-parent">${l.categorias.length} categoria${l.categorias.length === 1 ? '' : 's'}</span></span>
         <span class="limite-pct limite-${classe}">${l.percentual}%</span>
       </div>
       <div class="limite-barra"><div class="limite-barra-fill limite-barra-${classe}" style="width:${largura}%"></div></div>
@@ -1650,11 +1653,11 @@ async function carregarOrcamento() {
     };
     renderOrcamento();
     renderSubcategorias();
-    renderEditorLimites();
+    await carregarLimitadores();
   } catch { /* silencioso se não tem dados */ }
 }
 
-// ── Editor de tetos absolutos (semanal e mensal) ────────────────────────────
+// ── Limitadores de gasto (CRUD) ─────────────────────────────────────────────
 //
 // Seção SEPARADA do rateio 50/30/20 logo acima, de propósito:
 //
@@ -1664,42 +1667,185 @@ async function carregarOrcamento() {
 //  - o rateio só aparece com salário cadastrado no mês; teto de gasto tem que
 //    funcionar mesmo no dia 1º, antes de qualquer receita entrar.
 //
-// O campo MENSAL daqui é o mesmo valor_limite que o slider ajusta — são duas
-// formas de editar o mesmo número, não dois números.
-function renderEditorLimites() {
-  const container = document.getElementById('limites-editor-container');
-  const btn = document.getElementById('limites-editor-salvar');
-  if (!container) return;
+// A versão anterior desta seção listava um par de campos por SUBCATEGORIA. Com
+// as 41 subcategorias que a taxonomia Pluggy criou, virou uma tela impossível
+// de usar — e nenhuma delas correspondia ao que o usuário chama de "Mercado".
+// Agora ele nomeia poucos grupos e escolhe o que entra em cada um.
+let _limitadores = [];
 
-  const grupos = (_orcamentoData.limites || []).filter(g => (g.subs || []).length > 0);
-  if (grupos.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted)">Crie subcategorias primeiro (seção “Subcategorias”) para definir tetos.</p>';
-    btn?.classList.add('hidden');
+// Sugestões de partida, mostradas só enquanto ele não tem nenhum limitador.
+// Clicar ABRE o formulário preenchido — não grava nada: sugestão que se
+// cadastra sozinha é imposição.
+const SUGESTOES_LIMITADOR = [
+  { nome: 'Mercado',     categorias: ['Supermercado', 'Alimentos e bebidas'] },
+  { nome: 'Combustível', categorias: ['Postos de gasolina'] },
+  { nome: 'Lazer',       categorias: ['Restaurantes, bares e lanchonetes', 'Delivery de alimentos', 'Serviços digitais'] },
+  { nome: 'Farmácia',    categorias: ['Farmácia'] },
+];
+
+async function carregarLimitadores() {
+  try { _limitadores = await api('/api/limitadores'); }
+  catch { _limitadores = []; }
+  renderLimitadores();
+}
+
+function tetosDoLimitador(l) {
+  const partes = [];
+  if (l.valor_semanal > 0) partes.push(`${fmtMoeda(l.valor_semanal)}/semana`);
+  if (l.valor_mensal > 0) partes.push(`${fmtMoeda(l.valor_mensal)}/mês`);
+  return partes.join(' · ') || 'sem teto';
+}
+
+// Todas as subcategorias de despesa que o usuário tem, agrupadas pela principal
+// — a mesma hierarquia do resto do painel, que é o que torna 41 opções
+// navegáveis.
+function gruposDeSubcategorias() {
+  return (_orcamentoData.limites || []).filter(g => (g.subs || []).length > 0);
+}
+
+function renderLimitadores() {
+  const lista = document.getElementById('limitadores-lista');
+  const sugestoes = document.getElementById('limitadores-sugestoes');
+  if (!lista) return;
+
+  if (gruposDeSubcategorias().length === 0) {
+    lista.innerHTML = '<p style="color:var(--text-muted)">Crie subcategorias primeiro (seção “Subcategorias”) para montar um limitador.</p>';
+    if (sugestoes) sugestoes.innerHTML = '';
     return;
   }
 
-  btn?.classList.remove('hidden');
-  let html = '';
-  for (const g of grupos) {
-    html += `<div class="orcamento-card">`;
-    html += `<div class="orcamento-card-header"><span class="orcamento-cat-nome">${esc(g.categoria)}</span></div>`;
-    for (const sub of g.subs) {
-      const id = encodeURIComponent(sub.categoria);
-      html += `<div class="limite-edit-row">
-        <span class="limite-edit-nome">${esc(sub.categoria)}</span>
-        <span class="limite-edit-campo">
-          <label for="teto-sem-${id}">Semana</label>
-          <input type="number" min="0" step="10" id="teto-sem-${id}" data-cat="${esc(sub.categoria)}" data-janela="semanal" value="${sub.valor_limite_semanal || 0}">
-        </span>
-        <span class="limite-edit-campo">
-          <label for="teto-mes-${id}">Mês</label>
-          <input type="number" min="0" step="10" id="teto-mes-${id}" data-cat="${esc(sub.categoria)}" data-janela="mensal" value="${sub.valor_limite || 0}">
-        </span>
+  lista.innerHTML = _limitadores.length === 0
+    ? '<p style="color:var(--text-muted)">Nenhum limitador ainda.</p>'
+    : _limitadores.map(l => `
+      <div class="limitador-card">
+        <div class="limitador-card-topo">
+          <span class="limitador-nome">${esc(l.nome)}</span>
+          <span class="limitador-tetos">${esc(tetosDoLimitador(l))}</span>
+        </div>
+        <div class="limitador-cats">${esc(l.categorias.join(' · '))}</div>
+        <div class="limitador-acoes">
+          <button class="btn-link" onclick="abrirEditorLimitador(${l.id})">Editar</button>
+          <button class="btn-link btn-link-perigo" onclick="excluirLimitador(${l.id})">Excluir</button>
+        </div>
+      </div>`).join('');
+
+  // As sugestões só aparecem na tela vazia: depois do primeiro limitador ele já
+  // entendeu o modelo, e o atalho vira ruído.
+  if (sugestoes) {
+    sugestoes.innerHTML = _limitadores.length > 0 ? '' : `
+      <p class="limitador-sugestao-titulo">Começar por uma sugestão:</p>
+      <div class="limitador-sugestoes">
+        ${SUGESTOES_LIMITADOR.map((s, i) => `<button class="btn-chip" onclick="usarSugestaoLimitador(${i})">${esc(s.nome)}</button>`).join('')}
       </div>`;
-    }
-    html += `</div>`;
   }
-  container.innerHTML = html;
+}
+
+function usarSugestaoLimitador(indice) {
+  const s = SUGESTOES_LIMITADOR[indice];
+  if (!s) return;
+  // Só pré-marca o que o usuário REALMENTE tem: sugerir uma categoria que não
+  // existe no cadastro dele criaria um grupo que nunca soma nada.
+  const existentes = new Set(gruposDeSubcategorias().flatMap(g => g.subs.map(x => x.categoria)));
+  abrirEditorLimitador(null, { nome: s.nome, categorias: s.categorias.filter(c => existentes.has(c)) });
+}
+
+// Categorias presas a OUTRO limitador ficam desabilitadas no seletor: a regra
+// "uma categoria, um limitador" é do banco, mas descobri-la só depois de clicar
+// em Salvar seria uma descoberta desnecessária.
+function categoriasBloqueadas(idAtual) {
+  const mapa = new Map();
+  for (const l of _limitadores) {
+    if (l.id === idAtual) continue;
+    for (const c of l.categorias) mapa.set(c, l.nome);
+  }
+  return mapa;
+}
+
+function abrirEditorLimitador(id, preset = null) {
+  const form = document.getElementById('limitador-form');
+  if (!form) return;
+
+  const atual = id ? _limitadores.find(l => l.id === id) : null;
+  const nome = preset?.nome ?? atual?.nome ?? '';
+  const marcadas = new Set(preset?.categorias ?? atual?.categorias ?? []);
+  const bloqueadas = categoriasBloqueadas(atual?.id ?? null);
+
+  const opcoes = gruposDeSubcategorias().map(g => `
+    <div class="limitador-grupo">
+      <div class="limitador-grupo-nome">${esc(g.categoria)}</div>
+      ${g.subs.map(sub => {
+        const dono = bloqueadas.get(sub.categoria);
+        const cid = `limcat-${encodeURIComponent(sub.categoria)}`;
+        return `<label class="limitador-opcao${dono ? ' bloqueada' : ''}" ${dono ? `title="Já está em ${esc(dono)}"` : ''}>
+          <input type="checkbox" id="${cid}" value="${esc(sub.categoria)}"
+                 ${marcadas.has(sub.categoria) ? 'checked' : ''} ${dono ? 'disabled' : ''}>
+          <span>${esc(sub.categoria)}${dono ? ` <em>(${esc(dono)})</em>` : ''}</span>
+        </label>`;
+      }).join('')}
+    </div>`).join('');
+
+  form.innerHTML = `
+    <input type="hidden" id="limitador-id" value="${atual?.id ?? ''}">
+    <div class="limitador-form-linha">
+      <label for="limitador-nome">Nome</label>
+      <input type="text" id="limitador-nome" placeholder="Ex: Mercado" value="${esc(nome)}">
+    </div>
+    <div class="limitador-form-linha">
+      <label for="limitador-semanal">Teto semanal</label>
+      <input type="number" min="0" step="10" id="limitador-semanal" placeholder="0" value="${atual?.valor_semanal || ''}">
+      <label for="limitador-mensal">Teto mensal</label>
+      <input type="number" min="0" step="10" id="limitador-mensal" placeholder="0" value="${atual?.valor_mensal || ''}">
+    </div>
+    <p class="limitador-form-hint">Vazio ou 0 = não controlo essa janela. Precisa de ao menos uma.</p>
+    <div class="limitador-opcoes">${opcoes}</div>
+    <div class="limitador-form-acoes">
+      <button class="btn btn-primary" onclick="salvarLimitador()">Salvar</button>
+      <button class="btn" onclick="fecharEditorLimitador()">Cancelar</button>
+    </div>`;
+  form.classList.remove('hidden');
+  document.getElementById('limitador-novo-btn')?.classList.add('hidden');
+}
+
+function fecharEditorLimitador() {
+  document.getElementById('limitador-form')?.classList.add('hidden');
+  document.getElementById('limitador-novo-btn')?.classList.remove('hidden');
+}
+
+async function salvarLimitador() {
+  const form = document.getElementById('limitador-form');
+  if (!form) return;
+
+  const id = document.getElementById('limitador-id').value;
+  const corpo = {
+    nome: document.getElementById('limitador-nome').value.trim(),
+    valor_semanal: Number(document.getElementById('limitador-semanal').value) || null,
+    valor_mensal: Number(document.getElementById('limitador-mensal').value) || null,
+    categorias: [...form.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value),
+  };
+
+  try {
+    await api(id ? `/api/limitadores/${id}` : '/api/limitadores', {
+      method: id ? 'PUT' : 'POST',
+      body: JSON.stringify(corpo),
+    });
+    toast('✅ Limitador salvo!', 'success');
+    fecharEditorLimitador();
+    await carregarLimitadores();
+    if (tabAtual === 'dashboard') carregarLimitesConsumo();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function excluirLimitador(id) {
+  const l = _limitadores.find(x => x.id === id);
+  if (!l) return;
+  if (!confirm(`Excluir o limitador "${l.nome}"? As subcategorias dele ficam livres.`)) return;
+
+  try {
+    await api(`/api/limitadores/${id}`, { method: 'DELETE' });
+    toast('Limitador excluído.', 'success');
+    await carregarLimitadores();
+    if (tabAtual === 'dashboard') carregarLimitesConsumo();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // Toast de teto logo após lançar uma despesa pelo painel. Só fala quando há o
@@ -1719,41 +1865,7 @@ function mensagemLimiteDaTransacao(info) {
   const cauda = dados.restante >= 0
     ? `resta ${fmtMoeda(dados.restante)}`
     : `estourou ${fmtMoeda(Math.abs(dados.restante))}`;
-  return `${emoji} ${info.categoria}: ${dados.percentual}% do limite ${pior.rotulo} — ${cauda}`;
-}
-
-async function salvarTetosLimites() {
-  const container = document.getElementById('limites-editor-container');
-  if (!container) return;
-
-  // Reconstrói a partir do DOM (e não do estado em memória) para que o payload
-  // sempre reflita exatamente o que está na tela na hora do clique.
-  const porCategoria = {};
-  for (const g of _orcamentoData.limites || []) {
-    for (const sub of g.subs || []) {
-      porCategoria[sub.categoria] = {
-        categoria: sub.categoria,
-        parent: g.categoria,
-        valor_limite: sub.valor_limite || 0,
-        valor_limite_semanal: sub.valor_limite_semanal || 0,
-      };
-    }
-  }
-
-  for (const input of container.querySelectorAll('input[data-cat]')) {
-    const alvo = porCategoria[input.dataset.cat];
-    if (!alvo) continue;
-    const valor = Math.max(0, Number(input.value) || 0);
-    if (input.dataset.janela === 'semanal') alvo.valor_limite_semanal = valor;
-    else alvo.valor_limite = valor;
-  }
-
-  try {
-    await api('/api/limites', { method: 'PUT', body: JSON.stringify({ limites: Object.values(porCategoria) }) });
-    toast('✅ Limites salvos!', 'success');
-    await carregarOrcamento();
-    if (tabAtual === 'dashboard') carregarLimitesConsumo();
-  } catch (err) { toast(err.message, 'error'); }
+  return `${emoji} ${info.limitador}: ${dados.percentual}% do limite ${pior.rotulo} — ${cauda}`;
 }
 
 // ── Categorias Principais (slider percentual que soma 100%) ──────────────────
