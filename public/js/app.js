@@ -719,12 +719,13 @@ function renderLimitesConsumo() {
     const restante = l.restante >= 0
       ? `Resta ${fmtMoeda(l.restante)}`
       : `Estourou ${fmtMoeda(Math.abs(l.restante))}`;
-    // As categorias do grupo ficam no title: quem olha a barra quer o número,
-    // mas quando "Mercado" surpreende é a composição que explica.
+    // As categorias do grupo ficam no title da CONTAGEM, não do nome: title no
+    // elemento externo vira o nome acessível dele, e um leitor de tela leria
+    // "Postos de gasolina" no lugar de "Combustível".
     html += `<div class="limite-row">
       <div class="limite-row-topo">
-        <span class="limite-nome" title="${esc(l.categorias.join(', '))}">${esc(l.limitador)}
-          <span class="limite-parent">${l.categorias.length} categoria${l.categorias.length === 1 ? '' : 's'}</span></span>
+        <span class="limite-nome">${esc(l.limitador)}
+          <span class="limite-parent" title="${esc(l.categorias.join(', '))}">${l.categorias.length} categoria${l.categorias.length === 1 ? '' : 's'}</span></span>
         <span class="limite-pct limite-${classe}">${l.percentual}%</span>
       </div>
       <div class="limite-barra"><div class="limite-barra-fill limite-barra-${classe}" style="width:${largura}%"></div></div>
