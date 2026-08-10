@@ -5059,104 +5059,162 @@ async function handleBuscaLocal(usuarioId, resultado) {
   return msg;
 }
 
-// resultado.periodo === 'semana' grava o teto semanal (o mensal fica intacto).
-// Sem periodo, mensal — o comportamento de sempre.
+// ─── LIMITADORES DE GASTO (teto por grupo nomeado de subcategorias) ──────────
+//
+// "limitar gastos com mercado em 500 por semana" cria/atualiza o limitador
+// chamado Mercado. Se ele ainda não existe, o difícil não é o valor — é saber
+// QUAIS subcategorias entram no grupo. Três caminhos, do menos ao mais
+// trabalhoso para o usuário:
+//
+//   1. já existe limitador com esse nome → só atualiza o teto;
+//   2. o nome bate com uma sugestão pronta (SUGESTOES_LIMITADOR) ou com uma
+//      subcategoria que ele já tem → propõe o agrupamento e pede um "sim";
+//   3. nada bate → lista as subcategorias numeradas e pede os números.
+//
+// resultado.periodo === 'semana' mexe no teto semanal; sem periodo, no mensal.
+// Os dois convivem na mesma linha e continuam independentes.
+
+// Sugestões de partida, com as categorias já escolhidas. Vêm do que o dono
+// controlava na planilha dele — são um atalho para o caso 2 acima, não um
+// cadastro automático: nada é gravado sem ele confirmar.
+const SUGESTOES_LIMITADOR = {
+  mercado: ['Supermercado', 'Alimentos e bebidas'],
+  combustivel: ['Postos de gasolina'],
+  lazer: ['Restaurantes, bares e lanchonetes', 'Delivery de alimentos', 'Serviços digitais'],
+  farmacia: ['Farmácia'],
+};
+
+// RegExp via construtor (não literal) pela mesma razão de src/estabelecimento.js:
+// não depender de como o editor grava o caractere combinante em bytes.
+const REGEX_DIACRITICOS_LIMITADOR = new RegExp('[\\u0300-\\u036f]', 'g');
+
+function chaveSugestao(nome) {
+  return (nome || '').normalize('NFD').replace(REGEX_DIACRITICOS_LIMITADOR, '').trim().toLowerCase();
+}
+
+// Interseção entre uma sugestão e o que o usuário REALMENTE tem cadastrado:
+// propor "Alimentos e bebidas" para quem não tem essa subcategoria criaria um
+// limitador que nunca soma nada.
+function sugestaoParaNome(nome, subcategoriasDoUsuario) {
+  const alvo = chaveSugestao(nome);
+  const sugeridas = SUGESTOES_LIMITADOR[alvo];
+  if (!sugeridas) return [];
+  const disponiveis = new Map(subcategoriasDoUsuario.map((s) => [chaveSugestao(s), s]));
+  return sugeridas.map((s) => disponiveis.get(chaveSugestao(s))).filter(Boolean);
+}
+
+function rotuloTetos(limitador) {
+  const partes = [];
+  if (limitador.valor_semanal > 0) partes.push(`${fmt.formatarMoeda(limitador.valor_semanal)}/semana`);
+  if (limitador.valor_mensal > 0) partes.push(`${fmt.formatarMoeda(limitador.valor_mensal)}/mês`);
+  return partes.join(' e ') || 'sem teto';
+}
+
+function textoLimitadorSalvo(limitador, categorias) {
+  return `✅ *${limitador.nome}* — ${rotuloTetos(limitador)}\n`
+    + `📂 Agrupa: ${categorias.join(', ')}\n\n`
+    + `_Vou te avisar sempre que uma despesa dessas entrar._`;
+}
+
+async function gravarLimitador(usuarioId, dados) {
+  const r = await db.salvarLimitador(usuarioId, dados);
+  if (r.ok) return textoLimitadorSalvo(r, r.categorias);
+
+  if (r.erro === 'categoria_em_uso') {
+    const lista = r.conflitos.map((c) => `${c.categoria} (já em *${c.limitador}*)`).join(', ');
+    return `❌ Cada subcategoria só pode estar em um limitador.\n\n${lista}\n\n_Tire de lá primeiro, ou escolha outras._`;
+  }
+  if (r.erro === 'nome_duplicado') return `❌ Você já tem um limitador chamado assim.`;
+  return `❌ Não consegui salvar o limitador.`;
+}
+
 async function handleDefinirLimite(usuarioId, resultado) {
   const { categoria, valor } = resultado;
 
   if (!categoria || !valor || valor <= 0) {
-    return '❌ Não consegui entender. Tenta algo como: "limitar gastos com Lazer em 500 reais"';
+    return '❌ Não consegui entender. Tenta algo como: "limitar gastos com mercado em 500 por semana"';
   }
 
   const porSemana = resultado.periodo === 'semana';
-  const opcoes = { semanal: porSemana };
-  const rotulo = porSemana ? 'Limite semanal' : 'Limite mensal';
+  const campoTeto = porSemana ? 'valor_semanal' : 'valor_mensal';
 
-  // Se é uma categoria principal (Despesas Fixas, Variáveis, Lazer, etc.), salva sem parent
-  const PRINCIPAIS_PADRAO = ['Despesas Fixas', 'Variáveis', 'Lazer', 'Investimentos', 'Objetivos'];
-  const catsPrincipaisDB = await db.listarCategoriasPrincipais(usuarioId);
-  const nomesPrincipais = catsPrincipaisDB.length > 0
-    ? catsPrincipaisDB.map(c => c.nome)
-    : PRINCIPAIS_PADRAO;
-  if (nomesPrincipais.includes(categoria)) {
-    await db.definirLimite(usuarioId, categoria, valor, null, opcoes);
-    return `✅ *Limite definido!*\n\n📂 Categoria principal: ${categoria}\n💰 ${rotulo}: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_`;
+  // (1) Limitador já existe: só mexe no teto daquela janela, preservando o
+  // outro teto e as categorias.
+  const existente = await db.buscarLimitadorPorNome(usuarioId, categoria);
+  if (existente) {
+    return gravarLimitador(usuarioId, {
+      id: existente.id,
+      nome: existente.nome,
+      valor_semanal: existente.valor_semanal,
+      valor_mensal: existente.valor_mensal,
+      categorias: existente.categorias,
+      [campoTeto]: valor,
+    });
   }
 
-  // Subcategoria: resolver a principal e salvar com parent
-  const budgetCat = await resolverBudgetCategoria(categoria);
-  const parent = budgetCat || 'Variáveis';
-  await db.definirLimite(usuarioId, categoria, valor, parent, opcoes);
+  const subcategorias = await db.listarSubcategoriasPorTipo(usuarioId, 'despesa');
 
-  // Verificar se soma das subs excede o limite da principal. Só faz sentido
-  // para o teto MENSAL: o rateio da principal é mensal, comparar com semanal
-  // acusaria estouro falso (o mês tem ~4,3 semanas).
-  let aviso = '';
-  if (!porSemana) {
-    const limitePrincipal = await db.verificarLimite(usuarioId, parent);
-    if (limitePrincipal) {
-      const limitesAtivos = await db.listarLimites(usuarioId);
-      const somaSubs = limitesAtivos
-        .filter(l => l.parent === parent)
-        .reduce((s, l) => s + l.valor_limite, 0);
-      if (somaSubs > limitePrincipal.limite) {
-        aviso = `\n\n⚠️ _Atenção: a soma das subcategorias de ${parent} (${fmt.formatarMoeda(somaSubs)}) excede o limite da principal (${fmt.formatarMoeda(limitePrincipal.limite)}). Considere ajustar!_`;
-      }
-    }
+  // (2) Nome conhecido: sugestão pronta, ou uma subcategoria de mesmo nome.
+  let propostas = sugestaoParaNome(categoria, subcategorias);
+  if (propostas.length === 0) {
+    const igual = subcategorias.find((s) => chaveSugestao(s) === chaveSugestao(categoria));
+    if (igual) propostas = [igual];
   }
 
-  return `✅ *Limite definido!*\n\n📂 Subcategoria: ${categoria} _(dentro de ${parent})_\n💰 ${rotulo}: ${fmt.formatarMoeda(valor)}\n\n_Vou te avisar sempre que registrar uma despesa nessa categoria!_${aviso}`;
+  if (propostas.length > 0) {
+    salvarEditarLimitePendente(usuarioId, {
+      fase: 'confirmar_categorias',
+      nome: categoria,
+      campoTeto,
+      valor,
+      propostas,
+      subcategorias,
+    });
+    return `Vou criar o limitador *${categoria}* com ${fmt.formatarMoeda(valor)}/${porSemana ? 'semana' : 'mês'}.\n\n`
+      + `📂 Agrupando: ${propostas.join(', ')}\n\n`
+      + `Pode ser? Responda *sim*, ou *"escolher"* para montar o grupo você mesmo.`;
+  }
+
+  // (3) Nada conhecido: pede os números.
+  if (subcategorias.length === 0) {
+    return `❌ Você ainda não tem subcategorias de despesa cadastradas.\n_Crie no painel, em Configurações → Subcategorias._`;
+  }
+
+  salvarEditarLimitePendente(usuarioId, {
+    fase: 'escolher_categorias',
+    nome: categoria,
+    campoTeto,
+    valor,
+    subcategorias,
+  });
+  return montarListaSubcategorias(categoria, valor, porSemana, subcategorias);
+}
+
+function montarListaSubcategorias(nome, valor, porSemana, subcategorias) {
+  const lista = subcategorias.map((s, i) => `  ${i + 1}. ${s}`).join('\n');
+  return `Quais gastos entram em *${nome}* (${fmt.formatarMoeda(valor)}/${porSemana ? 'semana' : 'mês'})?\n\n`
+    + `${lista}\n\n`
+    + `Responda com os *números* separados por vírgula (ex: _1, 4, 9_), ou _"cancelar"_.`;
 }
 
 async function handleListarLimites(usuarioId) {
-  const grupos = await db.listarLimitesComSub(usuarioId);
+  const consumo = await db.listarConsumoLimitadores(usuarioId);
 
-  if (grupos.length === 0) {
-    return '📊 Você ainda não definiu nenhum limite de gastos.\n\n_Dica: Me fala algo como "limitar gastos com Alimentação em 1000 reais"_';
+  if (consumo.length === 0) {
+    return '📊 Você ainda não tem limitadores de gasto.\n\n'
+      + '_Dica: me fala algo como "limitar gastos com mercado em 500 por semana" — eu monto o grupo com você._';
   }
 
-  let msg = '📊 *Seus limites de gastos:*\n\n';
-  for (const g of grupos) {
-    // Categoria principal
-    const subcats = [...(MAPA_BUDGET[g.categoria] || [])];
-    const info = await db.verificarLimite(usuarioId, g.categoria, subcats.length > 0 ? subcats : null);
-    if (!info) continue;
-
-    const { gastos, limite, restante, percentual } = info;
-    let emoji = '';
-    if (percentual >= 100) emoji = '🚨';
-    else if (percentual >= 80) emoji = '⚠️';
-    else if (percentual >= 60) emoji = '📊';
-    else emoji = '✅';
-
-    msg += `${emoji} *${g.categoria}* — ${fmt.formatarMoeda(limite)}\n`;
-    msg += `   Gasto: ${fmt.formatarMoeda(gastos)} (${percentual}%)`;
-    if (restante > 0) msg += ` | Restam: ${fmt.formatarMoeda(restante)}`;
-    else msg += ` | ⚠️ Excedido em ${fmt.formatarMoeda(Math.abs(restante))}`;
-    msg += '\n';
-
-    // Subcategorias — uma linha por janela com teto definido. Subcategoria
-    // sem nenhum teto (valor 0 nas duas) some da lista: ocupava espaço
-    // mostrando "R$ 0,00/R$ 0,00 (0%)".
-    for (const sub of g.subs) {
-      const subInfo = await db.verificarLimitesCategoria(usuarioId, sub.categoria);
-      if (!subInfo) continue;
-      for (const janela of ['semana', 'mes']) {
-        const dados = subInfo[janela];
-        if (!dados) continue;
-        const rotulo = janela === 'semana' ? '/sem' : '/mês';
-        msg += `   ${ctrlLimites.emojiDaFaixa(dados.faixa)} ${sub.categoria}${rotulo}: `;
-        msg += `${fmt.formatarMoeda(dados.gastos)}/${fmt.formatarMoeda(dados.limite)} (${dados.percentual}%)\n`;
-      }
+  let msg = '📊 *Seus limitadores de gasto:*\n';
+  for (const lim of consumo) {
+    msg += `\n*${lim.limitador}* _(${lim.categorias.join(', ')})_\n`;
+    for (const janela of ['semana', 'mes']) {
+      const dados = lim[janela];
+      if (!dados) continue;
+      const rotulo = janela === 'semana' ? '/sem' : '/mês';
+      msg += `   ${ctrlLimites.emojiDaFaixa(dados.faixa)} ${rotulo}: `;
+      msg += `${fmt.formatarMoeda(dados.gastos)} de ${fmt.formatarMoeda(dados.limite)} (${dados.percentual}%)\n`;
     }
-
-    // Valor livre (não alocado em subcategorias)
-    const somaSubs = g.subs.reduce((s, sub) => s + sub.valor_limite, 0);
-    const livre = g.valor_limite - somaSubs;
-    if (livre > 0 && g.subs.length > 0) {
-      msg += `   💡 ${fmt.formatarMoeda(livre)} livre\n`;
-    }
-    msg += '\n';
   }
 
   return msg;
@@ -5222,15 +5280,18 @@ async function handleRemoverLimite(usuarioId, resultado) {
   const { categoria } = resultado;
 
   if (!categoria) {
-    return '❌ Qual categoria você quer remover o limite?';
+    return '❌ Qual limitador você quer remover?';
   }
 
-  const removido = await db.removerLimite(usuarioId, categoria);
-  if (!removido) {
-    return `❌ Não encontrei limite ativo para a categoria "${categoria}".`;
+  const limitador = await db.buscarLimitadorPorNome(usuarioId, categoria);
+  if (!limitador) {
+    return `❌ Não encontrei um limitador chamado "${categoria}".\n_Use "meus limites" para ver os que existem._`;
   }
 
-  return `✅ Limite de *${categoria}* removido com sucesso!`;
+  const removido = await db.excluirLimitador(usuarioId, limitador.id);
+  if (!removido) return `❌ Não consegui remover o limitador.`;
+
+  return `✅ Limitador *${removido}* removido.\n_As subcategorias dele ficaram livres para outro limitador._`;
 }
 
 // ─── EDITAR CARTÃO ─────────────────────────────────────────
@@ -5510,59 +5571,113 @@ async function executarExclusaoCaixinha(usuarioId, c) {
   return `✅ Caixinha *${removida.nome}* excluída com sucesso!`;
 }
 
-// ─── EDITAR LIMITE DE GASTOS ─────────────────────────────
+// ─── EDITAR LIMITADOR ────────────────────────────────────
 async function handleEditarLimite(usuarioId, resultado) {
   const { categoria, novo_valor } = resultado;
+  const limitadores = await db.listarLimitadores(usuarioId);
 
-  if (!categoria) {
-    const limites = await db.listarLimites(usuarioId);
-    if (limites.length === 0) return `❌ Você não tem limites cadastrados.\n_Use "limitar gastos com X em R$ Y" para criar._`;
-    const lista = limites.filter(l => !l.parent).map((l, i) => `  ${i + 1}. *${l.categoria}* — ${fmt.formatarMoeda(l.valor_limite)}`).join('\n');
-    salvarEditarLimitePendente(usuarioId, { fase: 'selecionar', limites: limites.filter(l => !l.parent), novo_valor: novo_valor || null });
-    return `Qual limite quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
+  if (limitadores.length === 0) {
+    return `❌ Você não tem limitadores.\n_Use "limitar gastos com mercado em 500 por semana" para criar._`;
   }
 
-  if (novo_valor) {
-    return aplicarEdicaoLimite(usuarioId, categoria, novo_valor);
+  const alvo = categoria ? await db.buscarLimitadorPorNome(usuarioId, categoria) : null;
+
+  if (!alvo) {
+    const lista = limitadores.map((l, i) => `  ${i + 1}. *${l.nome}* — ${rotuloTetos(l)}`).join('\n');
+    salvarEditarLimitePendente(usuarioId, { fase: 'selecionar', limitadores, novo_valor: novo_valor || null });
+    return `Qual limitador quer editar?\n\n${lista}\n\nResponda com o *número* ou _"cancelar"_.`;
   }
 
-  salvarEditarLimitePendente(usuarioId, { fase: 'aguardando_valor', categoria });
-  return `Qual o novo valor do limite para *${categoria}*?\n\n_Ex: "R$ 800" ou "1500"_`;
+  if (novo_valor) return aplicarEdicaoLimite(usuarioId, alvo, novo_valor);
+
+  salvarEditarLimitePendente(usuarioId, { fase: 'aguardando_valor', limitador: alvo });
+  return `Qual o novo teto mensal de *${alvo.nome}*? (atual: ${rotuloTetos(alvo)})\n\n_Ex: "R$ 800" ou "1500"_`;
 }
 
-async function aplicarEdicaoLimite(usuarioId, categoria, novoValorStr, parent) {
+// Edição por texto solto mexe no teto MENSAL: é o que "qual o novo valor do
+// limite" significa para quem não disse "por semana". Trocar o semanal continua
+// possível pela frase completa ("limitar mercado em 500 por semana"), que passa
+// por handleDefinirLimite.
+async function aplicarEdicaoLimite(usuarioId, limitador, novoValorStr) {
   const v = parseFloat(novoValorStr.toString().replace(/[^\d.,]/g, '').replace(',', '.'));
   if (!v || v <= 0) return `❌ Valor inválido: "${novoValorStr}". Ex: _"R$ 800"_`;
 
-  const id = await db.definirLimite(usuarioId, categoria, v, parent || null);
-  if (!id) return `❌ Não consegui atualizar o limite.`;
-  return `✅ Limite de *${categoria}* atualizado para *${fmt.formatarMoeda(v)}*!`;
+  return gravarLimitador(usuarioId, {
+    id: limitador.id,
+    nome: limitador.nome,
+    valor_semanal: limitador.valor_semanal,
+    valor_mensal: v,
+    categorias: limitador.categorias,
+  });
+}
+
+// Converte "1, 4, 9" (ou "1 4 9") nos nomes correspondentes. Índice fora da
+// lista derruba a resposta inteira em vez de ser ignorado em silêncio: gravar
+// um grupo diferente do que o usuário quis é pior do que pedir de novo.
+function interpretarEscolhaNumeros(texto, opcoes) {
+  const numeros = (texto.match(/\d+/g) || []).map(Number);
+  if (numeros.length === 0) return null;
+  if (numeros.some((n) => n < 1 || n > opcoes.length)) return null;
+  return [...new Set(numeros)].map((n) => opcoes[n - 1]);
 }
 
 async function handleEditarLimitePendente(usuarioId, msg, pendente) {
-  const lower = msg.toLowerCase().trim();
+  const texto = msg.trim();
+  const lower = texto.toLowerCase();
   if (/^(cancelar?|sair|não|nao|deixa|esquece)$/i.test(lower)) {
     limparEditarLimitePendente(usuarioId);
     return '❌ Cancelado.';
   }
 
-  if (pendente.fase === 'selecionar') {
-    const num = parseInt(msg.trim());
-    if (!num || isNaN(num) || num < 1 || num > pendente.limites.length) {
-      return `Responda com um número de 1 a ${pendente.limites.length}, ou _"cancelar"_.`;
+  // Confirmação do agrupamento sugerido ao criar um limitador novo.
+  if (pendente.fase === 'confirmar_categorias') {
+    if (/^(sim|s|isso|pode|ok|confirmo|claro|beleza)$/i.test(lower)) {
+      limparEditarLimitePendente(usuarioId);
+      return gravarLimitador(usuarioId, {
+        nome: pendente.nome,
+        categorias: pendente.propostas,
+        [pendente.campoTeto]: pendente.valor,
+      });
     }
-    const l = pendente.limites[num - 1];
+    if (/^(escolher|escolho|outras?|outro grupo)$/i.test(lower)) {
+      salvarEditarLimitePendente(usuarioId, { ...pendente, fase: 'escolher_categorias' });
+      return montarListaSubcategorias(
+        pendente.nome, pendente.valor, pendente.campoTeto === 'valor_semanal', pendente.subcategorias
+      );
+    }
+    return 'Responda *sim* para usar esse agrupamento, *escolher* para montar você mesmo, ou _"cancelar"_.';
+  }
+
+  if (pendente.fase === 'escolher_categorias') {
+    const escolhidas = interpretarEscolhaNumeros(texto, pendente.subcategorias);
+    if (!escolhidas) {
+      return `Responda com os *números* da lista separados por vírgula (1 a ${pendente.subcategorias.length}), ou _"cancelar"_.`;
+    }
+    limparEditarLimitePendente(usuarioId);
+    return gravarLimitador(usuarioId, {
+      nome: pendente.nome,
+      categorias: escolhidas,
+      [pendente.campoTeto]: pendente.valor,
+    });
+  }
+
+  if (pendente.fase === 'selecionar') {
+    const num = parseInt(texto, 10);
+    if (!num || isNaN(num) || num < 1 || num > pendente.limitadores.length) {
+      return `Responda com um número de 1 a ${pendente.limitadores.length}, ou _"cancelar"_.`;
+    }
+    const l = pendente.limitadores[num - 1];
     if (pendente.novo_valor) {
       limparEditarLimitePendente(usuarioId);
-      return aplicarEdicaoLimite(usuarioId, l.categoria, pendente.novo_valor);
+      return aplicarEdicaoLimite(usuarioId, l, pendente.novo_valor);
     }
-    salvarEditarLimitePendente(usuarioId, { fase: 'aguardando_valor', categoria: l.categoria });
-    return `Qual o novo valor do limite para *${l.categoria}*? (atual: ${fmt.formatarMoeda(l.valor_limite)})\n\n_Ex: "R$ 800" ou "1500"_`;
+    salvarEditarLimitePendente(usuarioId, { fase: 'aguardando_valor', limitador: l });
+    return `Qual o novo teto mensal de *${l.nome}*? (atual: ${rotuloTetos(l)})\n\n_Ex: "R$ 800" ou "1500"_`;
   }
 
   if (pendente.fase === 'aguardando_valor') {
     limparEditarLimitePendente(usuarioId);
-    return aplicarEdicaoLimite(usuarioId, pendente.categoria, msg.trim());
+    return aplicarEdicaoLimite(usuarioId, pendente.limitador, texto);
   }
 
   limparEditarLimitePendente(usuarioId);
@@ -9321,4 +9436,4 @@ function limparMapsExpirados() {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia, resolverContaPorNome, garantirSubcategoriaVinculada };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia, resolverContaPorNome, garantirSubcategoriaVinculada, handleDefinirLimite, handleListarLimites, handleRemoverLimite, handleEditarLimitePendente, obterEditarLimitePendente };

@@ -357,21 +357,72 @@ async function initTables() {
     ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS parent TEXT;
   `);
 
-  // Migração: teto SEMANAL por categoria.
+  // ─── Limitadores de gasto ───────────────────────────────────────────────────
   //
-  // valor_limite continua sendo o teto MENSAL — não renomeado de propósito: é o
-  // que verificarLimite/verificarLimiteSub, o relatório de orçamento
-  // (handlers.js) e a tool definir_limite já assumem hoje. Renomear obrigaria a
-  // tocar todos esses call sites de uma vez, sem ganho.
+  // O CONTROLE DE TETO NÃO MORA MAIS EM limites_categoria. Um limitador é um
+  // grupo NOMEADO pelo usuário ("Mercado", "Lazer") que junta N subcategorias e
+  // tem teto semanal e/ou mensal.
   //
-  // Semanal e mensal são controles INDEPENDENTES, não duas visões do mesmo
-  // número: o mês tem ~4,3 semanas, então 4× o teto semanal nunca vai fechar
-  // exatamente com o teto mensal. Não existe validação cruzada entre os dois de
-  // propósito — quem quiser só um dos controles deixa o outro em 0/NULL.
+  // Por que a virada: a integração Pluggy cria subcategorias a partir da
+  // taxonomia deles, e o usuário terminou com 41 subcategorias ativas (21 só
+  // dentro de "Variáveis"). Teto por subcategoria virava uma tela de 41 campos,
+  // e a taxonomia não bate com o modelo mental de quem usa — o "Mercado" dele se
+  // espalha por Supermercado + Compras; o "Lazer" dele está em Restaurantes e
+  // Delivery, que na taxonomia Pluggy ficam sob Variáveis, não sob Lazer.
+  // Nomear o grupo e escolher o que entra resolve os dois problemas de uma vez.
   //
-  // NULL ou 0 = sem teto semanal (mesma convenção já usada por valor_limite).
+  // valor_limite (mensal) CONTINUA em limites_categoria, mas só com o sentido
+  // que sempre teve na prática: rateio do orçamento 50/30/20 (o slider do
+  // painel grava ali). O teto de gasto saiu de lá — era a mesma coluna servindo
+  // a dois conceitos, que é justamente a modelagem que este refactor desfaz.
   await pool.query(`
-    ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS valor_limite_semanal NUMERIC(12,2);
+    CREATE TABLE IF NOT EXISTS limitadores (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      valor_semanal NUMERIC(12,2),
+      valor_mensal NUMERIC(12,2),
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_limitadores_usuario
+      ON limitadores(usuario_id, ativo);
+  `);
+
+  // Nome único por usuário, ignorando caixa — "mercado" e "Mercado" seriam dois
+  // tetos para a mesma coisa. Índice PARCIAL (só ativo): excluir um limitador e
+  // recriar outro com o mesmo nome depois tem que funcionar.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_limitadores_nome_unico
+      ON limitadores(usuario_id, LOWER(nome)) WHERE ativo;
+  `);
+
+  // N categorias por limitador.
+  //
+  // usuario_id é desnormalizado aqui de propósito: é o que permite o índice
+  // único abaixo — uma subcategoria pertence a NO MÁXIMO UM limitador. Sem
+  // isso, um gasto de R$100 em "Restaurantes" consumiria o teto de "Lazer" E o
+  // de "Alimentação" ao mesmo tempo, e a pergunta que a feature existe para
+  // responder ("quanto ainda posso gastar?") passaria a ter duas respostas
+  // conflitantes, além de render dois alertas para o mesmo gasto. Quem quiser
+  // ver a mesma categoria em dois agrupamentos usa o orçamento 50/30/20, que é
+  // relatório e admite hierarquia. Restrição escolhida por ser a reversível:
+  // liberar depois é dropar o índice; proibir depois exigiria escolher à mão
+  // qual limitador fica com cada categoria duplicada.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS limitador_categorias (
+      id SERIAL PRIMARY KEY,
+      limitador_id INTEGER NOT NULL REFERENCES limitadores(id) ON DELETE CASCADE,
+      usuario_id TEXT NOT NULL,
+      categoria TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_limitador_categoria_unica
+      ON limitador_categorias(usuario_id, categoria);
+
+    CREATE INDEX IF NOT EXISTS idx_limitador_categorias_limitador
+      ON limitador_categorias(limitador_id);
   `);
 
   // Estado do último aviso de estouro, para não repetir o mesmo alerta a cada
@@ -382,20 +433,25 @@ async function initTables() {
   // correspondente, e o alerta volta a poder disparar do zero — o reset é
   // consequência do modelo de dados, não de uma rotina de limpeza que poderia
   // falhar. As linhas velhas ficam como histórico (custo desprezível).
+  //
+  // Substitui limites_alertas (chaveada por categoria), que nunca chegou a
+  // produção — a feature de teto por subcategoria inteira ficou nesta branch.
+  // A tabela antiga não é criada nem deletada aqui: em banco de desenvolvimento
+  // onde ela existe fica órfã e sem escritor; DROP é decisão do dono.
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS limites_alertas (
+    CREATE TABLE IF NOT EXISTS limitador_alertas (
       id SERIAL PRIMARY KEY,
       usuario_id TEXT NOT NULL,
-      categoria TEXT NOT NULL,
+      limitador_id INTEGER NOT NULL REFERENCES limitadores(id) ON DELETE CASCADE,
       janela TEXT NOT NULL CHECK(janela IN ('semana', 'mes')),
       periodo_chave TEXT NOT NULL,
       faixa INTEGER NOT NULL DEFAULT 0,
       atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
-      UNIQUE(usuario_id, categoria, janela, periodo_chave)
+      UNIQUE(usuario_id, limitador_id, janela, periodo_chave)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_limites_alertas_usuario
-      ON limites_alertas(usuario_id, periodo_chave);
+    CREATE INDEX IF NOT EXISTS idx_limitador_alertas_usuario
+      ON limitador_alertas(usuario_id, periodo_chave);
   `);
 
   // Tabela de categorias principais (por usuário) para distribuição de orçamento
@@ -2468,7 +2524,8 @@ async function limparDadosUsuario(usuarioId) {
   await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [uid]);
-  await pool.query('DELETE FROM limites_alertas WHERE usuario_id = $1', [uid]);
+  // limitador_categorias e limitador_alertas saem por CASCADE de limitadores.
+  await pool.query('DELETE FROM limitadores WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM caixinhas WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM contatos_compartilhados WHERE usuario_principal_id = $1 OR contato_id = $1', [uid]);
   await pool.query('DELETE FROM transferencias WHERE usuario_id = $1', [uid]);
@@ -2477,23 +2534,11 @@ async function limparDadosUsuario(usuarioId) {
   return true;
 }
 
-// Definir limite de gastos para uma categoria (principal ou subcategoria).
-// opcoes.semanal = true grava o teto SEMANAL sem tocar no mensal (e vice-versa)
-// — os dois convivem na mesma linha e são independentes.
-async function definirLimite(usuarioId, categoria, valorLimite, parent = null, opcoes = {}) {
+// Define a fatia de ORÇAMENTO de uma categoria (principal ou subcategoria) —
+// o rateio 50/30/20, que é o único sentido de valor_limite desde que o teto de
+// gasto virou limitador (ver a migração de `limitadores` em initTables).
+async function definirLimite(usuarioId, categoria, valorLimite, parent = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-
-  if (opcoes.semanal) {
-    const result = await pool.query(
-      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, valor_limite_semanal)
-       VALUES ($1, $2, 0, $4, $3)
-       ON CONFLICT (usuario_id, categoria)
-       DO UPDATE SET valor_limite_semanal = $3, ativo = TRUE, parent = COALESCE($4, limites_categoria.parent)
-       RETURNING id`,
-      [uid, categoria, valorLimite, parent]
-    );
-    return result.rows[0].id;
-  }
 
   const result = await pool.query(
     `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
@@ -2525,9 +2570,7 @@ async function listarLimitesComSub(usuarioId) {
 
   // Buscar limites existentes
   const result = await pool.query(
-    `SELECT categoria, valor_limite::float,
-            COALESCE(valor_limite_semanal, 0)::float AS valor_limite_semanal,
-            parent
+    `SELECT categoria, valor_limite::float, parent
      FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE
      ORDER BY parent NULLS FIRST, categoria`,
@@ -2558,7 +2601,6 @@ async function listarLimitesComSub(usuarioId) {
       subMap[r.parent].push({
         categoria: r.categoria,
         valor_limite: r.valor_limite,
-        valor_limite_semanal: r.valor_limite_semanal,
       });
     }
   }
@@ -2570,25 +2612,20 @@ async function listarLimitesComSub(usuarioId) {
   return principais;
 }
 
-// Salvar limites em batch (para o painel)
+// Salvar o rateio de orçamento em batch (tela 50/30/20 do painel).
 //
-// valor_limite_semanal é OPCIONAL no payload: quando a chave não vem, o
-// COALESCE preserva o valor já gravado. Sem isso, a tela de rateio 50/30/20
-// (que só manda valor_limite) apagaria silenciosamente todos os tetos semanais
-// a cada "Salvar". Para REMOVER um teto semanal, manda-se 0 explicitamente.
+// Só mexe em valor_limite: teto de gasto é outro conceito e mora em
+// `limitadores`. Enquanto os dois dividiam esta coluna, salvar o rateio
+// silenciosamente redefinia tetos que o usuário tinha digitado noutra tela.
 async function salvarLimitesBatch(usuarioId, limites) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   for (const l of limites) {
-    const semanal = l.valor_limite_semanal == null ? null : Number(l.valor_limite_semanal);
     await pool.query(
-      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, valor_limite_semanal)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (usuario_id, categoria)
-       DO UPDATE SET valor_limite = $3,
-                     ativo = TRUE,
-                     parent = $4,
-                     valor_limite_semanal = COALESCE($5, limites_categoria.valor_limite_semanal)`,
-      [uid, l.categoria, l.valor_limite, l.parent || null, semanal]
+       DO UPDATE SET valor_limite = $3, ativo = TRUE, parent = $4`,
+      [uid, l.categoria, l.valor_limite, l.parent || null]
     );
   }
 }
@@ -2787,75 +2824,204 @@ function montarJanela(limite, gastos) {
   };
 }
 
-// Consumo de uma categoria nas DUAS janelas. Retorna null se a categoria não
-// tem linha ativa em limites_categoria; retorna semana/mes null individualmente
-// quando aquele teto específico não está definido (0/NULL).
-// dataRef existe para teste (virada de semana/mês) — em produção fica default.
-async function verificarLimitesCategoria(usuarioId, categoria, opcoes = {}) {
+// ─── CRUD de limitadores ─────────────────────────────────────────────────────
+
+// Lista os limitadores do usuário com as categorias de cada um (sem consumo).
+// Uma query para os limitadores e uma para as categorias — não é N+1: são duas
+// no total, independentemente de quantos limitadores existam.
+async function listarLimitadores(usuarioId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const janelas = janelasDeControle(opcoes.dataRef || null);
-  const apenasSub = opcoes.apenasSub !== false; // default: só subcategorias
 
-  const limiteResult = await pool.query(
-    `SELECT valor_limite::float AS mensal,
-            COALESCE(valor_limite_semanal, 0)::float AS semanal,
-            parent
-     FROM limites_categoria
-     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE`,
-    [uid, categoria]
-  );
-  if (limiteResult.rows.length === 0) return null;
+  const [limitadores, categorias] = await Promise.all([
+    pool.query(
+      `SELECT id, nome, valor_semanal::float, valor_mensal::float
+       FROM limitadores
+       WHERE usuario_id = $1 AND ativo = TRUE
+       ORDER BY nome`,
+      [uid]
+    ),
+    pool.query(
+      `SELECT lc.limitador_id, lc.categoria
+       FROM limitador_categorias lc
+       JOIN limitadores l ON l.id = lc.limitador_id
+       WHERE lc.usuario_id = $1 AND l.ativo = TRUE
+       ORDER BY lc.categoria`,
+      [uid]
+    ),
+  ]);
 
-  const { mensal, semanal, parent } = limiteResult.rows[0];
-  if (apenasSub && !parent) return null;
-  if ((!mensal || mensal <= 0) && (!semanal || semanal <= 0)) return null;
+  const porLimitador = new Map();
+  for (const c of categorias.rows) {
+    if (!porLimitador.has(c.limitador_id)) porLimitador.set(c.limitador_id, []);
+    porLimitador.get(c.limitador_id).push(c.categoria);
+  }
 
-  const gastosResult = await pool.query(
-    `SELECT
-       COALESCE(SUM(valor) FILTER (WHERE data >= $3 AND data <= $4), 0)::float AS gastos_semana,
-       COALESCE(SUM(valor) FILTER (WHERE data >= $5 AND data <= $6), 0)::float AS gastos_mes
-     FROM transacoes
-     WHERE usuario_id = $1 AND tipo = 'despesa' AND categoria = $2
-       AND data >= LEAST($3::date, $5::date)
-       AND data <= GREATEST($4::date, $6::date)`,
-    [uid, categoria, janelas.semana.inicio, janelas.semana.fim, janelas.mes.inicio, janelas.mes.fim]
-  );
-  const { gastos_semana: gastosSemana, gastos_mes: gastosMes } = gastosResult.rows[0];
-
-  const semana = montarJanela(semanal, gastosSemana);
-  const mes = montarJanela(mensal, gastosMes);
-  if (semana) Object.assign(semana, janelas.semana);
-  if (mes) Object.assign(mes, janelas.mes);
-
-  return { categoria, parent, semana, mes };
+  return limitadores.rows.map((l) => ({ ...l, categorias: porLimitador.get(l.id) || [] }));
 }
 
-// Consumo de TODAS as categorias com teto definido, em uma query só (painel).
-// N+1 aqui seria visível: o usuário pode ter dezenas de subcategorias.
-async function listarConsumoLimites(usuarioId, opcoes = {}) {
+// Categorias já ocupadas por OUTRO limitador — a validação da regra "uma
+// categoria, um limitador". Devolve [{ categoria, limitador }] para a mensagem
+// de erro poder dizer ONDE a categoria já está, e não só que deu conflito.
+async function categoriasEmOutroLimitador(uid, categorias, limitadorIdIgnorado = null) {
+  if (!categorias || categorias.length === 0) return [];
+  const result = await pool.query(
+    `SELECT lc.categoria, l.nome AS limitador
+     FROM limitador_categorias lc
+     JOIN limitadores l ON l.id = lc.limitador_id
+     WHERE lc.usuario_id = $1
+       AND l.ativo = TRUE
+       AND lc.categoria = ANY($2::text[])
+       AND ($3::int IS NULL OR lc.limitador_id <> $3)`,
+    [uid, categorias, limitadorIdIgnorado]
+  );
+  return result.rows;
+}
+
+// Normaliza o payload vindo do painel / do WhatsApp. Teto ausente, 0, vazio ou
+// negativo vira NULL = "não controlo essa janela" — a mesma convenção nas duas
+// pontas, para não existir "0 significa uma coisa aqui e outra ali".
+function normalizarTeto(valor) {
+  if (valor === null || valor === undefined || valor === '') return null;
+  const n = Number(valor);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+// Cria ou atualiza um limitador junto com sua lista de categorias.
+//
+// Categorias são substituídas por inteiro (DELETE + INSERT) e não sincronizadas
+// item a item: a lista é pequena (dezenas no pior caso) e "o que está na tela é
+// o que fica gravado" é mais fácil de garantir do que um diff.
+//
+// Tudo numa transação: um limitador que gravou o nome novo mas manteve as
+// categorias antigas seria pior do que a gravação inteira falhar.
+async function salvarLimitador(usuarioId, dados) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const nome = (dados.nome || '').trim();
+  if (!nome) return { ok: false, erro: 'nome_obrigatorio' };
+
+  const categorias = [...new Set((dados.categorias || []).map((c) => (c || '').trim()).filter(Boolean))];
+  if (categorias.length === 0) return { ok: false, erro: 'sem_categorias' };
+
+  const semanal = normalizarTeto(dados.valor_semanal);
+  const mensal = normalizarTeto(dados.valor_mensal);
+  if (semanal === null && mensal === null) return { ok: false, erro: 'sem_teto' };
+
+  const id = dados.id ? Number(dados.id) : null;
+
+  const conflitos = await categoriasEmOutroLimitador(uid, categorias, id);
+  if (conflitos.length > 0) return { ok: false, erro: 'categoria_em_uso', conflitos };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    let limitadorId = id;
+    if (limitadorId) {
+      const upd = await client.query(
+        `UPDATE limitadores SET nome = $3, valor_semanal = $4, valor_mensal = $5
+         WHERE id = $2 AND usuario_id = $1 AND ativo = TRUE
+         RETURNING id`,
+        [uid, limitadorId, nome, semanal, mensal]
+      );
+      if (upd.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return { ok: false, erro: 'nao_encontrado' };
+      }
+    } else {
+      const ins = await client.query(
+        `INSERT INTO limitadores (usuario_id, nome, valor_semanal, valor_mensal)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [uid, nome, semanal, mensal]
+      );
+      limitadorId = ins.rows[0].id;
+    }
+
+    await client.query('DELETE FROM limitador_categorias WHERE limitador_id = $1', [limitadorId]);
+    await client.query(
+      `INSERT INTO limitador_categorias (limitador_id, usuario_id, categoria)
+       SELECT $1, $2, cat FROM UNNEST($3::text[]) AS cat`,
+      [limitadorId, uid, categorias]
+    );
+
+    await client.query('COMMIT');
+    return { ok: true, id: limitadorId, nome, valor_semanal: semanal, valor_mensal: mensal, categorias };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // 23505 = unique_violation: só pode ser o índice de nome (o de categoria já
+    // foi checado acima com mensagem melhor).
+    if (err.code === '23505') return { ok: false, erro: 'nome_duplicado' };
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Desativa o limitador e SOLTA suas categorias.
+//
+// O DELETE das categorias não é opcional: elas carregam o índice único que
+// impede a mesma categoria em dois limitadores, e uma linha presa a um
+// limitador inativo bloquearia o usuário de usar aquela categoria de novo — um
+// limitador excluído continuaria mandando no sistema.
+async function excluirLimitador(usuarioId, limitadorId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `UPDATE limitadores SET ativo = FALSE
+     WHERE id = $2 AND usuario_id = $1 AND ativo = TRUE
+     RETURNING nome`,
+    [uid, Number(limitadorId)]
+  );
+  if (result.rowCount === 0) return null;
+  await pool.query('DELETE FROM limitador_categorias WHERE limitador_id = $1', [Number(limitadorId)]);
+  return result.rows[0].nome;
+}
+
+// Busca um limitador pelo nome (case/acento-insensível), para o WhatsApp poder
+// dizer "limitar mercado em 500" sem o usuário saber o id.
+async function buscarLimitadorPorNome(usuarioId, nome) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const alvo = normalizarCategoriaParaComparacao(nome);
+  if (!alvo) return null;
+  const todos = await listarLimitadores(uid);
+  return todos.find((l) => normalizarCategoriaParaComparacao(l.nome) === alvo) || null;
+}
+
+// ─── Consumo por limitador ───────────────────────────────────────────────────
+
+// Consumo de TODOS os limitadores do usuário nas duas janelas, em uma query só.
+//
+// A soma percorre TODAS as categorias do grupo: é o ponto inteiro do modelo —
+// "Mercado" pode ser Supermercado + Compras + Alimentos e bebidas, e o teto vale
+// para o conjunto, não para cada uma.
+//
+// Uma query única (e não uma por limitador): o painel chama isso a cada carga do
+// dashboard, e o aviso pós-sync também.
+async function listarConsumoLimitadores(usuarioId, opcoes = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const janelas = janelasDeControle(opcoes.dataRef || null);
 
   const result = await pool.query(
-    `SELECT lc.categoria,
-            lc.parent,
-            lc.valor_limite::float AS mensal,
-            COALESCE(lc.valor_limite_semanal, 0)::float AS semanal,
+    `SELECT l.id,
+            l.nome,
+            l.valor_semanal::float AS semanal,
+            l.valor_mensal::float AS mensal,
+            COALESCE(ARRAY_AGG(DISTINCT lc.categoria), '{}') AS categorias,
             COALESCE(SUM(t.valor) FILTER (WHERE t.data >= $2 AND t.data <= $3), 0)::float AS gastos_semana,
             COALESCE(SUM(t.valor) FILTER (WHERE t.data >= $4 AND t.data <= $5), 0)::float AS gastos_mes
-     FROM limites_categoria lc
+     FROM limitadores l
+     JOIN limitador_categorias lc ON lc.limitador_id = l.id
      LEFT JOIN transacoes t
-       ON t.usuario_id = lc.usuario_id
+       ON t.usuario_id = l.usuario_id
       AND t.tipo = 'despesa'
       AND t.categoria = lc.categoria
       AND t.data >= LEAST($2::date, $4::date)
       AND t.data <= GREATEST($3::date, $5::date)
-     WHERE lc.usuario_id = $1
-       AND lc.ativo = TRUE
-       AND lc.parent IS NOT NULL
-       AND (lc.valor_limite > 0 OR COALESCE(lc.valor_limite_semanal, 0) > 0)
-     GROUP BY lc.categoria, lc.parent, lc.valor_limite, lc.valor_limite_semanal
-     ORDER BY lc.parent, lc.categoria`,
+     WHERE l.usuario_id = $1
+       AND l.ativo = TRUE
+       AND (l.valor_semanal > 0 OR l.valor_mensal > 0)
+     GROUP BY l.id, l.nome, l.valor_semanal, l.valor_mensal
+     ORDER BY l.nome`,
     [uid, janelas.semana.inicio, janelas.semana.fim, janelas.mes.inicio, janelas.mes.fim]
   );
 
@@ -2864,55 +3030,76 @@ async function listarConsumoLimites(usuarioId, opcoes = {}) {
     const mes = montarJanela(r.mensal, r.gastos_mes);
     if (semana) Object.assign(semana, janelas.semana);
     if (mes) Object.assign(mes, janelas.mes);
-    return { categoria: r.categoria, parent: r.parent, semana, mes };
+    return { id: r.id, limitador: r.nome, categorias: r.categorias || [], semana, mes };
   });
 }
 
-// Marca a faixa avisada para (usuário, categoria, janela, período) e responde
+// Consumo do limitador que contém uma categoria. Null quando a categoria não
+// está em limitador nenhum (o caso comum: são 41 subcategorias e poucos
+// limitadores) ou quando o limitador não tem nenhum teto definido.
+//
+// O SELECT parte de limitador_categorias, e não de limitadores: é a categoria
+// da transação recém-lançada que traz o grupo, não o contrário.
+async function verificarLimitadorDaCategoria(usuarioId, categoria, opcoes = {}) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const janelas = janelasDeControle(opcoes.dataRef || null);
+
+  const alvo = await pool.query(
+    `SELECT l.id, l.nome, l.valor_semanal::float AS semanal, l.valor_mensal::float AS mensal
+     FROM limitador_categorias lc
+     JOIN limitadores l ON l.id = lc.limitador_id
+     WHERE lc.usuario_id = $1 AND lc.categoria = $2 AND l.ativo = TRUE`,
+    [uid, categoria]
+  );
+  if (alvo.rows.length === 0) return null;
+
+  const { id, nome, semanal, mensal } = alvo.rows[0];
+  if ((!semanal || semanal <= 0) && (!mensal || mensal <= 0)) return null;
+
+  // O gasto é o do GRUPO inteiro: a transação em "Supermercado" consome o mesmo
+  // teto que a de "Compras", se as duas estão no limitador "Mercado".
+  const gastosResult = await pool.query(
+    `SELECT
+       COALESCE(SUM(t.valor) FILTER (WHERE t.data >= $3 AND t.data <= $4), 0)::float AS gastos_semana,
+       COALESCE(SUM(t.valor) FILTER (WHERE t.data >= $5 AND t.data <= $6), 0)::float AS gastos_mes
+     FROM transacoes t
+     WHERE t.usuario_id = $1
+       AND t.tipo = 'despesa'
+       AND t.categoria IN (SELECT categoria FROM limitador_categorias WHERE limitador_id = $2)
+       AND t.data >= LEAST($3::date, $5::date)
+       AND t.data <= GREATEST($4::date, $6::date)`,
+    [uid, id, janelas.semana.inicio, janelas.semana.fim, janelas.mes.inicio, janelas.mes.fim]
+  );
+  const { gastos_semana: gastosSemana, gastos_mes: gastosMes } = gastosResult.rows[0];
+
+  const semana = montarJanela(semanal, gastosSemana);
+  const mes = montarJanela(mensal, gastosMes);
+  if (semana) Object.assign(semana, janelas.semana);
+  if (mes) Object.assign(mes, janelas.mes);
+
+  return { id, limitador: nome, semana, mes };
+}
+
+// Marca a faixa avisada para (usuário, limitador, janela, período) e responde
 // se ela SUBIU — só nesse caso vale mandar aviso proativo.
 //
 // A decisão é do banco, não da aplicação: o UPDATE só acontece com
 // "WHERE faixa < EXCLUDED.faixa", então dois syncs simultâneos do mesmo Item
 // (webhook + botão do painel) não conseguem avisar duas vezes a mesma faixa.
 // rowCount = 0 significa "já estava nesse nível ou acima" → cala a boca.
-async function registrarFaixaAlertada(usuarioId, categoria, janela, periodoChave, faixa) {
+async function registrarFaixaAlertada(usuarioId, limitadorId, janela, periodoChave, faixa) {
   if (!faixa || faixa <= 0) return false;
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
-    `INSERT INTO limites_alertas (usuario_id, categoria, janela, periodo_chave, faixa)
+    `INSERT INTO limitador_alertas (usuario_id, limitador_id, janela, periodo_chave, faixa)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (usuario_id, categoria, janela, periodo_chave)
+     ON CONFLICT (usuario_id, limitador_id, janela, periodo_chave)
      DO UPDATE SET faixa = EXCLUDED.faixa, atualizado_em = NOW()
-     WHERE limites_alertas.faixa < EXCLUDED.faixa
+     WHERE limitador_alertas.faixa < EXCLUDED.faixa
      RETURNING id`,
-    [uid, categoria, janela, periodoChave, faixa]
+    [uid, limitadorId, janela, periodoChave, faixa]
   );
   return result.rowCount > 0;
-}
-
-// Verificar limite de uma subcategoria individual (parent != NULL).
-// Mantida com a MESMA assinatura e formato de retorno de antes (call sites em
-// handlers.js dependem de limiteEfetivo/proporcional/diasMes), mas agora
-// derivada de verificarLimitesCategoria para não existirem duas contas de mês
-// diferentes no projeto. Efeito colateral desejado: o mês passa a ser o de São
-// Paulo, e não mais o do relógio do servidor (que roda em UTC — a virada de mês
-// acontecia 3h cedo demais).
-async function verificarLimiteSub(usuarioId, categoriaSub, opcoes = {}) {
-  const info = await verificarLimitesCategoria(usuarioId, categoriaSub, opcoes);
-  if (!info || !info.mes) return null;
-
-  const diasMes = Number(info.mes.fim.slice(8, 10));
-  return {
-    categoria: categoriaSub,
-    limite: info.mes.limite,
-    limiteEfetivo: info.mes.limite,
-    gastos: info.mes.gastos,
-    restante: info.mes.restante,
-    percentual: info.mes.percentual,
-    proporcional: false,
-    diasMes,
-    diasUsuario: diasMes,
-  };
 }
 
 // Verificar limite e gastos de uma categoria no mês atual
@@ -5381,9 +5568,12 @@ module.exports = {
   listarLimitesComSub,
   salvarLimitesBatch,
   buscarSalarioUsuario,
-  verificarLimiteSub,
-  verificarLimitesCategoria,
-  listarConsumoLimites,
+  listarLimitadores,
+  salvarLimitador,
+  excluirLimitador,
+  buscarLimitadorPorNome,
+  verificarLimitadorDaCategoria,
+  listarConsumoLimitadores,
   registrarFaixaAlertada,
   janelasDeControle,
   inicioSemanaISO,

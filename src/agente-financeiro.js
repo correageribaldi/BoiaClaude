@@ -39,12 +39,12 @@ function limparEstado(usuarioId) { agenteEstados.delete(usuarioId); }
 // ── Contexto financeiro ──────────────────────────────────────────────────────
 
 async function buildFinancialContext(usuarioId) {
-  // limitesCategoria (e não "limites") para não sombrear o módulo ./limites
-  const [saldos, resumo, limitesCategoria, recorrencias, cartoes, caixinhas, usuario, categoriasDespesa, categoriasReceita] =
+  // limitadores (e não "limites") para não sombrear o módulo ./limites
+  const [saldos, resumo, limitadores, recorrencias, cartoes, caixinhas, usuario, categoriasDespesa, categoriasReceita] =
     await Promise.all([
       db.calcularSaldos(usuarioId),
       db.resumoMensal(usuarioId),
-      db.listarLimites(usuarioId),
+      db.listarLimitadores(usuarioId),
       db.listarRecorrencias(usuarioId),
       db.listarCartoes(usuarioId),
       db.listarCaixinhas(usuarioId),
@@ -76,11 +76,17 @@ async function buildFinancialContext(usuarioId) {
     lines.push(`Caixinhas: ${cxInfo.join(' | ')}`);
   }
 
-  if (limitesCategoria.length > 0) {
-    const limitesAtivos = limitesCategoria.filter(l => !l.parent).slice(0, 10);
-    if (limitesAtivos.length > 0) {
-      lines.push(`Limites: ${limitesAtivos.map(l => `${l.categoria} ${moeda(l.valor_limite)}`).join(', ')}`);
-    }
+  // As categorias de cada limitador vão junto: sem elas a IA não sabe se
+  // "gastei no Angeloni" cai dentro de algum teto já existente.
+  if (limitadores.length > 0) {
+    const desc = limitadores.slice(0, 10).map((l) => {
+      const tetos = [
+        l.valor_semanal > 0 ? `${moeda(l.valor_semanal)}/sem` : null,
+        l.valor_mensal > 0 ? `${moeda(l.valor_mensal)}/mês` : null,
+      ].filter(Boolean).join(' + ') || 'sem teto';
+      return `${l.nome} [${tetos}] = ${l.categorias.join(' + ')}`;
+    });
+    lines.push(`Limitadores: ${desc.join(' | ')}`);
   }
 
   if (recorrencias.length > 0) {
@@ -264,20 +270,29 @@ const TOOLS = [
       },
     },
   },
-  // ── Limites ──
+  // ── Limitadores de gasto ──
+  //
+  // Um limitador é um grupo NOMEADO de subcategorias com teto semanal e/ou
+  // mensal ("Mercado" = Supermercado + Compras). O nome é do usuário, não da
+  // taxonomia — é o que torna o controle usável com 41 subcategorias.
   {
     type: 'function', function: {
       name: 'definir_limite',
-      description: 'Definir teto de gastos de uma categoria. Aceita teto mensal, semanal ou os dois — são controles independentes. Ex: "no mercado quero gastar no máximo 500 por semana" → periodo="semana", valor_limite=500.',
+      description: 'Criar ou atualizar um limitador de gastos (grupo nomeado de subcategorias com teto). Aceita teto mensal, semanal ou os dois — são controles independentes. Ex: "no mercado quero gastar no máximo 500 por semana" → nome="Mercado", periodo="semana", valor_limite=500. Se o limitador ainda não existe e você NÃO souber quais subcategorias agrupar, deixe "categorias" vazio: o sistema pergunta ao usuário.',
       parameters: {
         type: 'object',
         properties: {
-          categoria: { type: 'string', description: 'Nome da categoria' },
+          categoria: { type: 'string', description: 'Nome do limitador (ex: Mercado, Combustível, Lazer)' },
           valor_limite: { type: 'number', description: 'Valor do teto' },
           periodo: {
             type: 'string',
             enum: ['mes', 'semana'],
             description: 'Janela do teto. Padrão "mes" quando o usuário não disser.',
+          },
+          categorias: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Subcategorias que entram no grupo, quando o usuário disser quais. Omita se não souber.',
           },
         },
         required: ['categoria', 'valor_limite'],
@@ -287,18 +302,18 @@ const TOOLS = [
   {
     type: 'function', function: {
       name: 'listar_limites',
-      description: 'Listar todos os limites de gastos ativos',
+      description: 'Listar os limitadores de gasto e quanto já foi consumido de cada teto',
       parameters: { type: 'object', properties: {} },
     },
   },
   {
     type: 'function', function: {
       name: 'remover_limite',
-      description: 'Remover limite de gastos de uma categoria',
+      description: 'Remover um limitador de gastos pelo nome',
       parameters: {
         type: 'object',
         properties: {
-          categoria: { type: 'string', description: 'Nome da categoria' },
+          categoria: { type: 'string', description: 'Nome do limitador' },
         },
         required: ['categoria'],
       },
@@ -728,23 +743,59 @@ async function executeTool(usuarioId, toolName, args) {
       })) };
     }
 
-    // Limites
+    // Limitadores de gasto
+    //
+    // Só grava direto quando dá para saber o grupo: o limitador já existe (aí
+    // preserva as categorias e mexe só no teto) ou a IA extraiu as
+    // subcategorias da frase. Sem isso, devolve `precisa_categorias` para o
+    // agente perguntar — inventar um agrupamento é o tipo de erro que o usuário
+    // só descobre semanas depois, quando o alerta não veio.
     case 'definir_limite': {
       const porSemana = args.periodo === 'semana';
-      await db.definirLimite(usuarioId, args.categoria, args.valor_limite, null, { semanal: porSemana });
+      const campoTeto = porSemana ? 'valor_semanal' : 'valor_mensal';
+      const existente = await db.buscarLimitadorPorNome(usuarioId, args.categoria);
+      const categorias = existente ? existente.categorias : (args.categorias || []);
+
+      if (categorias.length === 0) {
+        return {
+          ok: false,
+          precisa_categorias: true,
+          msg: `Não existe limitador "${args.categoria}" ainda. Pergunte ao usuário QUAIS subcategorias entram nesse grupo antes de criar.`,
+        };
+      }
+
+      const r = await db.salvarLimitador(usuarioId, {
+        id: existente?.id || null,
+        nome: existente?.nome || args.categoria,
+        valor_semanal: existente?.valor_semanal,
+        valor_mensal: existente?.valor_mensal,
+        categorias,
+        [campoTeto]: args.valor_limite,
+      });
+
+      if (!r.ok) {
+        if (r.erro === 'categoria_em_uso') {
+          const lista = r.conflitos.map((c) => `${c.categoria} já está em ${c.limitador}`).join('; ');
+          return { ok: false, msg: `Cada subcategoria só pode estar em um limitador. ${lista}.` };
+        }
+        return { ok: false, msg: 'Não consegui salvar o limitador.' };
+      }
+
       return {
         ok: true,
-        msg: `Limite de ${moeda(args.valor_limite)}/${porSemana ? 'semana' : 'mês'} definido para ${args.categoria}.`,
+        msg: `Limitador ${r.nome}: ${moeda(args.valor_limite)}/${porSemana ? 'semana' : 'mês'}, agrupando ${r.categorias.join(', ')}.`,
       };
     }
     case 'listar_limites': {
-      const ativos = await db.listarLimites(usuarioId);
-      return { ok: true, data: ativos };
+      const consumo = await db.listarConsumoLimitadores(usuarioId);
+      return { ok: true, data: consumo };
     }
     case 'remover_limite': {
-      const result = await db.removerLimite(usuarioId, args.categoria);
-      if (!result) return { ok: false, msg: 'Limite não encontrado.' };
-      return { ok: true, msg: `Limite de ${args.categoria} removido.` };
+      const limitador = await db.buscarLimitadorPorNome(usuarioId, args.categoria);
+      if (!limitador) return { ok: false, msg: 'Limitador não encontrado.' };
+      const nome = await db.excluirLimitador(usuarioId, limitador.id);
+      if (!nome) return { ok: false, msg: 'Limitador não encontrado.' };
+      return { ok: true, msg: `Limitador ${nome} removido.` };
     }
 
     // Recorrências
@@ -1083,10 +1134,12 @@ async function handleConfirmacao(usuarioId, texto, estado, chatFn) {
 
 function descreverAcao(toolName, args) {
   switch (toolName) {
-    case 'definir_limite':
-      return `📊 Definir limite de *${moeda(args.valor_limite)}/${args.periodo === 'semana' ? 'semana' : 'mês'}* para *${args.categoria}*`;
+    case 'definir_limite': {
+      const grupo = (args.categorias || []).length > 0 ? `\n_Agrupando: ${args.categorias.join(', ')}_` : '';
+      return `📊 Definir limitador *${args.categoria}* em *${moeda(args.valor_limite)}/${args.periodo === 'semana' ? 'semana' : 'mês'}*${grupo}`;
+    }
     case 'remover_limite':
-      return `🗑️ Remover limite de gastos de *${args.categoria}*`;
+      return `🗑️ Remover o limitador *${args.categoria}*`;
     case 'criar_recorrencia':
       return `🔄 Criar recorrência: *${args.descricao}* ${moeda(args.valor)} (${args.tipo}, ${args.frequencia})`;
     case 'desativar_recorrencia':

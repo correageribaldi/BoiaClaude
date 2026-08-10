@@ -109,8 +109,12 @@ function aplicarMocksPadraoDB(t) {
   t.mock.method(db, 'listarLimitesComSub', async () => []);
   t.mock.method(db, 'definirLimite', async () => {});
   t.mock.method(db, 'verificarLimite', async () => null);
-  t.mock.method(db, 'verificarLimiteSub', async () => null);
   t.mock.method(db, 'garantirSubcategoria', async () => {});
+  // Limitadores de gasto: o consumo é consultado em toda confirmação de
+  // despesa, e sem limitador cadastrado o bloco de teto some da mensagem.
+  t.mock.method(db, 'listarLimitadores', async () => []);
+  t.mock.method(db, 'verificarLimitadorDaCategoria', async () => null);
+  t.mock.method(db, 'listarConsumoLimitadores', async () => []);
 
   // Transacoes
   t.mock.method(db, 'adicionarTransacao', async () => ({ id: 1 }));

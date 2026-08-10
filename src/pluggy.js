@@ -698,10 +698,11 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
   await db.marcarPluggyItemSincronizado(mapaItem.id);
 
   // Aviso consolidado de teto estourado: UMA mensagem por sincronização,
-  // listando só as categorias que SUBIRAM de faixa (60/80/100%) por causa
-  // deste lote — o alto-relevo é mantido em limites_alertas, então rodar o
+  // listando só os LIMITADORES que SUBIRAM de faixa (60/80/100%) por causa
+  // deste lote — o alto-relevo é mantido em limitador_alertas, então rodar o
   // sync de novo com o mesmo estouro não repete o aviso, e a virada da
-  // semana/mês reabre naturalmente.
+  // semana/mês reabre naturalmente. As categorias tocadas entram como pista de
+  // quais grupos avaliar; duas categorias do mesmo grupo geram um aviso só.
   //
   // avisarLimitesPosSync não lança (trata inclusive o WhatsApp desconectado,
   // situação real em produção). O try/catch aqui é cinto e suspensório: em

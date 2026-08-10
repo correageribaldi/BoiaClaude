@@ -109,14 +109,15 @@ NÃO confundir com editar_transacao (lançamento pontual de um mês específico)
 IMPORTANTE: Se o usuário pedir lista MAS com filtro de tipo ou período (ex: "minhas despesas", "despesas de março", "receitas dessa semana", "o que gastei essa semana"), use "consulta" com os filtros preenchidos, NÃO use "comando". Use "comando" com dica "lista" SOMENTE para pedidos genéricos sem filtro (ex: "lista", "meus lançamentos", "últimos lançamentos").
 
 5. LIMITE DE GASTOS (limitar gastos, limite de, controlar gastos com, não quero gastar mais que X com):
-{"acao": "definir_limite", "categoria": "nome da categoria", "valor": 0.00, "periodo": "mes|semana"}
+{"acao": "definir_limite", "categoria": "nome do limitador", "valor": 0.00, "periodo": "mes|semana"}
+"categoria" aqui é o NOME DO GRUPO que o usuário controla ("Mercado", "Combustível", "Lazer"), como ele falou — não precisa ser uma subcategoria existente. Quais subcategorias entram no grupo é perguntado depois, num segundo passo.
 "periodo" é "semana" quando o usuário disser por semana/semanal/toda semana (ex: "no mercado no máximo 500 por semana"). Caso contrário, "mes". Semanal e mensal convivem: definir um não apaga o outro.
 
-6. LISTAR LIMITES (meus limites, quais são meus limites, limites ativos):
+6. LISTAR LIMITES (meus limites, quais são meus limites, limites ativos, meus limitadores):
 {"acao": "listar_limites"}
 
 7. REMOVER LIMITE (remover limite, tirar limite, cancelar limite de):
-{"acao": "remover_limite", "categoria": "nome da categoria"}
+{"acao": "remover_limite", "categoria": "nome do limitador"}
 
 8. LEMBRETE ÚNICO (me lembre, lembra de, me avisa, daqui X minutos/horas, às X horas):
 {"acao": "lembrete", "minutos": 0, "horario": "HH:MM ou null", "data": "YYYY-MM-DD ou null", "mensagem": "o que lembrar"}

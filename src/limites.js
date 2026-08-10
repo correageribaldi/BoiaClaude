@@ -1,8 +1,15 @@
-// ─── Limites de gasto — mensagens e alerta consolidado ───────────────────────
+// ─── Limitadores de gasto — mensagens e alerta consolidado ───────────────────
 //
-// Camada fina entre o cálculo (src/database.js: verificarLimitesCategoria,
-// listarConsumoLimites, registrarFaixaAlertada) e os dois canais de saída
+// Camada fina entre o cálculo (src/database.js: verificarLimitadorDaCategoria,
+// listarConsumoLimitadores, registrarFaixaAlertada) e os dois canais de saída
 // (texto do WhatsApp e JSON do painel).
+//
+// A unidade de controle é o LIMITADOR — um grupo nomeado pelo usuário
+// ("Mercado", "Combustível", "Lazer") que junta N subcategorias. O gasto de
+// qualquer categoria do grupo consome o mesmo teto, e o aviso fala o nome do
+// grupo, não o da subcategoria em que a transação caiu: "Mercado 82%" diz mais
+// do que "Compras 82%" quando o mercado dele se espalha entre Supermercado,
+// Compras e Alimentos e bebidas.
 //
 // Mora num módulo próprio, e não em handlers.js, porque quem mais precisa
 // disso é src/pluggy.js — e pluggy → handlers seria um ciclo (handlers já
@@ -12,14 +19,15 @@
 // DOIS REGIMES DE AVISO, de propósito:
 //
 //  1. REATIVO (lançamento manual, WhatsApp ou painel): mostra o consumo
-//     SEMPRE que a categoria tem teto, mesmo em 20%. Não é spam — é resposta a
-//     uma ação que o usuário acabou de fazer, e é literalmente o que ele pediu
-//     ("usei o cartão, me diz quanto já gastei de Mercado nessa semana").
+//     SEMPRE que a categoria está num limitador com teto, mesmo em 20%. Não é
+//     spam — é resposta a uma ação que o usuário acabou de fazer, e é
+//     literalmente o que ele pediu ("usei o cartão, me diz quanto já gastei de
+//     Mercado nessa semana").
 //
 //  2. PROATIVO (fim de uma sincronização Pluggy): o usuário não pediu nada,
-//     então só fala quando há o que dizer — categoria que SUBIU de faixa
+//     então só fala quando há o que dizer — limitador que SUBIU de faixa
 //     (60/80/100%) por causa daquele lote. Uma sincronização, uma mensagem,
-//     listando só as categorias afetadas.
+//     listando só os limitadores afetados.
 
 const db = require('./database');
 const fmt = require('./formatters');
@@ -43,8 +51,8 @@ function rotuloJanela(janela) {
 }
 
 // Bloco de uma janela: "Mercado — esta semana / barra / usado de teto".
-function formatarBlocoJanela(categoria, janela, info) {
-  let bloco = `\n\n${emojiDaFaixa(info.faixa)} *${categoria}* — ${rotuloJanela(janela)}\n`;
+function formatarBlocoJanela(limitador, janela, info) {
+  let bloco = `\n\n${emojiDaFaixa(info.faixa)} *${limitador}* — ${rotuloJanela(janela)}\n`;
   bloco += `${barraProgresso(info.percentual)} ${info.percentual}%\n`;
   bloco += `Usado: ${fmt.formatarMoeda(info.gastos)} de ${fmt.formatarMoeda(info.limite)} | `;
   bloco += info.restante >= 0
@@ -54,7 +62,8 @@ function formatarBlocoJanela(categoria, janela, info) {
 }
 
 // Texto a anexar na confirmação de uma despesa recém-lançada. String vazia
-// quando a categoria não tem teto — quem chama concatena sem verificar nada.
+// quando a categoria não está em nenhum limitador com teto — quem chama
+// concatena sem verificar nada.
 //
 // Também sobe a marca d'água de faixa avisada: sem isso, uma sincronização
 // logo depois repetiria proativamente um estouro que o usuário acabou de ver.
@@ -63,11 +72,11 @@ async function blocoLimitesDaTransacao(usuarioId, categoria, opcoes = {}) {
 
   let info;
   try {
-    info = await db.verificarLimitesCategoria(usuarioId, categoria, opcoes);
+    info = await db.verificarLimitadorDaCategoria(usuarioId, categoria, opcoes);
   } catch (err) {
     // Consulta de teto é acessório da confirmação de lançamento: se falhar, o
     // usuário ainda precisa saber que a despesa foi registrada.
-    console.error('[LIMITES] Falha ao consultar limites da transação:', err.message);
+    console.error('[LIMITES] Falha ao consultar limitador da transação:', err.message);
     return '';
   }
   if (!info) return '';
@@ -76,10 +85,10 @@ async function blocoLimitesDaTransacao(usuarioId, categoria, opcoes = {}) {
   for (const janela of ['semana', 'mes']) {
     const dados = info[janela];
     if (!dados) continue;
-    msg += formatarBlocoJanela(categoria, janela, dados);
+    msg += formatarBlocoJanela(info.limitador, janela, dados);
     if (dados.faixa > 0) {
       try {
-        await db.registrarFaixaAlertada(usuarioId, categoria, janela, dados.chave, dados.faixa);
+        await db.registrarFaixaAlertada(usuarioId, info.id, janela, dados.chave, dados.faixa);
       } catch (err) {
         console.error('[LIMITES] Falha ao registrar faixa avisada:', err.message);
       }
@@ -92,12 +101,12 @@ async function blocoLimitesDaTransacao(usuarioId, categoria, opcoes = {}) {
 async function resumoLimitesDaTransacao(usuarioId, categoria, opcoes = {}) {
   if (!categoria) return null;
   try {
-    const info = await db.verificarLimitesCategoria(usuarioId, categoria, opcoes);
+    const info = await db.verificarLimitadorDaCategoria(usuarioId, categoria, opcoes);
     if (!info) return null;
     for (const janela of ['semana', 'mes']) {
       const dados = info[janela];
       if (dados?.faixa > 0) {
-        await db.registrarFaixaAlertada(usuarioId, categoria, janela, dados.chave, dados.faixa);
+        await db.registrarFaixaAlertada(usuarioId, info.id, janela, dados.chave, dados.faixa);
       }
     }
     return info;
@@ -107,7 +116,7 @@ async function resumoLimitesDaTransacao(usuarioId, categoria, opcoes = {}) {
   }
 }
 
-// Monta o texto consolidado a partir das categorias que subiram de faixa.
+// Monta o texto consolidado a partir dos limitadores que subiram de faixa.
 // Função pura (recebe a lista pronta) para ser testável sem banco.
 function formatarAvisoConsolidado(estouros) {
   if (!estouros.length) return '';
@@ -119,25 +128,32 @@ function formatarAvisoConsolidado(estouros) {
 
   let msg = `${titulo}\n_Depois de sincronizar seu banco:_`;
   for (const e of estouros) {
-    msg += formatarBlocoJanela(e.categoria, e.janela, e);
+    msg += formatarBlocoJanela(e.limitador, e.janela, e);
   }
   return msg;
 }
 
-// Avaliação proativa ao fim de uma sincronização: quais das categorias tocadas
+// Avaliação proativa ao fim de uma sincronização: quais limitadores tocados
 // pelo lote subiram de faixa, e em qual janela.
+//
+// Parte da lista COMPLETA de limitadores (uma query) e filtra pelos que contêm
+// alguma das categorias do lote. O caminho inverso — uma consulta por categoria
+// tocada — custaria N queries para reencontrar os mesmos poucos grupos, e ainda
+// avaliaria o mesmo limitador várias vezes quando o lote traz duas categorias
+// do mesmo grupo (Supermercado e Compras, ambas em "Mercado").
 async function apurarEstouros(usuarioId, categorias, opcoes = {}) {
+  const tocadas = new Set(categorias);
+  const todos = await db.listarConsumoLimitadores(usuarioId, opcoes);
   const estouros = [];
 
-  for (const categoria of categorias) {
-    const info = await db.verificarLimitesCategoria(usuarioId, categoria, opcoes);
-    if (!info) continue;
+  for (const lim of todos) {
+    if (!(lim.categorias || []).some((c) => tocadas.has(c))) continue;
 
     for (const janela of ['semana', 'mes']) {
-      const dados = info[janela];
+      const dados = lim[janela];
       if (!dados || dados.faixa <= 0) continue;
-      const subiu = await db.registrarFaixaAlertada(usuarioId, categoria, janela, dados.chave, dados.faixa);
-      if (subiu) estouros.push({ categoria, janela, ...dados });
+      const subiu = await db.registrarFaixaAlertada(usuarioId, lim.id, janela, dados.chave, dados.faixa);
+      if (subiu) estouros.push({ limitador: lim.limitador, janela, ...dados });
     }
   }
 
@@ -150,7 +166,7 @@ async function apurarEstouros(usuarioId, categorias, opcoes = {}) {
 //
 // NUNCA lança: o try/catch cobre inclusive a apuração (consulta ao banco), não
 // só o envio. Perder o aviso é ruim; perder a sincronização por causa do aviso
-// seria pior. Devolve quantas categorias entraram na mensagem (0 = nada a
+// seria pior. Devolve quantos limitadores entraram na mensagem (0 = nada a
 // dizer, ou falhou), para log e teste.
 async function avisarLimitesPosSync(usuarioId, categorias, opcoes = {}) {
   const lista = [...new Set((categorias || []).filter(Boolean))];

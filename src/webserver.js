@@ -433,15 +433,69 @@ app.put('/api/limites', autenticar, async (req, res) => {
   }
 });
 
+// ── Limitadores de gasto (grupos nomeados de subcategorias com teto) ─────────
+
+app.get('/api/limitadores', autenticar, async (req, res) => {
+  try {
+    res.json(await db.listarLimitadores(req.usuarioId));
+  } catch (err) {
+    console.error('[WEB] GET /api/limitadores:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Mensagens de erro por código do banco — o painel mostra o texto direto, então
+// "categoria em uso" precisa dizer QUAL categoria e em qual limitador ela está.
+function mensagemErroLimitador(resultado) {
+  switch (resultado.erro) {
+    case 'nome_obrigatorio': return 'Dê um nome ao limitador (ex: Mercado).';
+    case 'sem_categorias':   return 'Escolha ao menos uma subcategoria.';
+    case 'sem_teto':         return 'Defina o teto semanal, o mensal, ou os dois.';
+    case 'nome_duplicado':   return 'Você já tem um limitador com esse nome.';
+    case 'nao_encontrado':   return 'Limitador não encontrado.';
+    case 'categoria_em_uso':
+      return `Já está em outro limitador: ${resultado.conflitos.map(c => `${c.categoria} (${c.limitador})`).join(', ')}.`;
+    default: return 'Não consegui salvar o limitador.';
+  }
+}
+
+// POST cria e PUT atualiza, mas os dois caem na mesma função do banco: a
+// diferença é só a presença do id, e duplicar a validação em dois caminhos é
+// como se cria divergência entre criar e editar.
+async function salvarLimitadorHandler(req, res, id) {
+  try {
+    const resultado = await db.salvarLimitador(req.usuarioId, { ...req.body, id });
+    if (!resultado.ok) return res.status(400).json({ erro: mensagemErroLimitador(resultado) });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] salvar limitador:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+}
+
+app.post('/api/limitadores', autenticar, (req, res) => salvarLimitadorHandler(req, res, null));
+app.put('/api/limitadores/:id', autenticar, (req, res) => salvarLimitadorHandler(req, res, req.params.id));
+
+app.delete('/api/limitadores/:id', autenticar, async (req, res) => {
+  try {
+    const nome = await db.excluirLimitador(req.usuarioId, req.params.id);
+    if (!nome) return res.status(404).json({ erro: 'Limitador não encontrado.' });
+    res.json({ ok: true, nome });
+  } catch (err) {
+    console.error('[WEB] DELETE /api/limitadores:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Consumo dos tetos nas duas janelas (semana ISO + mês corrente). Sempre o
 // período ATUAL — não aceita mês/ano por querystring de propósito: teto é
 // controle do que dá para gastar de aqui até o fim da janela, não relatório
 // histórico (para histórico existem os gráficos do dashboard).
-app.get('/api/limites/consumo', autenticar, async (req, res) => {
+app.get('/api/limitadores/consumo', autenticar, async (req, res) => {
   try {
-    res.json(await db.listarConsumoLimites(req.usuarioId));
+    res.json(await db.listarConsumoLimitadores(req.usuarioId));
   } catch (err) {
-    console.error('[WEB] GET /api/limites/consumo:', err.message);
+    console.error('[WEB] GET /api/limitadores/consumo:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });
