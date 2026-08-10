@@ -549,9 +549,12 @@ app.post('/api/transactions', autenticar, async (req, res) => {
     }
     let resultado;
     if (parcelas && parcelas > 1) {
-      resultado = await db.adicionarTransacoesParcelas(
+      // adicionarTransacoesParcelas devolve um ARRAY de ids — espalhar isso num
+      // objeto viraria {0:.., 1:..}. Fica sob a chave "ids".
+      const ids = await db.adicionarTransacoesParcelas(
         req.usuarioId, valor, descricao, categoria || null, data, cartao_id || null, parcelas, conta_id || null
       );
+      resultado = { ids };
     } else {
       resultado = await db.adicionarTransacao(
         req.usuarioId, tipo, parseFloat(valor), descricao, categoria || null,
