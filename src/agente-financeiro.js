@@ -133,7 +133,8 @@ REGRAS IMPORTANTES:
 10. Se o usuário disser "resetar", "começar do zero" ou "limpar tudo", NÃO execute — responda que ele precisa digitar o comando diretamente.
 11. Quando a tool retornar resultado, apresente de forma amigável e formatada para WhatsApp (negrito com *, itálico com _).
 12. Para criar conta (corrente, poupança, carteira, investimento), listar contas ou ver saldo de uma conta específica, chame as tools criar_conta, listar_contas ou saldo_conta IMEDIATAMENTE — não pedem confirmação. Se o usuário disser algo como "quero criar uma conta" sem informar o nome, chame criar_conta mesmo assim sem o parâmetro nome; a tool já devolve a pergunta pedindo o nome. A resposta da tool já vem pronta e formatada — repasse o texto dela ao usuário como sua resposta final, sem reescrever o conteúdo.
-13. Para mover dinheiro entre contas do próprio usuário (ex: "transferir 100 da conta corrente pra poupança", "mover 50 reais pra carteira", "passar 200 do Nubank pra poupança"), chame a tool transferir IMEDIATAMENTE — não pede confirmação. Se faltar valor, conta de origem ou conta de destino, chame mesmo assim com o que tiver informado; a tool já pergunta o que falta. Transferência NÃO é despesa nem receita — nunca use registrar_transacao para isso. Saldo negativo na conta de origem após a transferência é permitido, não bloqueie nem avise sobre isso.`;
+13. Para mover dinheiro entre contas do próprio usuário (ex: "transferir 100 da conta corrente pra poupança", "mover 50 reais pra carteira", "passar 200 do Nubank pra poupança"), chame a tool transferir IMEDIATAMENTE — não pede confirmação. Se faltar valor, conta de origem ou conta de destino, chame mesmo assim com o que tiver informado; a tool já pergunta o que falta. Transferência NÃO é despesa nem receita — nunca use registrar_transacao para isso. Saldo negativo na conta de origem após a transferência é permitido, não bloqueie nem avise sobre isso.
+14. REGRA CRÍTICA — nunca invente ou calcule um total somando itens de lista: para perguntas de TOTAL/QUANTO GASTEI/QUANTO RECEBI/RESUMO de um período (mês, ano, semana), chame SEMPRE resumo_mensal ou resumo_anual — essas tools já retornam os valores agregados corretos do banco. A tool consultar_transacoes serve APENAS para listar lançamentos específicos (ex: "quais foram minhas compras no mercado", "me mostra os gastos com Uber"); ela pode retornar só uma PÁGINA dos resultados (campo "truncado": true quando há mais registros do que os exibidos em "data"). NUNCA some manualmente os valores do array "data" de consultar_transacoes para apresentar um total ao usuário — se precisar do total do período consultado, use o campo "totalGeral" que a própria tool retorna (soma de TODOS os registros do período, não só os exibidos), ou prefira resumo_mensal/resumo_anual. Apresentar um subtotal de página como se fosse o total do período é um erro grave neste app financeiro.`;
 }
 
 // ── Tool definitions (OpenAI function calling) ───────────────────────────────
@@ -652,19 +653,43 @@ async function executeTool(usuarioId, toolName, args) {
       return { ok: true, msg: `${tipo === 'receita' ? '💰' : '💸'} ${descricao} registrada: ${moeda(valor)} (${status || 'pago'})${avisos}${await blocoLimite()}` };
     }
     case 'consultar_transacoes': {
-      const txs = await db.consultarTransacoes(usuarioId, {
+      const limite = args.limite || 20;
+      const filtrosBase = {
         tipo: args.tipo || null,
         dataInicio: args.dataInicio || null,
         dataFim: args.dataFim || null,
         descricao: args.descricao || null,
-        limite: args.limite || 20,
-      });
-      if (txs.length === 0) return { ok: true, data: [], msg: 'Nenhuma transação encontrada.' };
-      return { ok: true, data: txs.slice(0, 20).map(t => ({
-        id: t.numero_usuario, tipo: t.tipo, valor: t.valor,
-        descricao: t.descricao, categoria: t.categoria,
-        data: t.data, status: t.status,
-      })) };
+      };
+      // Busca a página de resultados (limitada) e, em paralelo, o agregado
+      // REAL do período inteiro (sem limite) — necessário para que a IA nunca
+      // precise (e nunca tenha motivo para) somar manualmente os itens da
+      // lista para responder "quanto gastei"/"total do período". Ver regra 14
+      // do system prompt.
+      const [txs, agregado] = await Promise.all([
+        db.consultarTransacoes(usuarioId, { ...filtrosBase, limite }),
+        db.consultarTotalTransacoes(usuarioId, filtrosBase),
+      ]);
+      if (txs.length === 0) {
+        return { ok: true, data: [], totalGeral: 0, quantidadeTotal: 0, truncado: false, msg: 'Nenhuma transação encontrada.' };
+      }
+      const exibindo = txs.length;
+      const totalDeRegistros = agregado.quantidade;
+      const truncado = totalDeRegistros > exibindo;
+      return {
+        ok: true,
+        data: txs.map(t => ({
+          id: t.numero_usuario, tipo: t.tipo, valor: t.valor,
+          descricao: t.descricao, categoria: t.categoria,
+          data: t.data, status: t.status,
+        })),
+        totalGeral: agregado.total,
+        quantidadeTotal: totalDeRegistros,
+        exibindo,
+        truncado,
+        aviso: truncado
+          ? `Lista truncada: exibindo ${exibindo} de ${totalDeRegistros} transações do período filtrado. NUNCA some os valores desta lista para responder "quanto gastei"/"total" — use o campo totalGeral (já é a soma de TODAS as ${totalDeRegistros} transações do período, não só as exibidas).`
+          : `totalGeral já é a soma de todas as ${totalDeRegistros} transações retornadas — não some manualmente.`,
+      };
     }
     case 'editar_transacao': {
       const result = await db.atualizarTransacao(usuarioId, args.numero_usuario, args.campo, args.novo_valor);
