@@ -1403,8 +1403,17 @@ async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   // acima (mesma proteção que o `SET ${campo}` existente).
   const marcarManual = campo === 'categoria' ? ', categoria_manual = TRUE' : '';
 
+  // Origem exclusiva (ver normalizarOrigem): lançamento de cartão nunca recebe
+  // conta_id. Sem esse CASE, editar uma compra no cartão pelo painel gravava a
+  // conta padrão junto do cartão — as duas colunas preenchidas, que é a
+  // condição exata do bug de saldo em dobro já corrigido retroativamente em
+  // initTables. Também literal fixo, sem interpolação de entrada.
+  const setClause = campo === 'conta_id'
+    ? 'conta_id = CASE WHEN cartao_id IS NULL THEN $1::int ELSE NULL END'
+    : `${campo} = $1${marcarManual}`;
+
   const result = await pool.query(
-    `UPDATE transacoes SET ${campo} = $1${marcarManual}
+    `UPDATE transacoes SET ${setClause}
      WHERE numero_usuario = $2 AND usuario_id = $3
      RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, cartao_id, conta_id`,
     [novoValor, numeroUsuario, uid]
@@ -1464,6 +1473,111 @@ async function buscarRecorrenciaPorId(usuarioId, recorrenciaId) {
     [recorrenciaId, uid]
   );
   return result.rows[0] || null;
+}
+
+// Transforma um lançamento JÁ EXISTENTE em regra de recorrência.
+//
+// Decisão: a regra criada só PROJETA, nunca materializa as ocorrências futuras.
+// É o comportamento que o resto do sistema já assume — lembretes.js materializa
+// só a ocorrência de HOJE, e /api/transactions materializa só o MÊS CORRENTE.
+// Materializar 6, 12 ou infinitos meses à frente criaria lançamentos que o
+// usuário nunca fez: entrariam no saldo, virariam "atrasadas" quando a data
+// passasse sem pagamento, e o desfazer (desativarRecorrencia) só apaga as
+// pendentes — as que ficassem pagas por engano sobreviveriam.
+//
+// Vincular a transação de origem à regra (transacoes.recorrencia_id) não é só
+// rastreabilidade: é o supressor de dupla contagem. Enquanto existir transação
+// com aquele recorrencia_id naquele YYYY-MM, a projeção da mesma regra para o
+// mesmo mês não é somada de novo (ver resumoMensal, calcularSaldos e
+// projetarProximosMeses).
+async function tornarTransacaoRecorrente(usuarioId, numeroUsuario, opcoes = {}) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const frequencia = opcoes.frequencia === 'semanal' ? 'semanal' : 'mensal';
+  const vezes = (opcoes.vezes === null || opcoes.vezes === undefined || opcoes.vezes === '')
+    ? null
+    : parseInt(opcoes.vezes, 10);
+  if (vezes !== null && (!Number.isFinite(vezes) || vezes < 2)) {
+    throw new Error('Número de repetições inválido (mínimo 2)');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // FOR UPDATE: sem isso, dois cliques no botão criariam duas regras para o
+    // mesmo lançamento (a segunda passaria pelo teste de recorrencia_id antes
+    // de a primeira gravar) e o mês seria contado em dobro.
+    const txRes = await client.query(
+      `SELECT id, tipo, valor::float, descricao, categoria,
+              TO_CHAR(data, 'YYYY-MM-DD') as data, recorrencia_id, cartao_id, conta_id
+       FROM transacoes
+       WHERE numero_usuario = $1 AND usuario_id = $2
+       FOR UPDATE`,
+      [numeroUsuario, uid]
+    );
+    const tx = txRes.rows[0];
+    if (!tx) {
+      await client.query('ROLLBACK');
+      return { erro: 'nao_encontrada' };
+    }
+    if (tx.recorrencia_id) {
+      await client.query('ROLLBACK');
+      return { erro: 'ja_recorrente', recorrencia_id: tx.recorrencia_id };
+    }
+
+    const base = new Date(tx.data + 'T12:00:00');
+    const diaMes    = frequencia === 'mensal'  ? base.getDate() : null;
+    const diaSemana = frequencia === 'semanal' ? base.getDay()  : null;
+
+    // "X vezes" conta o próprio lançamento como a primeira ocorrência — mesma
+    // semântica do modal de nova transação (nova-tx-rec-duracao-bar).
+    // O overflow do setMonth (31/03 + 1 mês → 01/05) só empurra data_fim para
+    // frente, nunca para trás, então não corta ocorrência prevista.
+    let dataFim = null;
+    if (vezes !== null) {
+      const fim = new Date(base);
+      if (frequencia === 'mensal') fim.setMonth(fim.getMonth() + (vezes - 1));
+      else fim.setDate(fim.getDate() + (vezes - 1) * 7);
+      dataFim = `${fim.getFullYear()}-${String(fim.getMonth() + 1).padStart(2, '0')}-${String(fim.getDate()).padStart(2, '0')}`;
+    }
+
+    const origem = normalizarOrigem(tx.cartao_id, tx.conta_id);
+    const recRes = await client.query(
+      `INSERT INTO recorrencias
+         (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [uid, tx.tipo, tx.valor, tx.descricao, tx.categoria || 'Outros', frequencia,
+       diaMes, diaSemana, tx.data, dataFim, origem.cartaoId, origem.contaId]
+    );
+    const recorrenciaId = recRes.rows[0].id;
+
+    await client.query(
+      `UPDATE transacoes SET recorrencia_id = $1 WHERE id = $2 AND usuario_id = $3`,
+      [recorrenciaId, tx.id, uid]
+    );
+
+    await client.query('COMMIT');
+    return {
+      recorrencia_id: recorrenciaId,
+      tipo:        tx.tipo,
+      valor:       tx.valor,
+      descricao:   tx.descricao,
+      categoria:   tx.categoria,
+      frequencia,
+      dia_mes:     diaMes,
+      dia_semana:  diaSemana,
+      data_inicio: tx.data,
+      data_fim:    dataFim,
+      cartao_id:   origem.cartaoId,
+      conta_id:    origem.contaId,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* conexão já perdida */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function buscarRecorrenciasPorDescricao(usuarioId, descricao) {
@@ -5061,6 +5175,7 @@ module.exports = {
   listarRecorrencias,
   calcularOcorrenciasNoPerodo,
   adicionarTransacaoComRecorrencia,
+  tornarTransacaoRecorrente,
   criarAssinatura,
   buscarAssinatura,
   buscarAssinaturasPendentes,

@@ -1169,10 +1169,45 @@
       <label style="color:var(--text-muted);font-size:13px">Conta</label>
       <select id="editar-tx-conta" class="input"></select>
     </div>
-    <div class="form-group" style="margin-bottom:24px">
+    <div class="form-group" style="margin-bottom:16px">
       <label style="color:var(--text-muted);font-size:13px">Data</label>
       <input type="date" id="editar-tx-data" class="input">
     </div>
+    <!-- Marcar um lançamento existente como fixo. Some quando a transação já
+         pertence a uma regra (aí aparece só o aviso abaixo). -->
+    <div id="editar-tx-rec-wrap" class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="editar-tx-recorrente" onchange="toggleEditarRecorrenciaFields()">
+        🔄 Marcar como recorrente
+      </label>
+      <div id="editar-tx-rec-fields" class="hidden" style="margin-top:12px">
+        <div class="form-group" style="margin-bottom:16px">
+          <label style="color:var(--text-muted);font-size:13px">Frequência</label>
+          <select id="editar-tx-rec-freq" class="input">
+            <option value="mensal">Mensal</option>
+            <option value="semanal">Semanal</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+          <label style="color:var(--text-muted);font-size:13px">Duração</label>
+          <div class="toggle-bar" id="editar-tx-rec-duracao-bar">
+            <button class="toggle-btn active" type="button" data-val="indeterminado" onclick="toggleEditarRecDuracao(this)">Por tempo indeterminado</button>
+            <button class="toggle-btn" type="button" data-val="vezes" onclick="toggleEditarRecDuracao(this)">Por X vezes</button>
+          </div>
+        </div>
+        <div id="editar-tx-rec-vezes-wrap" class="form-group hidden" style="margin-bottom:8px">
+          <label style="color:var(--text-muted);font-size:13px">Número de repetições</label>
+          <input type="number" id="editar-tx-rec-vezes" class="input" min="2" max="120" placeholder="Ex: 12">
+        </div>
+        <p class="empty-hint" style="text-align:left;padding:0">
+          Este lançamento vira a 1ª ocorrência. Os próximos entram como previsão —
+          nenhum lançamento futuro é criado agora.
+        </p>
+      </div>
+    </div>
+    <p id="editar-tx-rec-aviso" class="empty-hint hidden" style="text-align:left;padding:0 0 16px">
+      🔄 Este lançamento já faz parte de uma recorrência.
+    </p>
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="fecharModalEditar()">Cancelar</button>
       <button class="btn btn-primary" onclick="salvarEdicaoTx()">Salvar</button>

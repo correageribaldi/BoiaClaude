@@ -343,6 +343,29 @@ app.delete('/api/transactions/:id', autenticar, async (req, res) => {
   }
 });
 
+// Transforma um lançamento existente em recorrência (o modal de edição só
+// oferece isso para transação real, nunca para linha projetada).
+// A regra criada apenas PROJETA — ver db.tornarTransacaoRecorrente.
+app.post('/api/transactions/:id/recorrencia', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { frequencia, vezes } = req.body || {};
+    if (frequencia && !['mensal', 'semanal'].includes(frequencia)) {
+      return res.status(400).json({ erro: 'frequencia deve ser mensal ou semanal' });
+    }
+    const resultado = await db.tornarTransacaoRecorrente(req.usuarioId, id, { frequencia, vezes });
+    if (resultado.erro === 'nao_encontrada') return res.status(404).json({ erro: 'Transação não encontrada' });
+    if (resultado.erro === 'ja_recorrente') {
+      return res.status(409).json({ erro: 'Este lançamento já faz parte de uma recorrência', recorrencia_id: resultado.recorrencia_id });
+    }
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/transactions/:id/recorrencia:', err.message);
+    res.status(400).json({ erro: err.message });
+  }
+});
+
 app.delete('/api/recurrences/:id', autenticar, async (req, res) => {
   try {
     const id = parseInt(req.params.id);

@@ -841,7 +841,7 @@ function renderTabelaTransacoes(transacoes) {
       }</td>
       <td style="white-space:nowrap">
         ${!t.projetado && t.status === 'pendente' ? `<button class="action-btn" title="${isReceita ? 'Marcar como recebido' : 'Marcar como pago'}" onclick="pagarTransacao(${t.id})">✅</button>` : ''}
-        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data,conta_id:t.conta_id||null,tipo:t.tipo})})'>✏️</button>` : ''}
+        ${!t.projetado ? `<button class="action-btn" title="Editar" onclick='abrirModalEditar(${JSON.stringify({id:t.id,descricao:t.descricao,categoria:t.categoria||"",valor:t.valor,data:t.data,conta_id:t.conta_id||null,cartao_id:t.cartao_id||null,recorrencia_id:t.recorrencia_id||null,tipo:t.tipo})})'>✏️</button>` : ''}
         ${t.projetado
           ? `<button class="action-btn" title="Excluir" onclick="excluirProjetado(${t.recorrencia_id}, '${esc(t.descricao)}', '${t.data}')">🗑️</button>`
           : `<button class="action-btn" title="Excluir" onclick="excluirTransacao(${t.id})">🗑️</button>`
@@ -950,9 +950,45 @@ async function abrirModalEditar(tx) {
   } else {
     sel.selectedIndex = sel.options.length ? 0 : -1;
   }
+  // Compra no cartão não tem conta: a origem é exclusiva. Mostrar o select aqui
+  // fazia o salvar mandar conta_id junto do cartao_id já preenchido.
+  const ehCartao = tx.cartao_id != null;
+  document.getElementById('editar-tx-conta-wrap').classList.toggle('hidden', ehCartao);
   const contaSel = document.getElementById('editar-tx-conta');
   if (contaSel && tx.conta_id) contaSel.value = tx.conta_id;
+
+  // Bloco "marcar como recorrente": só faz sentido para lançamento que ainda
+  // não pertence a nenhuma regra. Se já pertence, vira aviso.
+  const jaRecorrente = tx.recorrencia_id != null;
+  document.getElementById('editar-tx-rec-wrap').classList.toggle('hidden', jaRecorrente);
+  document.getElementById('editar-tx-rec-aviso').classList.toggle('hidden', !jaRecorrente);
+  const recCheck = document.getElementById('editar-tx-recorrente');
+  if (recCheck) recCheck.checked = false;
+  document.getElementById('editar-tx-rec-fields').classList.add('hidden');
+  document.getElementById('editar-tx-rec-vezes-wrap').classList.add('hidden');
+  document.getElementById('editar-tx-rec-vezes').value = '';
+  _editarRecDuracao = 'indeterminado';
+  document.querySelectorAll('#editar-tx-rec-duracao-bar .toggle-btn')
+    .forEach(b => b.classList.toggle('active', b.dataset.val === 'indeterminado'));
+  // Mensal/semanal seguem a data do lançamento (dia do mês ou dia da semana),
+  // então nada a pré-selecionar além do padrão.
+  document.getElementById('editar-tx-rec-freq').value = 'mensal';
+
   document.getElementById('modal-editar-tx').classList.remove('hidden');
+}
+
+let _editarRecDuracao = 'indeterminado';
+
+function toggleEditarRecorrenciaFields() {
+  const checked = document.getElementById('editar-tx-recorrente').checked;
+  document.getElementById('editar-tx-rec-fields').classList.toggle('hidden', !checked);
+}
+
+function toggleEditarRecDuracao(btn) {
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _editarRecDuracao = btn.dataset.val;
+  document.getElementById('editar-tx-rec-vezes-wrap').classList.toggle('hidden', _editarRecDuracao !== 'vezes');
 }
 
 function fecharModalEditar() {
@@ -961,6 +997,7 @@ function fecharModalEditar() {
 
 async function salvarEdicaoTx() {
   const id = parseInt(document.getElementById('editar-tx-id').value);
+  const ehCartao = document.getElementById('editar-tx-conta-wrap').classList.contains('hidden');
   const conta_id = document.getElementById('editar-tx-conta').value;
   // Ordem importa: `categoria` é aplicada ANTES de `descricao` de propósito.
   // Editar a categoria grava o aprendizado por estabelecimento, e a chave sai
@@ -973,17 +1010,36 @@ async function salvarEdicaoTx() {
     descricao: document.getElementById('editar-tx-descricao').value.trim(),
     valor: parseFloat(document.getElementById('editar-tx-valor').value),
     data: document.getElementById('editar-tx-data').value,
-    conta_id: conta_id ? parseInt(conta_id) : null,
   };
+  // Compra no cartão não tem conta — não mandar o campo evita gravar as duas
+  // origens juntas (o backend também recusa, ver atualizarTransacao).
+  if (!ehCartao) campos.conta_id = conta_id ? parseInt(conta_id) : null;
   if (!campos.descricao) { toast('Descrição não pode ser vazia', 'error'); return; }
   if (!campos.valor || campos.valor <= 0) { toast('Valor inválido', 'error'); return; }
   if (!campos.data) { toast('Data inválida', 'error'); return; }
-  if (!campos.conta_id) { toast('Selecione uma conta', 'error'); return; }
+  if (!ehCartao && !campos.conta_id) { toast('Selecione uma conta', 'error'); return; }
+
+  const virarRecorrente = !document.getElementById('editar-tx-rec-wrap').classList.contains('hidden')
+    && document.getElementById('editar-tx-recorrente').checked;
+  let vezes = null;
+  if (virarRecorrente && _editarRecDuracao === 'vezes') {
+    vezes = parseInt(document.getElementById('editar-tx-rec-vezes').value);
+    if (!vezes || vezes < 2) { toast('Número de repetições inválido (mínimo 2)', 'error'); return; }
+  }
+
   try {
     for (const [campo, novo_valor] of Object.entries(campos)) {
       await api(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify({ campo, novo_valor }) });
     }
-    toast('✅ Transação atualizada!', 'success');
+    // Depois das edições, nunca antes: a regra herda valor/descrição/categoria
+    // lendo a transação do banco, e tem de pegar os valores já corrigidos.
+    if (virarRecorrente) {
+      await api(`/api/transactions/${id}/recorrencia`, {
+        method: 'POST',
+        body: JSON.stringify({ frequencia: document.getElementById('editar-tx-rec-freq').value, vezes }),
+      });
+    }
+    toast(virarRecorrente ? '🔄 Lançamento marcado como recorrente!' : '✅ Transação atualizada!', 'success');
     fecharModalEditar();
     carregarTransacoes();
     if (tabAtual === 'dashboard') carregarDashboard();
