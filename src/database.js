@@ -21,6 +21,85 @@ function dataHojeBR() {
   return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
 }
 
+// ─── Janelas de controle de limite (semana ISO e mês) ────────────────────────
+//
+// DEFINIÇÃO DE SEMANA: ISO 8601 — segunda a domingo, semana 1 é a que contém a
+// primeira quinta-feira do ano. Escolhida por ser previsível (não depende do
+// mês, não desliza) e por ser o que qualquer planilha entende. A alternativa
+// "semana que começa no dia X do mês" faria a última semana ter 2 a 3 dias, o
+// que distorce qualquer comparação de gasto semanal.
+//
+// Toda a aritmética abaixo é feita sobre 'YYYY-MM-DD' às 12:00 UTC: a data já
+// vem resolvida no fuso de São Paulo (dataHojeBR), e o meio-dia dá 12h de
+// folga para qualquer ajuste de horário de verão não empurrar o dia.
+const MS_POR_DIA = 24 * 60 * 60 * 1000;
+
+function dataISOParaUTC(dataISO) {
+  return new Date(`${dataISO}T12:00:00Z`);
+}
+
+// 0 = segunda ... 6 = domingo
+function diaDaSemanaISO(d) {
+  return (d.getUTCDay() + 6) % 7;
+}
+
+function inicioSemanaISO(dataISO) {
+  const d = dataISOParaUTC(dataISO);
+  d.setUTCDate(d.getUTCDate() - diaDaSemanaISO(d));
+  return d.toISOString().slice(0, 10);
+}
+
+function fimSemanaISO(dataISO) {
+  const d = dataISOParaUTC(dataISO);
+  d.setUTCDate(d.getUTCDate() - diaDaSemanaISO(d) + 6);
+  return d.toISOString().slice(0, 10);
+}
+
+// '2026-W32'. O ANO da chave é o ano ISO (o da quinta-feira da semana), que
+// pode divergir do ano do calendário na virada — 2025-12-29 é '2026-W01'. É
+// justamente o que garante que a semana da virada de ano seja UMA janela só, e
+// não duas metades.
+function chaveSemanaISO(dataISO) {
+  const d = dataISOParaUTC(dataISO);
+  d.setUTCDate(d.getUTCDate() - diaDaSemanaISO(d) + 3); // quinta-feira da semana
+  const anoISO = d.getUTCFullYear();
+
+  const quintaDaSemana1 = new Date(Date.UTC(anoISO, 0, 4, 12, 0, 0));
+  quintaDaSemana1.setUTCDate(quintaDaSemana1.getUTCDate() - diaDaSemanaISO(quintaDaSemana1) + 3);
+
+  const semana = 1 + Math.round((d.getTime() - quintaDaSemana1.getTime()) / (7 * MS_POR_DIA));
+  return `${anoISO}-W${String(semana).padStart(2, '0')}`;
+}
+
+function inicioMes(dataISO) {
+  return `${dataISO.slice(0, 7)}-01`;
+}
+
+function fimMes(dataISO) {
+  const [ano, mes] = dataISO.split('-').map(Number);
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  return `${dataISO.slice(0, 7)}-${String(ultimoDia).padStart(2, '0')}`;
+}
+
+// Janelas vigentes para uma data de referência (default: hoje em São Paulo).
+function janelasDeControle(dataISO = null) {
+  const hoje = normalizarDataISO(dataISO) || dataHojeBR();
+  return {
+    hoje,
+    semana: { inicio: inicioSemanaISO(hoje), fim: fimSemanaISO(hoje), chave: chaveSemanaISO(hoje) },
+    mes: { inicio: inicioMes(hoje), fim: fimMes(hoje), chave: hoje.slice(0, 7) },
+  };
+}
+
+// Faixas de alerta — os mesmos degraus usados no WhatsApp e no painel.
+// 0 = tranquilo (nada a avisar de forma proativa).
+function faixaDeAlerta(percentual) {
+  if (percentual >= 100) return 100;
+  if (percentual >= 80) return 80;
+  if (percentual >= 60) return 60;
+  return 0;
+}
+
 function normalizarDataISO(valor) {
   if (!valor || typeof valor !== 'string') return null;
   const v = valor.trim();
@@ -276,6 +355,47 @@ async function initTables() {
   // Migração: coluna parent para hierarquia principal/subcategoria
   await pool.query(`
     ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS parent TEXT;
+  `);
+
+  // Migração: teto SEMANAL por categoria.
+  //
+  // valor_limite continua sendo o teto MENSAL — não renomeado de propósito: é o
+  // que verificarLimite/verificarLimiteSub, o relatório de orçamento
+  // (handlers.js) e a tool definir_limite já assumem hoje. Renomear obrigaria a
+  // tocar todos esses call sites de uma vez, sem ganho.
+  //
+  // Semanal e mensal são controles INDEPENDENTES, não duas visões do mesmo
+  // número: o mês tem ~4,3 semanas, então 4× o teto semanal nunca vai fechar
+  // exatamente com o teto mensal. Não existe validação cruzada entre os dois de
+  // propósito — quem quiser só um dos controles deixa o outro em 0/NULL.
+  //
+  // NULL ou 0 = sem teto semanal (mesma convenção já usada por valor_limite).
+  await pool.query(`
+    ALTER TABLE limites_categoria ADD COLUMN IF NOT EXISTS valor_limite_semanal NUMERIC(12,2);
+  `);
+
+  // Estado do último aviso de estouro, para não repetir o mesmo alerta a cada
+  // sincronização da Pluggy (que roda por webhook, várias vezes ao dia).
+  //
+  // periodo_chave carrega a IDENTIDADE da janela ('2026-W32' para semana ISO,
+  // '2026-08' para mês). Virar a semana ou o mês gera uma chave nova, sem linha
+  // correspondente, e o alerta volta a poder disparar do zero — o reset é
+  // consequência do modelo de dados, não de uma rotina de limpeza que poderia
+  // falhar. As linhas velhas ficam como histórico (custo desprezível).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS limites_alertas (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      categoria TEXT NOT NULL,
+      janela TEXT NOT NULL CHECK(janela IN ('semana', 'mes')),
+      periodo_chave TEXT NOT NULL,
+      faixa INTEGER NOT NULL DEFAULT 0,
+      atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(usuario_id, categoria, janela, periodo_chave)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_limites_alertas_usuario
+      ON limites_alertas(usuario_id, periodo_chave);
   `);
 
   // Tabela de categorias principais (por usuário) para distribuição de orçamento
@@ -2027,6 +2147,7 @@ async function limparDadosUsuario(usuarioId) {
   await pool.query('DELETE FROM lembretes_gerais WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM lembretes_recorrentes WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM limites_categoria WHERE usuario_id = $1', [uid]);
+  await pool.query('DELETE FROM limites_alertas WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM caixinhas WHERE usuario_id = $1', [uid]);
   await pool.query('DELETE FROM contatos_compartilhados WHERE usuario_principal_id = $1 OR contato_id = $1', [uid]);
   await pool.query('DELETE FROM transferencias WHERE usuario_id = $1', [uid]);
@@ -2068,7 +2189,9 @@ async function listarLimitesComSub(usuarioId) {
 
   // Buscar limites existentes
   const result = await pool.query(
-    `SELECT categoria, valor_limite::float, parent
+    `SELECT categoria, valor_limite::float,
+            COALESCE(valor_limite_semanal, 0)::float AS valor_limite_semanal,
+            parent
      FROM limites_categoria
      WHERE usuario_id = $1 AND ativo = TRUE
      ORDER BY parent NULLS FIRST, categoria`,
@@ -2096,7 +2219,11 @@ async function listarLimitesComSub(usuarioId) {
       }
     } else {
       if (!subMap[r.parent]) subMap[r.parent] = [];
-      subMap[r.parent].push({ categoria: r.categoria, valor_limite: r.valor_limite });
+      subMap[r.parent].push({
+        categoria: r.categoria,
+        valor_limite: r.valor_limite,
+        valor_limite_semanal: r.valor_limite_semanal,
+      });
     }
   }
 
@@ -2108,15 +2235,24 @@ async function listarLimitesComSub(usuarioId) {
 }
 
 // Salvar limites em batch (para o painel)
+//
+// valor_limite_semanal é OPCIONAL no payload: quando a chave não vem, o
+// COALESCE preserva o valor já gravado. Sem isso, a tela de rateio 50/30/20
+// (que só manda valor_limite) apagaria silenciosamente todos os tetos semanais
+// a cada "Salvar". Para REMOVER um teto semanal, manda-se 0 explicitamente.
 async function salvarLimitesBatch(usuarioId, limites) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   for (const l of limites) {
+    const semanal = l.valor_limite_semanal == null ? null : Number(l.valor_limite_semanal);
     await pool.query(
-      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO limites_categoria (usuario_id, categoria, valor_limite, parent, valor_limite_semanal)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (usuario_id, categoria)
-       DO UPDATE SET valor_limite = $3, ativo = TRUE, parent = $4`,
-      [uid, l.categoria, l.valor_limite, l.parent || null]
+       DO UPDATE SET valor_limite = $3,
+                     ativo = TRUE,
+                     parent = $4,
+                     valor_limite_semanal = COALESCE($5, limites_categoria.valor_limite_semanal)`,
+      [uid, l.categoria, l.valor_limite, l.parent || null, semanal]
     );
   }
 }
@@ -2287,47 +2423,159 @@ async function buscarLembretesRecorrentesPorMes(usuarioId, ano, mes) {
   return ocorrencias;
 }
 
-// Verificar limite de uma subcategoria individual (parent != NULL)
-async function verificarLimiteSub(usuarioId, categoriaSub) {
+// ─── Consumo de limite por janela (semana ISO + mês) ─────────────────────────
+//
+// DECISÃO — status pendente CONTA no consumo. A soma inclui 'pago' e
+// 'pendente' porque as duas coisas já são compromisso assumido: despesa
+// lançada como "a pagar" no WhatsApp e transação PENDING vinda da Pluggy
+// (mapearStatusTransacaoPluggy) são gasto que já aconteceu, só não liquidou.
+// Ignorá-las faria o teto avisar tarde demais — exatamente o oposto do que o
+// controle serve. Preserva também o comportamento anterior desta função, que
+// já somava tudo.
+//
+// DECISÃO — transferência entre contas NÃO entra: mora na tabela
+// transferencias, não em transacoes, então o filtro tipo='despesa' já a exclui
+// por construção. (Ressalva conhecida: transação de transferência vinda da
+// Pluggy é gravada em transacoes como despesa/receita genérica — cai numa
+// categoria sem teto e por isso não dispara alerta, mas contaminaria o total
+// se o usuário criasse um teto para essa categoria genérica.)
+function montarJanela(limite, gastos) {
+  if (!limite || limite <= 0) return null;
+  const percentual = Math.round((gastos / limite) * 100);
+  return {
+    limite,
+    gastos,
+    restante: limite - gastos,
+    percentual,
+    faixa: faixaDeAlerta(percentual),
+  };
+}
+
+// Consumo de uma categoria nas DUAS janelas. Retorna null se a categoria não
+// tem linha ativa em limites_categoria; retorna semana/mes null individualmente
+// quando aquele teto específico não está definido (0/NULL).
+// dataRef existe para teste (virada de semana/mês) — em produção fica default.
+async function verificarLimitesCategoria(usuarioId, categoria, opcoes = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const agora = new Date();
-  const ano = agora.getFullYear();
-  const mes = agora.getMonth() + 1;
-  const ultimoDia = new Date(ano, mes, 0).getDate();
-  const mesStr = String(mes).padStart(2, '0');
-  const inicioMes = `${ano}-${mesStr}-01`;
-  const fimMes = `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`;
+  const janelas = janelasDeControle(opcoes.dataRef || null);
+  const apenasSub = opcoes.apenasSub !== false; // default: só subcategorias
 
   const limiteResult = await pool.query(
-    `SELECT valor_limite::float, parent FROM limites_categoria
-     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE AND parent IS NOT NULL`,
-    [uid, categoriaSub]
+    `SELECT valor_limite::float AS mensal,
+            COALESCE(valor_limite_semanal, 0)::float AS semanal,
+            parent
+     FROM limites_categoria
+     WHERE usuario_id = $1 AND categoria = $2 AND ativo = TRUE`,
+    [uid, categoria]
   );
   if (limiteResult.rows.length === 0) return null;
 
-  const limite = limiteResult.rows[0].valor_limite;
-  const gastosResult = await pool.query(
-    `SELECT COALESCE(SUM(valor), 0)::float as total
-     FROM transacoes
-     WHERE usuario_id = $1 AND tipo = 'despesa'
-       AND data >= $2 AND data <= $3
-       AND categoria = $4`,
-    [uid, inicioMes, fimMes, categoriaSub]
-  );
-  const gastos = gastosResult.rows[0].total;
-  const restante = limite - gastos;
-  const percentual = limite > 0 ? (gastos / limite) * 100 : 0;
+  const { mensal, semanal, parent } = limiteResult.rows[0];
+  if (apenasSub && !parent) return null;
+  if ((!mensal || mensal <= 0) && (!semanal || semanal <= 0)) return null;
 
+  const gastosResult = await pool.query(
+    `SELECT
+       COALESCE(SUM(valor) FILTER (WHERE data >= $3 AND data <= $4), 0)::float AS gastos_semana,
+       COALESCE(SUM(valor) FILTER (WHERE data >= $5 AND data <= $6), 0)::float AS gastos_mes
+     FROM transacoes
+     WHERE usuario_id = $1 AND tipo = 'despesa' AND categoria = $2
+       AND data >= LEAST($3::date, $5::date)
+       AND data <= GREATEST($4::date, $6::date)`,
+    [uid, categoria, janelas.semana.inicio, janelas.semana.fim, janelas.mes.inicio, janelas.mes.fim]
+  );
+  const { gastos_semana: gastosSemana, gastos_mes: gastosMes } = gastosResult.rows[0];
+
+  const semana = montarJanela(semanal, gastosSemana);
+  const mes = montarJanela(mensal, gastosMes);
+  if (semana) Object.assign(semana, janelas.semana);
+  if (mes) Object.assign(mes, janelas.mes);
+
+  return { categoria, parent, semana, mes };
+}
+
+// Consumo de TODAS as categorias com teto definido, em uma query só (painel).
+// N+1 aqui seria visível: o usuário pode ter dezenas de subcategorias.
+async function listarConsumoLimites(usuarioId, opcoes = {}) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const janelas = janelasDeControle(opcoes.dataRef || null);
+
+  const result = await pool.query(
+    `SELECT lc.categoria,
+            lc.parent,
+            lc.valor_limite::float AS mensal,
+            COALESCE(lc.valor_limite_semanal, 0)::float AS semanal,
+            COALESCE(SUM(t.valor) FILTER (WHERE t.data >= $2 AND t.data <= $3), 0)::float AS gastos_semana,
+            COALESCE(SUM(t.valor) FILTER (WHERE t.data >= $4 AND t.data <= $5), 0)::float AS gastos_mes
+     FROM limites_categoria lc
+     LEFT JOIN transacoes t
+       ON t.usuario_id = lc.usuario_id
+      AND t.tipo = 'despesa'
+      AND t.categoria = lc.categoria
+      AND t.data >= LEAST($2::date, $4::date)
+      AND t.data <= GREATEST($3::date, $5::date)
+     WHERE lc.usuario_id = $1
+       AND lc.ativo = TRUE
+       AND lc.parent IS NOT NULL
+       AND (lc.valor_limite > 0 OR COALESCE(lc.valor_limite_semanal, 0) > 0)
+     GROUP BY lc.categoria, lc.parent, lc.valor_limite, lc.valor_limite_semanal
+     ORDER BY lc.parent, lc.categoria`,
+    [uid, janelas.semana.inicio, janelas.semana.fim, janelas.mes.inicio, janelas.mes.fim]
+  );
+
+  return result.rows.map((r) => {
+    const semana = montarJanela(r.semanal, r.gastos_semana);
+    const mes = montarJanela(r.mensal, r.gastos_mes);
+    if (semana) Object.assign(semana, janelas.semana);
+    if (mes) Object.assign(mes, janelas.mes);
+    return { categoria: r.categoria, parent: r.parent, semana, mes };
+  });
+}
+
+// Marca a faixa avisada para (usuário, categoria, janela, período) e responde
+// se ela SUBIU — só nesse caso vale mandar aviso proativo.
+//
+// A decisão é do banco, não da aplicação: o UPDATE só acontece com
+// "WHERE faixa < EXCLUDED.faixa", então dois syncs simultâneos do mesmo Item
+// (webhook + botão do painel) não conseguem avisar duas vezes a mesma faixa.
+// rowCount = 0 significa "já estava nesse nível ou acima" → cala a boca.
+async function registrarFaixaAlertada(usuarioId, categoria, janela, periodoChave, faixa) {
+  if (!faixa || faixa <= 0) return false;
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const result = await pool.query(
+    `INSERT INTO limites_alertas (usuario_id, categoria, janela, periodo_chave, faixa)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (usuario_id, categoria, janela, periodo_chave)
+     DO UPDATE SET faixa = EXCLUDED.faixa, atualizado_em = NOW()
+     WHERE limites_alertas.faixa < EXCLUDED.faixa
+     RETURNING id`,
+    [uid, categoria, janela, periodoChave, faixa]
+  );
+  return result.rowCount > 0;
+}
+
+// Verificar limite de uma subcategoria individual (parent != NULL).
+// Mantida com a MESMA assinatura e formato de retorno de antes (call sites em
+// handlers.js dependem de limiteEfetivo/proporcional/diasMes), mas agora
+// derivada de verificarLimitesCategoria para não existirem duas contas de mês
+// diferentes no projeto. Efeito colateral desejado: o mês passa a ser o de São
+// Paulo, e não mais o do relógio do servidor (que roda em UTC — a virada de mês
+// acontecia 3h cedo demais).
+async function verificarLimiteSub(usuarioId, categoriaSub, opcoes = {}) {
+  const info = await verificarLimitesCategoria(usuarioId, categoriaSub, opcoes);
+  if (!info || !info.mes) return null;
+
+  const diasMes = Number(info.mes.fim.slice(8, 10));
   return {
     categoria: categoriaSub,
-    limite,
-    limiteEfetivo: limite,
-    gastos,
-    restante,
-    percentual: Math.round(percentual),
+    limite: info.mes.limite,
+    limiteEfetivo: info.mes.limite,
+    gastos: info.mes.gastos,
+    restante: info.mes.restante,
+    percentual: info.mes.percentual,
     proporcional: false,
-    diasMes: ultimoDia,
-    diasUsuario: ultimoDia,
+    diasMes,
+    diasUsuario: diasMes,
   };
 }
 
@@ -4755,6 +5003,14 @@ module.exports = {
   salvarLimitesBatch,
   buscarSalarioUsuario,
   verificarLimiteSub,
+  verificarLimitesCategoria,
+  listarConsumoLimites,
+  registrarFaixaAlertada,
+  janelasDeControle,
+  inicioSemanaISO,
+  fimSemanaISO,
+  chaveSemanaISO,
+  faixaDeAlerta,
   listarCategoriasPrincipais,
   inicializarCategoriasPrincipais,
   criarCategoriaPrincipal,
