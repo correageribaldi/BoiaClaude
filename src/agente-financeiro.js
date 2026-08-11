@@ -450,11 +450,11 @@ const TOOLS = [
       },
     },
   },
-  // ── Caixinhas ──
+  // ── Reservas (caixinhas manuais) ──
   {
     type: 'function', function: {
       name: 'criar_caixinha',
-      description: 'Criar caixinha/meta de economia',
+      description: 'Criar reserva/caixinha (meta de economia manual do usuário)',
       parameters: {
         type: 'object',
         properties: {
@@ -471,7 +471,22 @@ const TOOLS = [
   {
     type: 'function', function: {
       name: 'listar_caixinhas',
-      description: 'Listar caixinhas/investimentos',
+      description: 'Listar as RESERVAS do usuário (caixinhas manuais, com meta de economia). NÃO use para investimentos aplicados no banco — para isso existe listar_investimentos.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  // ── Investimentos (posições reais sincronizadas do banco via Open Finance) ──
+  {
+    type: 'function', function: {
+      name: 'listar_investimentos',
+      description: 'Consultar os investimentos do usuário aplicados no banco (CDB, fundos, renda fixa) — total investido, rendimento e composição por emissor. Use para "quanto tenho investido", "meus investimentos", "quanto rendeu", "minha carteira".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function', function: {
+      name: 'patrimonio',
+      description: 'Patrimônio consolidado e itemizado: saldo em contas + reservas + investimentos - fatura do cartão. Use para "meu patrimônio", "quanto eu tenho no total".',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -902,7 +917,7 @@ async function executeTool(usuarioId, toolName, args) {
       };
     }
 
-    // Caixinhas
+    // Reservas (caixinhas manuais)
     case 'criar_caixinha': {
       await db.criarCaixinha(usuarioId, args.nome, args.saldo || 0, args.meta || null, args.tipo || 'economia', args.rendimento_mensal || null);
       return { ok: true, msg: `Caixinha "${args.nome}" criada${args.meta ? ` com meta de ${moeda(args.meta)}` : ''}.` };
@@ -910,6 +925,18 @@ async function executeTool(usuarioId, toolName, args) {
     case 'listar_caixinhas': {
       const caixinhas = await db.listarCaixinhas(usuarioId);
       return { ok: true, data: caixinhas };
+    }
+    // Reusa os handlers do WhatsApp em vez de reformatar aqui — a agregação por
+    // emissor e a itemização do patrimônio existem num lugar só.
+    case 'listar_investimentos': {
+      const handlers = getHandlers();
+      const msg = await handlers.handleListarInvestimentos(usuarioId);
+      return { ok: true, msg };
+    }
+    case 'patrimonio': {
+      const handlers = getHandlers();
+      const msg = await handlers.handlePatrimonio(usuarioId);
+      return { ok: true, msg };
     }
     case 'depositar_caixinha': {
       const result = await db.adicionarSaldoCaixinha(args.caixinha_id, args.valor);

@@ -2073,7 +2073,58 @@ async function calcularSaldos(usuarioId) {
     receitasPendentes,
     despesasPendentes,
     totalCaixinhas,
-    patrimonio: saldoAtualComContas + totalCaixinhas,
+  };
+}
+
+// Patrimônio consolidado, DELIBERADAMENTE fora de calcularSaldos.
+//
+// Duas razões para ser função separada, e não mais um campo do retorno acima:
+//
+//  1. calcularSaldos responde "quanto tenho em conta". Patrimônio responde
+//     "quanto eu valho". Misturar as duas perguntas foi o que fez o campo
+//     `patrimonio` antigo (saldo + caixinhas) circular sem descontar a dívida
+//     do cartão — superestimava o patrimônio de quem tinha fatura aberta.
+//  2. mantém calcularSaldos sem NENHUMA referência a `investimentos`, que é a
+//     garantia testada de que dinheiro aplicado não infla o saldo em conta.
+//
+// Devolve sempre os componentes, nunca só o total: quem exibe é obrigado a
+// mostrar a composição. Reserva manual e investimento sincronizado podem ser o
+// mesmo dinheiro (caixinha de banco é lastreada em CDB, e não há chave para
+// deduplicar) — itemizar deixa a sobreposição visível para o usuário julgar,
+// em vez de escondê-la dentro de um número só.
+// saldosPrecomputados evita recalcular calcularSaldos quando quem chama já o
+// tem em mãos (o fluxo de "saldo" no WhatsApp exibe os dois juntos).
+async function calcularPatrimonio(usuarioId, saldosPrecomputados = null) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const saldos = saldosPrecomputados || await module.exports.calcularSaldos(uid);
+
+  const invRes = await pool.query(
+    `SELECT COALESCE(SUM(saldo), 0)::float as total
+     FROM investimentos WHERE usuario_id = $1 AND ativo = TRUE`,
+    [uid]
+  );
+  const investimentos = invRes.rows[0].total;
+
+  // Dívida de cartão vem de obterUsoCartao — único ponto que decide Pluggy
+  // (valor real da API) vs manual (ciclo de fatura). Recriar esse cálculo aqui
+  // reintroduziria o bug que levou à consolidação daquela função.
+  const cartoes = await module.exports.listarCartoes(uid);
+  let faturaCartao = 0;
+  for (const cartao of cartoes) {
+    const uso = await module.exports.obterUsoCartao(cartao);
+    if (typeof uso?.valorUsado === 'number') faturaCartao += uso.valorUsado;
+  }
+
+  const saldoContas = saldos.saldoAtual;
+  const reservas = saldos.totalCaixinhas;
+
+  return {
+    saldoContas,
+    reservas,
+    investimentos,
+    faturaCartao,
+    total: saldoContas + reservas + investimentos - faturaCartao,
   };
 }
 
@@ -6070,6 +6121,7 @@ module.exports = {
   removerTransacoesPluggyPorIds,
   calibrarSaldoInicialConta,
   atualizarCartaoPluggyDados,
+  calcularPatrimonio,
   upsertInvestimentoPluggy,
   desativarInvestimentosAusentes,
   listarInvestimentos,

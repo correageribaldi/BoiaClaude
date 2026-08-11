@@ -177,8 +177,14 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 15. AGENDA / ORGANIZAR O DIA (o que tenho pra hoje, me ajuda a organizar meu dia, o que tenho pra amanhã, o que tenho pra semana, o que tenho pro mês, o que tenho dia 20, como tá minha agenda, meus compromissos, liste meus compromissos, o que tenho agendado pra semana, minha programação):
 {"acao": "agenda", "periodo": "hoje|amanha|semana|proxima_semana|mes|YYYY-MM-DD"}
 
-16. CAIXINHAS / INVESTIMENTOS (minhas caixinhas, meus investimentos, ver investimentos, quanto tenho investido, minhas reservas, ver caixinhas):
+16. RESERVAS (minhas reservas, ver reservas, minhas caixinhas, ver caixinhas):
 {"acao": "caixinhas"}
+
+16-i. INVESTIMENTOS (meus investimentos, ver investimentos, quanto tenho investido, quanto rendeu, minhas aplicações, meus CDBs, minha carteira):
+{"acao": "investimentos"}
+
+16-ii. PATRIMÔNIO (meu patrimônio, patrimônio total, quanto eu tenho no total, quanto eu valho):
+{"acao": "patrimonio"}
 
 16. MEU PLANO / ASSINATURA (meu plano, minha assinatura, ver meu plano, como está minha assinatura, quando vence meu plano, quanto tempo tenho, status da assinatura, detalhes do plano, quero ver meu plano):
 {"acao": "meu_plano"}
@@ -192,7 +198,7 @@ ATENÇÃO: Use "busca_local" quando o usuário usar palavras como: perto, próxi
 16b2. IMPORTAR FATURA DE CARTÃO (importar fatura, subir fatura do cartão, importar csv do cartão, importar fatura do nubank, importar fatura do itaú, importar fatura do bradesco, quero importar minha fatura, como importo minha fatura):
 {"acao": "importar_fatura"}
 
-16c. NOVA CAIXINHA / INVESTIMENTO (quero cadastrar uma caixinha, nova caixinha, adicionar investimento, criar caixinha, cadastrar reserva, novo investimento, quero registrar um investimento, tenho uma poupança pra cadastrar):
+16c. NOVA RESERVA (quero cadastrar uma reserva, nova reserva, cadastrar reserva, nova caixinha, criar caixinha, tenho uma poupança pra cadastrar):
 {"acao": "nova_caixinha"}
 
 16d. NOVA CONTA (criar conta, cadastrar conta, adicionar conta, nova conta corrente/poupança/carteira):

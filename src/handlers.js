@@ -2155,9 +2155,25 @@ async function handleMessage(usuarioId, texto, enviarAck) {
     return `✅ Cupom aplicado com sucesso!`;
   }
 
-  // Comando: caixinhas / investimentos
-  if (lower === 'caixinhas' || lower === 'investimentos' || lower === 'minhas caixinhas' || lower === 'meus investimentos') {
+  // Comando: reservas (caixinhas manuais do usuário). "caixinha"/"caixinhas"
+  // seguem aceitos como sinônimo — só o rótulo da resposta mudou, o vocabulário
+  // de quem já usa o produto não pode quebrar.
+  if (lower === 'reservas' || lower === 'minhas reservas'
+      || lower === 'caixinhas' || lower === 'minhas caixinhas') {
     return await handleListarCaixinhas(usuarioId);
+  }
+
+  // Comando: investimentos (posições reais sincronizadas do banco). Antes caía
+  // em handleListarCaixinhas e respondia R$ 0 para quem tinha aplicação no banco.
+  if (lower === 'investimentos' || lower === 'meus investimentos'
+      || lower === 'quanto tenho investido' || lower === 'quanto rendeu') {
+    return await handleListarInvestimentos(usuarioId);
+  }
+
+  // Comando: patrimônio (saldo + reservas + investimentos - fatura)
+  if (lower === 'patrimonio' || lower === 'patrimônio'
+      || lower === 'meu patrimonio' || lower === 'meu patrimônio') {
+    return await handlePatrimonio(usuarioId);
   }
 
   // Comando: agenda
@@ -2276,7 +2292,8 @@ async function handleMessage(usuarioId, texto, enviarAck) {
   // Comando: saldo
   if (lower === 'saldo') {
     const saldos = await db.calcularSaldos(usuarioId);
-    return fmt.formatarSaldos(saldos);
+    const patrimonio = await db.calcularPatrimonio(usuarioId, saldos);
+    return fmt.formatarSaldos(saldos, patrimonio);
   }
 
   // Comando: criar conta <nome> — bypass da IA (determinístico, mesmo padrão de "vincular contato")
@@ -3572,9 +3589,19 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     return await pagamento.consultarPlano(usuarioId);
   }
 
-  // Listar caixinhas de investimento
+  // Listar reservas (caixinhas manuais)
   if (resultado.acao === 'caixinhas') {
     return await handleListarCaixinhas(usuarioId);
+  }
+
+  // Listar investimentos sincronizados do banco (conceito distinto de reservas)
+  if (resultado.acao === 'investimentos') {
+    return await handleListarInvestimentos(usuarioId);
+  }
+
+  // Patrimônio consolidado e itemizado
+  if (resultado.acao === 'patrimonio') {
+    return await handlePatrimonio(usuarioId);
   }
 
   // Depósito em caixinha existente
@@ -3732,7 +3759,8 @@ async function processarResultadoIA(usuarioId, resultado, fallbackMsg, textoOrig
     // Executar diretamente comandos de saldo/pendentes/resumo/lista
     if (resultado.dica === 'saldo') {
       const saldos = await db.calcularSaldos(usuarioId);
-      return fmt.formatarSaldos(saldos);
+      const patrimonio = await db.calcularPatrimonio(usuarioId, saldos);
+      return fmt.formatarSaldos(saldos, patrimonio);
     }
     if (resultado.dica === 'pendentes') {
       const pendentes = await db.listarPendentes(usuarioId);
@@ -4722,13 +4750,17 @@ async function handleLembreteRecorrente(usuarioId, resultado) {
   return msg;
 }
 
+// Reservas = caixinhas manuais, com meta e rendimento informados pelo usuário.
+// Conceito distinto de Investimentos (ativo real sincronizado do banco, ver
+// handleListarInvestimentos abaixo). O termo "caixinha" continua aceito como
+// sinônimo nos comandos para não quebrar quem já usa — só o rótulo mudou.
 async function handleListarCaixinhas(usuarioId) {
   const caixinhas = await db.listarCaixinhas(usuarioId);
   if (caixinhas.length === 0) {
-    return `🏦 Você ainda não tem caixinhas cadastradas.\n\n_Para criar, use "Finanças em Dia" ou diga "quero organizar minhas finanças"._`;
+    return `🏦 Você ainda não tem reservas cadastradas.\n\n_Para criar, use "Finanças em Dia" ou diga "quero organizar minhas finanças"._`;
   }
   const total = caixinhas.reduce((s, c) => s + c.saldo, 0);
-  let msg = `🏦 *Suas Caixinhas de Investimento:*\n\n`;
+  let msg = `🏦 *Suas Reservas:*\n\n`;
   for (const c of caixinhas) {
     msg += `💰 *${c.nome}*\n   Saldo: ${fmt.formatarMoeda(c.saldo)}`;
     if (c.meta) msg += ` | Meta: ${fmt.formatarMoeda(c.meta)}`;
@@ -4736,8 +4768,21 @@ async function handleListarCaixinhas(usuarioId) {
     if (c.rendimento_mensal) msg += ` | Rendimento: ${c.rendimento_mensal}%/mês`;
     msg += '\n\n';
   }
-  msg += `━━━━━━━━━━━━━━━\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
+  msg += `━━━━━━━━━━━━━━━\n💼 *Total reservado: ${fmt.formatarMoeda(total)}*`;
   return msg;
+}
+
+// Investimentos = posições reais trazidas do banco pela Pluggy (emissor, taxa,
+// vencimento). Antes desta feature, "quanto tenho investido?" caía em
+// handleListarCaixinhas e respondia R$ 0 para quem tinha milhares aplicados.
+async function handleListarInvestimentos(usuarioId) {
+  const resumo = await db.resumoInvestimentos(usuarioId);
+  return fmt.formatarInvestimentos(resumo);
+}
+
+async function handlePatrimonio(usuarioId) {
+  const patrimonio = await db.calcularPatrimonio(usuarioId);
+  return `💼 *Seu patrimônio*\n${fmt.formatarPatrimonio(patrimonio)}`;
 }
 
 async function handleUsoCartao(usuarioId, nomeCartao) {
@@ -9436,4 +9481,4 @@ function limparMapsExpirados() {
   }
 }
 
-module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleSaldoConta, handleTransferencia, resolverContaPorNome, garantirSubcategoriaVinculada, handleDefinirLimite, handleListarLimites, handleRemoverLimite, handleEditarLimitePendente, obterEditarLimitePendente };
+module.exports = { handleMessage, handleImageMessage, handleCSVImport, handleCSVFatura, obterImportarFaturaPendente, limparImportarFaturaPendente, handleLocationMessage, handleContatoCompartilhado, handleAnaliseFinanceiraCSV, obterAnaliseFinanceira, mensagemBoasVindas, mensagemConviteCompartilhado, registrarLembreteAtivo, setOnboardingState, mensagemApresentacao, mensagemPerguntaNome, limparMapsExpirados, handleNovaConta, handleListarContas, handleListarInvestimentos, handlePatrimonio, handleSaldoConta, handleTransferencia, resolverContaPorNome, garantirSubcategoriaVinculada, handleDefinirLimite, handleListarLimites, handleRemoverLimite, handleEditarLimitePendente, obterEditarLimitePendente };

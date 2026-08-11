@@ -126,7 +126,18 @@ function aplicarMocksPadraoDB(t) {
   // Saldos
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 0, saldoPrevisao: 0, receitasPagas: 0, despesasPagas: 0,
-    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 0, patrimonio: 0,
+    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 0,
+  }));
+
+  // Patrimônio e investimentos são conceitos separados do saldo (ver
+  // db.calcularPatrimonio). Zerados por padrão para que a mensagem de saldo
+  // continue sem o bloco de composição, que só aparece quando há reserva,
+  // investimento ou fatura aberta.
+  t.mock.method(db, 'calcularPatrimonio', async () => ({
+    saldoContas: 0, reservas: 0, investimentos: 0, faturaCartao: 0, total: 0,
+  }));
+  t.mock.method(db, 'resumoInvestimentos', async () => ({
+    total: 0, totalAplicado: 0, totalLucro: 0, quantidade: 0, porTipo: [], porEmissor: [],
   }));
 
   // Pendentes
@@ -635,19 +646,26 @@ test('Saldo: exibe receitas, despesas e saldo atual', async (t) => {
   assert.ok(resp.includes('1.500') || resp.includes('1500'), 'Deve mostrar despesas');
 });
 
-test('Saldo: exibe investimentos quando ha caixinhas', async (t) => {
+test('Saldo: exibe patrimonio itemizado quando ha reserva, investimento ou fatura', async (t) => {
   aplicarMocksPadraoDB(t);
   aplicarMocksPadraoPagamento(t);
   resetarMocksAI();
 
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 2000, saldoPrevisao: 2000, receitasPagas: 3000, despesasPagas: 1000,
-    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 5000, patrimonio: 7000,
+    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 5000,
+  }));
+  t.mock.method(db, 'calcularPatrimonio', async () => ({
+    saldoContas: 2000, reservas: 5000, investimentos: 3000, faturaCartao: 500, total: 9500,
   }));
 
   const uid = novoUsuario();
   const resp = await handleMessage(uid, 'saldo', null);
-  assertContem(resp, 'Investimentos', 'Patrimônio');
+
+  // Reserva manual e investimento sincronizado aparecem em linhas SEPARADAS.
+  // Caixinha de banco é lastreada em CDB, então podem ser o mesmo dinheiro —
+  // somá-los num número só esconderia a sobreposição do usuário.
+  assertContem(resp, 'Patrimônio', 'Reservas', 'Investimentos', 'Fatura do cartão');
 });
 
 test('Saldo: exibe pendencias quando existem', async (t) => {
@@ -1056,22 +1074,46 @@ test('Caixinhas: "caixinhas" com itens exibe lista e total', async (t) => {
 
   const uid = novoUsuario();
   const resp = await handleMessage(uid, 'caixinhas', null);
-  assertContem(resp, 'Emergência', 'Viagem', 'Total investido');
+  assertContem(resp, 'Emergência', 'Viagem', 'Total reservado');
   assert.ok(resp.includes('7.000') || resp.includes('7000'), 'Total deve ser 7000');
 });
 
-test('Caixinhas: "investimentos" redireciona para caixinhas', async (t) => {
+test('Investimentos: "investimentos" consulta as posicoes do banco, nao as reservas manuais', async (t) => {
+  aplicarMocksPadraoDB(t);
+  aplicarMocksPadraoPagamento(t);
+  resetarMocksAI();
+
+  // Regressão do bug que motivou o rename: antes, "investimentos" caía em
+  // handleListarCaixinhas e respondia com as reservas manuais — ou seja, R$ 0
+  // para quem tinha milhares aplicados no banco.
+  t.mock.method(db, 'listarCaixinhas', async () => [
+    { id: 1, nome: 'Poupanca Manual', saldo: 3000, meta: null, tipo: 'Tesouro', rendimento_mensal: null },
+  ]);
+  t.mock.method(db, 'resumoInvestimentos', async () => ({
+    total: 8000, totalAplicado: 7000, totalLucro: 1000, quantidade: 2,
+    porTipo: [{ tipo: 'FIXED_INCOME', total: 8000, quantidade: 2 }],
+    porEmissor: [{ emissor: 'Banco Exemplo', total: 8000, quantidade: 2 }],
+  }));
+
+  const uid = novoUsuario();
+  const resp = await handleMessage(uid, 'investimentos', null);
+
+  assertContem(resp, 'investimentos', 'Banco Exemplo');
+  assert.ok(!resp.includes('Poupanca Manual'), 'nao pode cair na lista de reservas manuais');
+});
+
+test('Reservas: "reservas" e "caixinhas" sao sinonimos (vocabulario antigo nao quebra)', async (t) => {
   aplicarMocksPadraoDB(t);
   aplicarMocksPadraoPagamento(t);
   resetarMocksAI();
 
   t.mock.method(db, 'listarCaixinhas', async () => [
-    { id: 1, nome: 'Reserva', saldo: 3000, meta: null, tipo: 'Tesouro', rendimento_mensal: null },
+    { id: 1, nome: 'Emergencia', saldo: 3000, meta: null, tipo: null, rendimento_mensal: null },
   ]);
 
   const uid = novoUsuario();
-  const resp = await handleMessage(uid, 'investimentos', null);
-  assertContem(resp, 'Reserva', 'Total investido');
+  assertContem(await handleMessage(uid, 'reservas', null), 'Emergencia', 'Total reservado');
+  assertContem(await handleMessage(uid, 'caixinhas', null), 'Emergencia', 'Total reservado');
 });
 
 test('Caixinhas: exibe meta quando definida', async (t) => {

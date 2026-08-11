@@ -162,17 +162,44 @@ function formatarPendentes(transacoes) {
   return msg;
 }
 
-function formatarSaldos(saldos) {
-  const { saldoAtual, saldoPrevisao, receitasPagas, despesasPagas, receitasPendentes, despesasPendentes, totalCaixinhas, patrimonio } = saldos;
+// patrimonio é opcional: quando vem (de db.calcularPatrimonio), o bloco é
+// exibido SEMPRE itemizado. "Investimentos" aqui significa ativo real
+// sincronizado do banco; reserva manual aparece na própria linha, porque as
+// duas podem ser o mesmo dinheiro e somá-las às cegas esconderia isso.
+// Patrimônio NUNCA sai como número nu — sempre com a composição visível.
+// Linhas de valor zero são omitidas para não poluir quem não usa o recurso,
+// mas o total é sempre a soma explícita do que está impresso acima dele.
+function formatarPatrimonio(p) {
+  const { saldoContas, reservas, investimentos, faturaCartao, total } = p;
+
+  let msg = `\n━━━━━━━━━━━━━━━\n\n💼 *Patrimônio:* ${formatarMoeda(total)}\n`;
+  msg += `   Saldo em contas: ${formatarMoeda(saldoContas)}\n`;
+  if (reservas > 0)     msg += `   Reservas: +${formatarMoeda(reservas)}\n`;
+  if (investimentos > 0) msg += `   Investimentos: +${formatarMoeda(investimentos)}\n`;
+  if (faturaCartao > 0)  msg += `   Fatura do cartão: -${formatarMoeda(faturaCartao)}\n`;
+
+  return msg;
+}
+
+function formatarSaldos(saldos, patrimonio = null) {
+  const { saldoAtual, saldoPrevisao, receitasPagas, despesasPagas, receitasPendentes, despesasPendentes, totalCaixinhas } = saldos;
 
   let msg = `💼 *Seus saldos:*\n\n`;
   msg += `${saldoAtual >= 0 ? '✅' : '🔴'} *Saldo Atual:* ${formatarMoeda(saldoAtual)}\n`;
   msg += `   Receitas recebidas: ${formatarMoeda(receitasPagas)}\n`;
   msg += `   Despesas pagas: ${formatarMoeda(despesasPagas)}\n`;
 
-  if (totalCaixinhas > 0) {
-    msg += `\n🏦 *Investimentos:* +${formatarMoeda(totalCaixinhas)}\n`;
-    msg += `💼 *Patrimônio Total:* ${formatarMoeda(patrimonio)}\n`;
+  // O bloco de patrimônio só aparece quando ele de fato diverge do saldo em
+  // conta — ou seja, quando existe reserva, investimento ou fatura aberta. Sem
+  // nenhum dos três, patrimônio e saldo são o mesmo número, e repeti-lo só
+  // polui a mensagem de quem ainda não usa esses recursos.
+  const patrimonioDivergeDoSaldo = patrimonio
+    && (patrimonio.reservas > 0 || patrimonio.investimentos > 0 || patrimonio.faturaCartao > 0);
+
+  if (patrimonioDivergeDoSaldo) {
+    msg += formatarPatrimonio(patrimonio);
+  } else if (totalCaixinhas > 0) {
+    msg += `\n🏦 *Reservas:* +${formatarMoeda(totalCaixinhas)}\n`;
   }
 
   msg += `\n━━━━━━━━━━━━━━━\n\n`;
@@ -187,6 +214,44 @@ function formatarSaldos(saldos) {
   return msg;
 }
 
+// Investimentos sincronizados do banco (ativo real: emissor, taxa, vencimento).
+// NÃO é a mesma coisa que Reservas, que são as caixinhas manuais do usuário.
+//
+// Agrupa por EMISSOR, não por tipo: uma carteira de renda fixa costuma ter
+// dezenas de posições que colapsam numa linha só se agrupadas por tipo
+// ("FIXED_INCOME"), enquanto emissor mostra concentração de risco de crédito,
+// que é a informação acionável. Listar posição a posição não cabe no WhatsApp.
+function formatarInvestimentos(resumo) {
+  const { total, totalAplicado, totalLucro, quantidade, porEmissor } = resumo;
+
+  if (!quantidade) {
+    return `📈 Não encontrei investimentos sincronizados.\n\n_Conecte seu banco em Configurações para trazer suas aplicações automaticamente._`;
+  }
+
+  let msg = `📈 *Seus investimentos:* ${formatarMoeda(total)}\n`;
+  msg += `_${quantidade} ${quantidade === 1 ? 'ativo' : 'ativos'}_\n`;
+
+  if (totalAplicado > 0) {
+    msg += `\n   Aplicado: ${formatarMoeda(totalAplicado)}\n`;
+    if (totalLucro !== 0) {
+      const pct = totalAplicado > 0 ? (totalLucro / totalAplicado) * 100 : 0;
+      msg += `   Rendimento: ${totalLucro >= 0 ? '+' : ''}${formatarMoeda(totalLucro)} (${pct.toFixed(1)}%)\n`;
+    }
+  }
+
+  if (porEmissor?.length) {
+    msg += `\n*Por emissor:*\n`;
+    for (const e of porEmissor.slice(0, 8)) {
+      msg += `• ${e.emissor} — ${formatarMoeda(e.total)} _(${e.quantidade})_\n`;
+    }
+    if (porEmissor.length > 8) {
+      msg += `_... e mais ${porEmissor.length - 8} ${porEmissor.length - 8 === 1 ? 'emissor' : 'emissores'}. Veja tudo no painel._\n`;
+    }
+  }
+
+  return msg;
+}
+
 module.exports = {
   formatarMoeda,
   formatarData,
@@ -195,5 +260,7 @@ module.exports = {
   formatarListaTransacoes,
   formatarPendentes,
   formatarSaldos,
+  formatarPatrimonio,
+  formatarInvestimentos,
   MESES,
 };
