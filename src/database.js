@@ -1067,6 +1067,56 @@ async function initTables() {
     CREATE INDEX IF NOT EXISTS idx_pluggy_contas_map_item ON pluggy_contas_map(pluggy_item_id);
   `);
 
+  // ─── Módulo Pluggy — posições de investimento (produto INVESTMENTS) ──────────
+  //
+  // ESTOQUE, não fluxo, e deliberadamente FORA de qualquer cálculo de saldo:
+  //
+  //  - NÃO entra em calcularSaldos nem em calcularSaldosPorConta. Dinheiro
+  //    aplicado não é saldo líquido em conta corrente; somar inflaria o saldo
+  //    (mesma classe de bug já corrigida em calcularSaldos, ver comentário lá).
+  //    Tabela própria justamente para que nenhuma query de saldo a alcance por
+  //    acidente — contas/transacoes continuam sendo a única fonte do saldo.
+  //  - NÃO se confunde com a categoria de orçamento "Investimentos", que é
+  //    FLUXO (quanto da renda o usuário decide aplicar por mês). Aqui é o
+  //    montante acumulado. Conceitos distintos, nunca somados.
+  //  - Não há risco de contagem dupla com `contas`: Account.type na Pluggy é
+  //    só BANK|CREDIT (investimento não é Account, vem de GET /investments),
+  //    então o `else` de conectarItem nunca cria uma conta espelho a partir de
+  //    uma posição de investimento.
+  //
+  // pluggy_item_id é obrigatório para o ciclo de vida: a desativação de ativos
+  // que sumiram da API é feita POR ITEM. Sem esse escopo, sincronizar o banco A
+  // desativaria os investimentos do banco B (usuário com mais de uma conexão).
+  //
+  // Ativo que some da API vira ativo = FALSE, nunca DELETE — resgate é
+  // histórico, não erro de sincronização.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS investimentos (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      pluggy_item_id INTEGER NOT NULL REFERENCES pluggy_items(id) ON DELETE CASCADE,
+      pluggy_investment_id TEXT NOT NULL UNIQUE,
+      nome TEXT NOT NULL,
+      tipo TEXT,
+      subtipo TEXT,
+      saldo NUMERIC(14,2) NOT NULL DEFAULT 0,
+      valor_aplicado NUMERIC(14,2),
+      lucro NUMERIC(14,2),
+      taxa NUMERIC(12,4),
+      tipo_taxa TEXT,
+      rentabilidade_12m NUMERIC(12,4),
+      vencimento DATE,
+      emissor TEXT,
+      instituicao TEXT,
+      status TEXT,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_investimentos_usuario ON investimentos(usuario_id);
+    CREATE INDEX IF NOT EXISTS idx_investimentos_item ON investimentos(pluggy_item_id);
+  `);
+
   // ─── Módulo Pluggy — Open Finance (Marco 3: webhook e sync de transações) ────
   // webhook_token: 1 por usuário (não por Item) -- precisa existir ANTES do
   // Item ser criado, para ir dentro de options.webhookUrl na geração do Connect
@@ -5629,6 +5679,140 @@ async function calibrarSaldoInicialConta(usuarioId, contaId, balanceReal) {
   return novoSaldoInicial;
 }
 
+// ─── Posições de investimento (produto INVESTMENTS da Pluggy) ────────────────
+//
+// Nenhuma função desta seção é chamada por calcularSaldos/calcularSaldosPorConta,
+// e isso é intencional — ver o comentário da tabela `investimentos` em initTables.
+
+// Upsert por pluggy_investment_id: o saldo de um ativo muda a cada sync, então a
+// mesma posição precisa ser ATUALIZADA, nunca reinserida. Sem a chave única, um
+// re-sync duplicaria as 78 posições e dobraria o total investido na tela.
+// Ressuscita (ativo = TRUE) uma posição que havia sumido e voltou.
+async function upsertInvestimentoPluggy(usuarioId, pluggyItemDbId, dados) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const {
+    pluggyInvestmentId, nome, tipo = null, subtipo = null, saldo = 0,
+    valorAplicado = null, lucro = null, taxa = null, tipoTaxa = null,
+    rentabilidade12m = null, vencimento = null, emissor = null,
+    instituicao = null, status = null,
+  } = dados;
+
+  const res = await pool.query(
+    `INSERT INTO investimentos
+       (usuario_id, pluggy_item_id, pluggy_investment_id, nome, tipo, subtipo, saldo,
+        valor_aplicado, lucro, taxa, tipo_taxa, rentabilidade_12m, vencimento,
+        emissor, instituicao, status, ativo, atualizado_em)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, TRUE, NOW())
+     ON CONFLICT (pluggy_investment_id) DO UPDATE SET
+       nome = EXCLUDED.nome,
+       tipo = EXCLUDED.tipo,
+       subtipo = EXCLUDED.subtipo,
+       saldo = EXCLUDED.saldo,
+       valor_aplicado = EXCLUDED.valor_aplicado,
+       lucro = EXCLUDED.lucro,
+       taxa = EXCLUDED.taxa,
+       tipo_taxa = EXCLUDED.tipo_taxa,
+       rentabilidade_12m = EXCLUDED.rentabilidade_12m,
+       vencimento = EXCLUDED.vencimento,
+       emissor = EXCLUDED.emissor,
+       instituicao = EXCLUDED.instituicao,
+       status = EXCLUDED.status,
+       ativo = TRUE,
+       atualizado_em = NOW()
+     RETURNING id, (xmax = 0) AS novo`,
+    [uid, pluggyItemDbId, pluggyInvestmentId, nome, tipo, subtipo, saldo,
+     valorAplicado, lucro, taxa, tipoTaxa, rentabilidade12m, vencimento,
+     emissor, instituicao, status]
+  );
+
+  return { id: res.rows[0].id, novo: res.rows[0].novo };
+}
+
+// Ativo que sumiu da API vira inativo — resgate/vencimento é histórico legítimo,
+// não erro de sync, então nunca DELETE.
+//
+// O escopo por pluggy_item_id é obrigatório: sem ele, sincronizar o banco A
+// desativaria as posições do banco B do mesmo usuário. Lista vazia desativa tudo
+// do item (= ANY('{}') é falso, logo NOT ... é verdadeiro para todas as linhas),
+// que é o comportamento correto quando o usuário resgatou tudo naquele banco.
+async function desativarInvestimentosAusentes(pluggyItemDbId, idsPresentes) {
+  const res = await pool.query(
+    `UPDATE investimentos
+     SET ativo = FALSE, atualizado_em = NOW()
+     WHERE pluggy_item_id = $1
+       AND ativo = TRUE
+       AND NOT (pluggy_investment_id = ANY($2::text[]))
+     RETURNING id`,
+    [pluggyItemDbId, idsPresentes || []]
+  );
+  return res.rowCount;
+}
+
+async function listarInvestimentos(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT id, pluggy_investment_id, nome, tipo, subtipo, saldo::float,
+            valor_aplicado::float, lucro::float, taxa::float, tipo_taxa,
+            rentabilidade_12m::float, TO_CHAR(vencimento, 'YYYY-MM-DD') AS vencimento,
+            emissor, instituicao, status
+     FROM investimentos
+     WHERE usuario_id = $1 AND ativo = TRUE
+     ORDER BY saldo DESC, nome ASC`,
+    [uid]
+  );
+  return res.rows;
+}
+
+// Agregação para o painel/WhatsApp. Com dezenas de posições (o caso real tem 78
+// CDBs), listar ativo a ativo não informa nada — o que informa é o total, a
+// composição por tipo e a concentração por emissor (risco de crédito).
+async function resumoInvestimentos(usuarioId) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const totaisRes = await pool.query(
+    `SELECT
+       COALESCE(SUM(saldo), 0)::float           AS total,
+       COALESCE(SUM(valor_aplicado), 0)::float  AS total_aplicado,
+       COALESCE(SUM(lucro), 0)::float           AS total_lucro,
+       COUNT(*)::int                            AS quantidade
+     FROM investimentos
+     WHERE usuario_id = $1 AND ativo = TRUE`,
+    [uid]
+  );
+
+  const porTipoRes = await pool.query(
+    `SELECT COALESCE(tipo, 'OUTROS') AS tipo,
+            COALESCE(SUM(saldo), 0)::float AS total,
+            COUNT(*)::int AS quantidade
+     FROM investimentos
+     WHERE usuario_id = $1 AND ativo = TRUE
+     GROUP BY COALESCE(tipo, 'OUTROS')
+     ORDER BY total DESC`,
+    [uid]
+  );
+
+  const porEmissorRes = await pool.query(
+    `SELECT COALESCE(emissor, instituicao, 'Não informado') AS emissor,
+            COALESCE(SUM(saldo), 0)::float AS total,
+            COUNT(*)::int AS quantidade
+     FROM investimentos
+     WHERE usuario_id = $1 AND ativo = TRUE
+     GROUP BY COALESCE(emissor, instituicao, 'Não informado')
+     ORDER BY total DESC`,
+    [uid]
+  );
+
+  const t = totaisRes.rows[0];
+  return {
+    total: t.total,
+    totalAplicado: t.total_aplicado,
+    totalLucro: t.total_lucro,
+    quantidade: t.quantidade,
+    porTipo: porTipoRes.rows,
+    porEmissor: porEmissorRes.rows,
+  };
+}
+
 // Atualiza limite/usado/disponível de um cartão espelho Pluggy com os valores
 // REAIS da API (Account.balance, Account.creditData.creditLimit/
 // availableCreditLimit) — nunca calculados a partir de transacoes. Chamado a
@@ -5886,4 +6070,8 @@ module.exports = {
   removerTransacoesPluggyPorIds,
   calibrarSaldoInicialConta,
   atualizarCartaoPluggyDados,
+  upsertInvestimentoPluggy,
+  desativarInvestimentosAusentes,
+  listarInvestimentos,
+  resumoInvestimentos,
 };
