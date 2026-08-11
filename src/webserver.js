@@ -980,7 +980,10 @@ app.post('/api/pluggy/items/:itemId/sincronizar', autenticar, async (req, res) =
   }
 });
 
-// ── Caixinhas (Investimentos) ────────────────────────────────────────────────
+// ── Reservas (caixinhas manuais, com meta definida pelo usuário) ─────────────
+// Conceito distinto de Investimentos (posições reais sincronizadas do banco —
+// endpoints logo abaixo). A rota mantém o nome /api/caixinhas para não quebrar
+// cliente já publicado; só o rótulo na UI mudou.
 app.get('/api/caixinhas', autenticar, async (req, res) => {
   try {
     res.json(await db.listarCaixinhas(req.usuarioId));
@@ -1045,6 +1048,34 @@ app.post('/api/caixinhas/:id/deposito', autenticar, async (req, res) => {
     res.json(resultado);
   } catch (err) {
     console.error('[WEB] POST /api/caixinhas/:id/deposito:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ── Investimentos (posições reais sincronizadas do banco via Pluggy) ─────────
+// Devolve o resumo agregado junto das posições: a UI agrupa por emissor e só
+// expande a lista completa sob demanda (uma carteira de renda fixa passa
+// facilmente de setenta ativos, listar tudo de cara não informa nada).
+app.get('/api/investimentos', autenticar, async (req, res) => {
+  try {
+    const [resumo, posicoes] = await Promise.all([
+      db.resumoInvestimentos(req.usuarioId),
+      db.listarInvestimentos(req.usuarioId),
+    ]);
+    res.json({ ...resumo, posicoes });
+  } catch (err) {
+    console.error('[WEB] GET /api/investimentos:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Patrimônio consolidado: sempre com os componentes, nunca só o total — ver
+// db.calcularPatrimonio para o porquê de a composição ser obrigatória.
+app.get('/api/patrimonio', autenticar, async (req, res) => {
+  try {
+    res.json(await db.calcularPatrimonio(req.usuarioId));
+  } catch (err) {
+    console.error('[WEB] GET /api/patrimonio:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });

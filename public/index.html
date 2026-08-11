@@ -299,6 +299,38 @@
         </div>
       </div>
 
+      <!-- Investimentos sincronizados do banco (posições reais: emissor, taxa,
+           vencimento). NÃO é a mesma coisa que Reservas (caixinhas manuais), e
+           NÃO entra no "Saldo em contas" do hero acima — dinheiro aplicado não
+           é saldo líquido em conta corrente.
+
+           Agrupado por EMISSOR porque uma carteira de renda fixa costuma ter
+           dezenas de posições que colapsam numa linha só se agrupadas por tipo;
+           emissor mostra concentração de risco de crédito. A lista completa
+           fica atrás do "ver todos". -->
+      <div class="dash-list-card hidden" id="dash-investimentos-card">
+        <div class="dash-list-header">
+          <h3>📈 Investimentos</h3>
+          <span class="dash-invest-total" id="dash-investimentos-total">—</span>
+        </div>
+        <div id="dash-investimentos-resumo" class="dash-invest-resumo"></div>
+        <div id="dash-investimentos-body" class="dash-list-body"></div>
+        <button class="btn-link" id="dash-investimentos-toggle" onclick="toggleInvestimentosDetalhe()">ver todos os ativos</button>
+        <div id="dash-investimentos-detalhe" class="dash-list-body hidden"></div>
+      </div>
+
+      <!-- Patrimônio: sempre itemizado, nunca número nu. Reserva manual e
+           investimento sincronizado podem ser o mesmo dinheiro (caixinha de
+           banco é lastreada em CDB) e não há chave para deduplicar — mostrar a
+           composição deixa a sobreposição visível para o usuário julgar. -->
+      <div class="dash-list-card hidden" id="dash-patrimonio-card">
+        <div class="dash-list-header">
+          <h3>💼 Patrimônio</h3>
+          <span class="dash-invest-total" id="dash-patrimonio-total">—</span>
+        </div>
+        <div id="dash-patrimonio-body" class="dash-list-body"></div>
+      </div>
+
       <!-- Últimas transações + Próximos lembretes -->
       <div class="dash-lists-row">
         <div class="dash-list-card">
@@ -508,13 +540,14 @@
 
         <div class="accordion-item">
           <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span>💰 Investimentos</span>
+            <span>🏦 Reservas</span>
             <span class="accordion-icon">›</span>
           </button>
           <div class="accordion-body hidden">
-            <div id="investimentos-list"></div>
-            <div id="investimentos-empty" class="empty-state hidden">Nenhuma caixinha cadastrada.</div>
-            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaCaixinha()">+ Nova Caixinha</button>
+            <p class="accordion-desc" style="font-size:11px">Metas de economia que você controla manualmente. Aplicações do banco aparecem em Investimentos, no painel.</p>
+            <div id="reservas-list"></div>
+            <div id="reservas-empty" class="empty-state hidden">Nenhuma reserva cadastrada.</div>
+            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaCaixinha()">+ Nova Reserva</button>
           </div>
         </div>
       </div>
@@ -989,7 +1022,7 @@
 <div class="modal-overlay hidden" id="modal-nova-caixinha">
   <div class="modal-box modal-box-center">
     <div class="modal-header">
-      <h3 id="modal-caixinha-titulo">Nova Caixinha</h3>
+      <h3 id="modal-caixinha-titulo">Nova Reserva</h3>
       <button class="modal-close" onclick="fecharModalCaixinha()">✕</button>
     </div>
     <input type="hidden" id="caixinha-edit-id">
@@ -1024,7 +1057,7 @@
 <div class="modal-overlay hidden" id="modal-deposito-caixinha">
   <div class="modal-box modal-box-center">
     <div class="modal-header">
-      <h3>Depositar na Caixinha</h3>
+      <h3>Depositar na Reserva</h3>
       <button class="modal-close" onclick="fecharModalDeposito()">✕</button>
     </div>
     <input type="hidden" id="deposito-caixinha-id">

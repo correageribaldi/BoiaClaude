@@ -590,6 +590,11 @@ async function carregarDashboard() {
   carregarLimitesConsumo(ehMesAtual);
   // Previsão é sempre "de hoje pra frente", pela mesma razão dos limites.
   carregarPrevisao(ehMesAtual);
+  // Investimentos e patrimônio são ESTOQUE (posição acumulada), não fluxo do
+  // mês — por isso, ao contrário de limites e previsão, não dependem do mês
+  // navegado e não recebem ehMesAtual.
+  carregarInvestimentos();
+  carregarPatrimonio();
   try { await renderChartMensal(); } catch (e) { console.error('[CHART]', e); }
 }
 
@@ -617,6 +622,142 @@ async function carregarPrevisao(ehMesAtual = true) {
 
   card.classList.remove('hidden');
   renderPrevisao(dados);
+}
+
+// ── Investimentos (posições reais sincronizadas do banco) ───────────────────
+//
+// Conceito distinto de Reservas (caixinhas manuais) e deliberadamente FORA do
+// "Saldo em contas" do hero: dinheiro aplicado não é saldo líquido em conta.
+//
+// Agrupa por EMISSOR e não por tipo: uma carteira de renda fixa costuma ter
+// dezenas de posições que colapsam numa linha só se agrupadas por tipo, e
+// emissor mostra concentração de risco de crédito, que é acionável. A lista
+// posição a posição fica atrás do "ver todos".
+let _investimentosCache = null;
+
+async function carregarInvestimentos() {
+  const card = document.getElementById('dash-investimentos-card');
+  if (!card) return;
+
+  let dados;
+  try { dados = await api('/api/investimentos'); }
+  catch { card.classList.add('hidden'); return; }
+
+  if (!dados || !dados.quantidade) { card.classList.add('hidden'); return; }
+
+  _investimentosCache = dados;
+  card.classList.remove('hidden');
+  renderInvestimentos(dados);
+}
+
+function renderInvestimentos(d) {
+  document.getElementById('dash-investimentos-total').textContent = fmtMoeda(d.total);
+
+  const partes = [`${d.quantidade} ${d.quantidade === 1 ? 'ativo' : 'ativos'}`];
+  if (d.totalAplicado > 0) {
+    partes.push(`aplicado ${fmtMoeda(d.totalAplicado)}`);
+    if (d.totalLucro !== 0) {
+      const pct = (d.totalLucro / d.totalAplicado) * 100;
+      partes.push(`rendimento ${d.totalLucro >= 0 ? '+' : ''}${fmtMoeda(d.totalLucro)} (${pct.toFixed(1)}%)`);
+    }
+  }
+  document.getElementById('dash-investimentos-resumo').textContent = partes.join(' · ');
+
+  const body = document.getElementById('dash-investimentos-body');
+  body.innerHTML = '';
+  for (const e of d.porEmissor) {
+    const pct = d.total > 0 ? Math.round((e.total / d.total) * 100) : 0;
+    const row = document.createElement('div');
+    row.className = 'dash-tx-item';
+    row.innerHTML = `
+      <div class="dash-tx-info">
+        <div class="dash-tx-desc">${esc(e.emissor)}</div>
+        <div class="dash-tx-meta">${e.quantidade} ${e.quantidade === 1 ? 'ativo' : 'ativos'} · ${pct}% da carteira</div>
+      </div>
+      <div class="dash-tx-valor">${fmtMoeda(e.total)}</div>`;
+    body.appendChild(row);
+  }
+
+  // Detalhe é remontado sob demanda; invalida o cache de render a cada carga
+  // para não exibir posições de uma sincronização anterior.
+  const det = document.getElementById('dash-investimentos-detalhe');
+  if (det) {
+    det.dataset.render = '';
+    det.classList.add('hidden');
+    document.getElementById('dash-investimentos-toggle').textContent = 'ver todos os ativos';
+  }
+}
+
+function toggleInvestimentosDetalhe() {
+  const det = document.getElementById('dash-investimentos-detalhe');
+  const btn = document.getElementById('dash-investimentos-toggle');
+  if (!det || !_investimentosCache) return;
+
+  const vaiAbrir = det.classList.contains('hidden');
+  det.classList.toggle('hidden');
+  btn.textContent = vaiAbrir ? 'ocultar ativos' : 'ver todos os ativos';
+  if (!vaiAbrir || det.dataset.render === '1') return;
+
+  det.innerHTML = '';
+  for (const p of _investimentosCache.posicoes) {
+    const info = [
+      (p.taxa && p.tipo_taxa) ? `${p.taxa}% ${esc(p.tipo_taxa)}` : null,
+      p.vencimento ? `vence ${fmtData(p.vencimento)}` : null,
+    ].filter(Boolean).join(' · ');
+    const row = document.createElement('div');
+    row.className = 'dash-tx-item';
+    row.innerHTML = `
+      <div class="dash-tx-info">
+        <div class="dash-tx-desc">${esc(p.nome)}</div>
+        ${info ? `<div class="dash-tx-meta">${info}</div>` : ''}
+      </div>
+      <div class="dash-tx-valor">${fmtMoeda(p.saldo)}</div>`;
+    det.appendChild(row);
+  }
+  det.dataset.render = '1';
+}
+
+// ── Patrimônio consolidado ──────────────────────────────────────────────────
+//
+// SEMPRE itemizado. Reserva manual e investimento sincronizado podem ser o
+// mesmo dinheiro (caixinha de banco é lastreada em CDB) e não existe chave para
+// deduplicar — esconder a composição atrás de um número só tiraria do usuário a
+// chance de perceber a sobreposição.
+async function carregarPatrimonio() {
+  const card = document.getElementById('dash-patrimonio-card');
+  if (!card) return;
+
+  let p;
+  try { p = await api('/api/patrimonio'); }
+  catch { card.classList.add('hidden'); return; }
+
+  // Sem reserva, investimento nem fatura, patrimônio é idêntico ao saldo em
+  // contas já exibido no hero — repetir o mesmo número só polui.
+  if (!p || (!p.reservas && !p.investimentos && !p.faturaCartao)) {
+    card.classList.add('hidden');
+    return;
+  }
+
+  card.classList.remove('hidden');
+  document.getElementById('dash-patrimonio-total').textContent = fmtMoeda(p.total);
+
+  const linhas = [
+    ['Saldo em contas', p.saldoContas, ''],
+    ['Reservas', p.reservas, '+'],
+    ['Investimentos', p.investimentos, '+'],
+    ['Fatura do cartão', p.faturaCartao, '−'],
+  ].filter(([, valor], i) => i === 0 || valor > 0);
+
+  const body = document.getElementById('dash-patrimonio-body');
+  body.innerHTML = '';
+  for (const [label, valor, sinal] of linhas) {
+    const row = document.createElement('div');
+    row.className = 'dash-tx-item';
+    row.innerHTML = `
+      <div class="dash-tx-info"><div class="dash-tx-desc">${label}</div></div>
+      <div class="dash-tx-valor">${sinal}${fmtMoeda(valor)}</div>`;
+    body.appendChild(row);
+  }
 }
 
 function renderPrevisao(dados) {
@@ -3497,7 +3638,7 @@ let _editandoCaixinha = false;
 
 function abrirModalNovaCaixinha() {
   _editandoCaixinha = false;
-  document.getElementById('modal-caixinha-titulo').textContent = 'Nova Caixinha';
+  document.getElementById('modal-caixinha-titulo').textContent = 'Nova Reserva';
   document.getElementById('caixinha-edit-id').value = '';
   document.getElementById('caixinha-nome').value = '';
   document.getElementById('caixinha-saldo').value = '';
@@ -3509,7 +3650,7 @@ function abrirModalNovaCaixinha() {
 
 function abrirModalEditarCaixinha(c) {
   _editandoCaixinha = true;
-  document.getElementById('modal-caixinha-titulo').textContent = 'Editar Caixinha';
+  document.getElementById('modal-caixinha-titulo').textContent = 'Editar Reserva';
   document.getElementById('caixinha-edit-id').value = c.id;
   document.getElementById('caixinha-nome').value = c.nome || '';
   document.getElementById('caixinha-saldo').value = c.saldo || '';
@@ -3598,8 +3739,8 @@ async function carregarCaixinhas() {
   try { caixinhas = await api('/api/caixinhas'); }
   catch { return; }
 
-  const list = document.getElementById('investimentos-list');
-  const empty = document.getElementById('investimentos-empty');
+  const list = document.getElementById('reservas-list');
+  const empty = document.getElementById('reservas-empty');
   list.innerHTML = '';
 
   if (!caixinhas.length) {
