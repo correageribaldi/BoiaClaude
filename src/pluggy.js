@@ -196,6 +196,68 @@ async function buscarAccountsPluggy(apiKey, itemId) {
   return Array.isArray(corpo) ? corpo : (corpo?.results || []);
 }
 
+// Posições de investimento do Item (produto INVESTMENTS).
+//
+// Contrato de erro, que o chamador depende para não corromper dados:
+//  - 403/404 = produto não contratado/indisponível naquele connector. É um
+//    "confirmadamente sem investimentos": devolve [] e o sync segue.
+//  - qualquer outro erro (5xx, rede) LANÇA. Não pode virar [] silencioso:
+//    quem chama usa a lista para desativar o que sumiu, então um [] vindo de
+//    falha transitória desativaria TODAS as posições do usuário de uma vez.
+async function buscarInvestimentosPluggy(apiKey, itemId) {
+  const resposta = await httpsRequestJson(
+    'GET',
+    `${PLUGGY_API_BASE}/investments?itemId=${encodeURIComponent(itemId)}`,
+    null,
+    { 'X-API-KEY': apiKey }
+  );
+
+  if (resposta.statusCode === 403 || resposta.statusCode === 404) {
+    return [];
+  }
+  if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
+    console.error('[PLUGGY] Falha ao buscar investimentos do item. status:', resposta.statusCode);
+    throw new Error('Não foi possível buscar os investimentos conectados.');
+  }
+
+  const corpo = resposta.body;
+  return Array.isArray(corpo) ? corpo : (corpo?.results || []);
+}
+
+// Traduz uma posição da Pluggy para as colunas de `investimentos`. Pura (sem
+// I/O) para ser testável sem rede, mesmo padrão de interpretarErroItem.
+//
+// Guarda-se só o que tem uso concreto (total, composição, rentabilidade,
+// vencimento, concentração por emissor) — a API devolve ~40 campos e replicar
+// todos criaria colunas que ninguém lê e que precisariam ser mantidas.
+function mapearInvestimentoPluggy(inv) {
+  if (!inv?.id) return null;
+
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  // `balance` é a posição atual; `amount` é o fallback de connectors que não
+  // preenchem balance. Sem nenhum dos dois a posição vale 0, não null — a
+  // coluna é NOT NULL e um ativo sem valor não pode quebrar o sync inteiro.
+  const saldo = num(inv.balance) ?? num(inv.amount) ?? 0;
+
+  return {
+    pluggyInvestmentId: inv.id,
+    nome: (typeof inv.name === 'string' && inv.name.trim()) ? inv.name.trim() : 'Investimento',
+    tipo: inv.type || null,
+    subtipo: inv.subtype || null,
+    saldo,
+    valorAplicado: num(inv.amountOriginal),
+    lucro: num(inv.amountProfit),
+    taxa: num(inv.rate),
+    tipoTaxa: inv.rateType || null,
+    rentabilidade12m: num(inv.lastTwelveMonthsRate),
+    // Datas chegam ISO completas ("2028-03-05T00:00:00.000Z"); a coluna é DATE.
+    vencimento: typeof inv.dueDate === 'string' && inv.dueDate ? inv.dueDate.slice(0, 10) : null,
+    emissor: inv.issuer || null,
+    instituicao: inv.institution || null,
+    status: inv.status || null,
+  };
+}
+
 // Account.subtype -> tipo aceito pelo CHECK constraint de contas.tipo no Cronos
 // (src/database.js — CHECK(tipo IN ('corrente','poupanca','carteira','investimento','outro'))).
 // subtype desconhecido cai em 'outro', que é sempre uma opção válida.
@@ -724,6 +786,40 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
     }
   }
 
+  // ─── Posições de investimento (produto INVESTMENTS) ───────────────────────
+  //
+  // Estoque, não fluxo: grava só na tabela `investimentos`, sem tocar em
+  // contas/transacoes. Por construção não altera saldo em conta — ver o
+  // comentário da tabela em database.js.
+  //
+  // Roda mesmo quando contasMapeadas está vazio: corretora conectada só com
+  // investimentos (sem conta corrente) é um caso válido.
+  //
+  // Duas decisões de robustez neste bloco:
+  //  1. try/catch envolvendo tudo — banco sem o produto, ou instabilidade da
+  //     API, não podem derrubar a sincronização de transações, que é o core e
+  //     já está gravada neste ponto.
+  //  2. a desativação do que sumiu só roda DEPOIS da coleta ter dado certo. Se
+  //     a busca lançar, o catch pula a desativação junto: um 5xx transitório
+  //     jamais pode marcar as posições do usuário como resgatadas.
+  let investimentosSincronizados = 0;
+  try {
+    const investimentos = await buscarInvestimentosPluggy(apiKey, itemId);
+
+    const idsPresentes = [];
+    for (const inv of investimentos) {
+      const dados = mapearInvestimentoPluggy(inv);
+      if (!dados) continue;
+      await db.upsertInvestimentoPluggy(usuarioId, mapaItem.id, dados);
+      idsPresentes.push(dados.pluggyInvestmentId);
+      investimentosSincronizados++;
+    }
+
+    await db.desativarInvestimentosAusentes(mapaItem.id, idsPresentes);
+  } catch (err) {
+    console.error('[PLUGGY] Falha ao sincronizar investimentos (transações já gravadas):', err.message);
+  }
+
   await db.marcarPluggyItemSincronizado(mapaItem.id);
 
   // Aviso consolidado de teto estourado: UMA mensagem por sincronização,
@@ -744,7 +840,7 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
     console.error('[PLUGGY] Erro inesperado no aviso de limites (sync já concluída):', err.message);
   }
 
-  return { transacoesSincronizadas: total, completo, limitesAvisados };
+  return { transacoesSincronizadas: total, completo, limitesAvisados, investimentosSincronizados };
 }
 
 // interpretarErroItem: decide status + mensagem amigável a partir do Item
@@ -824,6 +920,8 @@ module.exports = {
   webhookJaRegistrado,
   conectarItem,
   buscarTransacoesNovas,
+  buscarInvestimentosPluggy,
+  mapearInvestimentoPluggy,
   buscarCategoriasPluggy,
   traduzirCategoriaPluggy,
   acharGrupoRaizCategoria,
