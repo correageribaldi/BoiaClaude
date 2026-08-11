@@ -405,7 +405,7 @@ test('Comando: "saldo" retorna saldo formatado', async (t) => {
   // Mock saldo com valores
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 2500, saldoPrevisao: 2000, receitasPagas: 5000, despesasPagas: 2500,
-    receitasPendentes: 0, despesasPendentes: 500, totalCaixinhas: 200, patrimonio: 2700,
+    receitasPendentes: 0, despesasPendentes: 500, totalCaixinhas: 200,
   }));
 
   const uid = novoUsuario();
@@ -428,7 +428,7 @@ test('Comando: "resumo" retorna resumo mensal', async (t) => {
   });
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 2000, saldoPrevisao: 2000, receitasPagas: 5000, despesasPagas: 3000,
-    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 0, patrimonio: 2000,
+    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 0,
   }));
 
   const uid = novoUsuario();
@@ -636,7 +636,7 @@ test('Saldo: exibe receitas, despesas e saldo atual', async (t) => {
 
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 3500, saldoPrevisao: 2800, receitasPagas: 5000, despesasPagas: 1500,
-    receitasPendentes: 500, despesasPendentes: 1200, totalCaixinhas: 0, patrimonio: 3500,
+    receitasPendentes: 500, despesasPendentes: 1200, totalCaixinhas: 0,
   }));
 
   const uid = novoUsuario();
@@ -675,7 +675,7 @@ test('Saldo: exibe pendencias quando existem', async (t) => {
 
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 1000, saldoPrevisao: 500, receitasPagas: 2000, despesasPagas: 1000,
-    receitasPendentes: 300, despesasPendentes: 800, totalCaixinhas: 0, patrimonio: 1000,
+    receitasPendentes: 300, despesasPendentes: 800, totalCaixinhas: 0,
   }));
 
   const uid = novoUsuario();
@@ -690,7 +690,7 @@ test('Saldo: sem pendencias mostra mensagem especifica', async (t) => {
 
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: 1000, saldoPrevisao: 1000, receitasPagas: 1000, despesasPagas: 0,
-    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 0, patrimonio: 1000,
+    receitasPendentes: 0, despesasPendentes: 0, totalCaixinhas: 0,
   }));
 
   const uid = novoUsuario();
@@ -705,7 +705,7 @@ test('Saldo: saldo negativo exibe indicador vermelho', async (t) => {
 
   t.mock.method(db, 'calcularSaldos', async () => ({
     saldoAtual: -500, saldoPrevisao: -800, receitasPagas: 1000, despesasPagas: 1500,
-    receitasPendentes: 0, despesasPendentes: 300, totalCaixinhas: 0, patrimonio: -500,
+    receitasPendentes: 0, despesasPendentes: 300, totalCaixinhas: 0,
   }));
 
   const uid = novoUsuario();

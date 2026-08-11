@@ -3958,9 +3958,12 @@ const FUNCIONALIDADES_CRONOS = [
     resposta: 'Sim! Posso criar lembretes 🔔\n\nÉ só falar: *"me lembra amanhã às 10h de pagar o aluguel"* ou *"todo dia 5 me avisa do cartão"*. Recorrentes e únicos, com confirmação de pagamento automática.',
   },
   {
-    chaves: ['investimento', 'caixinha', 'poupança', 'reserva', 'guardar dinheiro'],
+    // 'investimento' saiu das chaves de propósito: virou feature própria
+    // (posições sincronizadas do banco), e deixá-la aqui faria a pergunta
+    // "meus investimentos" cair nesta FAQ em vez da consulta real.
+    chaves: ['caixinha', 'poupança', 'reserva', 'guardar dinheiro'],
     suportado: true,
-    resposta: 'Sim! Tenho caixinhas de investimento 💰\n\nVocê cria quantas quiser, cada uma com nome, meta e rendimento. É só falar *"criar caixinha"* para começar.',
+    resposta: 'Sim! Tenho *Reservas* 💰\n\nVocê cria quantas quiser, cada uma com nome, meta e rendimento. É só falar *"nova reserva"* para começar.\n\n_Se você conectou seu banco, suas aplicações aparecem separadamente em *"meus investimentos"*._',
   },
   {
     chaves: ['analise', 'análise', 'analise financeira', 'análise financeira', '50 30 20', 'orcamento', 'orçamento'],
@@ -4844,7 +4847,7 @@ async function handleDepositoCaixinha(usuarioId, resultado) {
   if (!nome) {
     const caixinhas = await db.listarCaixinhas(usuarioId);
     if (caixinhas.length === 0) {
-      return `Você ainda não tem caixinhas cadastradas.\n_Diz "criar caixinha" pra começar!_`;
+      return `Você ainda não tem reservas cadastradas.\n_Diz "nova reserva" pra começar!_`;
     }
     const lista = caixinhas.map(c => `  💰 *${c.nome}* — ${fmt.formatarMoeda(c.saldo)}`).join('\n');
     return `Em qual caixinha você quer depositar *${fmt.formatarMoeda(valor)}*?\n\n${lista}\n\n_Me diz o nome da caixinha._`;
@@ -5473,7 +5476,7 @@ async function handleEditarCaixinha(usuarioId, resultado) {
   if (caixinhas.length === 0) {
     return nome
       ? `❌ Não encontrei caixinha com o nome *${nome}*.\n_Use "caixinhas" para ver as cadastradas._`
-      : `❌ Você não tem caixinhas cadastradas.`;
+      : `❌ Você não tem reservas cadastradas.`;
   }
 
   if (caixinhas.length > 1 || !nome) {
@@ -5598,7 +5601,7 @@ async function handleExcluirCaixinha(usuarioId, resultado) {
   if (caixinhas.length === 0) {
     return nome
       ? `❌ Não encontrei caixinha com o nome *${nome}*.\n_Use "caixinhas" para ver as cadastradas._`
-      : `❌ Você não tem caixinhas cadastradas.`;
+      : `❌ Você não tem reservas cadastradas.`;
   }
 
   if (caixinhas.length > 1 || !nome) {
@@ -7667,10 +7670,10 @@ async function handlePontoZero(usuarioId, texto, estado) {
           }
           limparPontoZero(usuarioId);
           const qtd = (estado.investimentos || []).length;
-          if (qtd === 0) return `Tudo bem! Nenhuma caixinha cadastrada.`;
+          if (qtd === 0) return `Tudo bem! Nenhuma reserva cadastrada.`;
           const total = (estado.investimentos || []).reduce((s, i) => s + (i.saldo || 0), 0);
           const lista = (estado.investimentos || []).map(i => `  💰 *${i.nome}* — ${fmt.formatarMoeda(i.saldo)}`).join('\n');
-          return `✅ ${qtd === 1 ? 'Caixinha cadastrada' : `${qtd} caixinhas cadastradas`} com sucesso!\n\n${lista}\n\n💼 *Total investido: ${fmt.formatarMoeda(total)}*`;
+          return `✅ ${qtd === 1 ? 'Reserva cadastrada' : `${qtd} reservas cadastradas`} com sucesso!\n\n${lista}\n\n💼 *Total reservado: ${fmt.formatarMoeda(total)}*`;
         }
         const budget = await gerarOrcamentoProporcional(estado);
         estado.orcamentos = budget.orcamentos;

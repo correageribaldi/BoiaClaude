@@ -340,3 +340,132 @@ test('calcularSaldos: o total de investimentos não entra em saldoAtual', async 
   assert.equal(saldos.saldoAtual, 300, 'saldo = receitas - despesas, sem qualquer parcela de investimento');
   assert.equal(saldos.totalCaixinhas, 0);
 });
+
+test('calcularSaldos: não expõe mais um patrimônio parcial', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql) => {
+    if (sql.includes('receitas_pagas')) {
+      return { rows: [{ receitas_pagas: 100, despesas_pagas: 0, receitas_pendentes: 0, despesas_pendentes: 0 }] };
+    }
+    if (sql.includes('as total')) return { rows: [{ total: 0 }] };
+    return { rows: [] };
+  });
+
+  const saldos = await db.calcularSaldos('user1@c.us');
+
+  // O campo antigo somava caixinhas sem descontar a dívida do cartão e ignorava
+  // investimentos — superestimava o patrimônio de quem tinha fatura aberta.
+  // Quem quer patrimônio usa calcularPatrimonio, que devolve a composição.
+  assert.equal(saldos.patrimonio, undefined);
+});
+
+// ── Patrimônio consolidado e itemizado ───────────────────────────────────────
+
+function mockarComponentesPatrimonio(t, { saldoAtual, totalCaixinhas, investimentos, cartoes, usoPorCartao }) {
+  mockResolverIdentidade(t);
+  t.mock.method(db, 'calcularSaldos', async () => ({ saldoAtual, totalCaixinhas }));
+  t.mock.method(db, 'listarCartoes', async () => cartoes);
+  t.mock.method(db, 'obterUsoCartao', async (cartao) => usoPorCartao[cartao.id]);
+  t.mock.method(db.pool, 'query', async () => ({ rows: [{ total: investimentos }] }));
+}
+
+test('calcularPatrimonio: total = saldo em contas + reservas + investimentos - fatura', async (t) => {
+  mockarComponentesPatrimonio(t, {
+    saldoAtual: 2000,
+    totalCaixinhas: 500,
+    investimentos: 9000,
+    cartoes: [{ id: 1 }],
+    usoPorCartao: { 1: { origem: 'pluggy', valorUsado: 300 } },
+  });
+
+  const p = await db.calcularPatrimonio('user1@c.us');
+
+  assert.equal(p.saldoContas, 2000);
+  assert.equal(p.reservas, 500);
+  assert.equal(p.investimentos, 9000);
+  assert.equal(p.faturaCartao, 300);
+  assert.equal(p.total, 11200, '2000 + 500 + 9000 - 300');
+});
+
+test('calcularPatrimonio: sempre devolve a composição, nunca só o total', async (t) => {
+  mockarComponentesPatrimonio(t, {
+    saldoAtual: 100, totalCaixinhas: 0, investimentos: 0,
+    cartoes: [], usoPorCartao: {},
+  });
+
+  const p = await db.calcularPatrimonio('user1@c.us');
+
+  // Contrato de exibição: quem consome é obrigado a conseguir itemizar, porque
+  // reserva manual e investimento sincronizado podem ser o mesmo dinheiro.
+  for (const campo of ['saldoContas', 'reservas', 'investimentos', 'faturaCartao', 'total']) {
+    assert.ok(campo in p, `componente ausente: ${campo}`);
+  }
+});
+
+test('calcularPatrimonio: soma a fatura de todos os cartões', async (t) => {
+  mockarComponentesPatrimonio(t, {
+    saldoAtual: 1000,
+    totalCaixinhas: 0,
+    investimentos: 0,
+    cartoes: [{ id: 1 }, { id: 2 }],
+    usoPorCartao: {
+      1: { origem: 'pluggy', valorUsado: 200 },
+      2: { origem: 'manual', valorUsado: 150 },
+    },
+  });
+
+  const p = await db.calcularPatrimonio('user1@c.us');
+
+  assert.equal(p.faturaCartao, 350, 'cartão Pluggy e manual entram na mesma soma');
+  assert.equal(p.total, 650);
+});
+
+test('calcularPatrimonio: cartão sem valor de uso não vira NaN', async (t) => {
+  mockarComponentesPatrimonio(t, {
+    saldoAtual: 1000,
+    totalCaixinhas: 0,
+    investimentos: 0,
+    cartoes: [{ id: 1 }],
+    usoPorCartao: { 1: { origem: 'manual', valorUsado: null } },
+  });
+
+  const p = await db.calcularPatrimonio('user1@c.us');
+
+  assert.equal(p.faturaCartao, 0);
+  assert.equal(p.total, 1000);
+});
+
+test('calcularPatrimonio: a dívida de cartão passa por obterUsoCartao, nunca por calcularUsoCartao', async (t) => {
+  mockarComponentesPatrimonio(t, {
+    saldoAtual: 0, totalCaixinhas: 0, investimentos: 0,
+    cartoes: [{ id: 1 }],
+    usoPorCartao: { 1: { origem: 'manual', valorUsado: 100 } },
+  });
+  let calcularUsoChamado = false;
+  t.mock.method(db, 'calcularUsoCartao', async () => { calcularUsoChamado = true; return { total: 999 }; });
+
+  const p = await db.calcularPatrimonio('user1@c.us');
+
+  // obterUsoCartao é o único ponto que decide Pluggy (valor real da API) vs
+  // manual (ciclo de fatura). Chamar calcularUsoCartao direto aqui usaria o
+  // cálculo de ciclo num cartão Pluggy, que foi o bug que levou à consolidação.
+  assert.equal(calcularUsoChamado, false);
+  assert.equal(p.faturaCartao, 100);
+});
+
+test('calcularPatrimonio: aproveita saldos já calculados em vez de refazer a conta', async (t) => {
+  mockResolverIdentidade(t);
+  let vezesCalculouSaldos = 0;
+  t.mock.method(db, 'calcularSaldos', async () => {
+    vezesCalculouSaldos++;
+    return { saldoAtual: 10, totalCaixinhas: 0 };
+  });
+  t.mock.method(db, 'listarCartoes', async () => []);
+  t.mock.method(db.pool, 'query', async () => ({ rows: [{ total: 0 }] }));
+
+  const p = await db.calcularPatrimonio('user1@c.us', { saldoAtual: 42, totalCaixinhas: 8 });
+
+  assert.equal(vezesCalculouSaldos, 0, 'o fluxo de saldo do WhatsApp já tem os saldos em mãos');
+  assert.equal(p.saldoContas, 42);
+  assert.equal(p.reservas, 8);
+});
