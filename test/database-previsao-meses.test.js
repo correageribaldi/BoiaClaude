@@ -24,9 +24,13 @@ function congelarHoje(t, isoUtc) {
 //   faturas  → pares cartao_id + chave que já têm transação "Fatura %"
 //   parcelas → { [cartaoId]: [{ valor, mes }] } — alimenta o projetarFaturasCartao
 //              REAL, que é quem transforma parcela pendente em fatura por mês
+//   parceladas → linhas de transacoes com parcela_grupo/parcela_atual/
+//              parcela_total gravados (corte 4 — parcela que o banco ainda não
+//              lançou)
 function mockPool(t, cenario = {}) {
   const {
     regras = [], lancadas = [], vinculos = [], cartoes = [], faturas = [], parcelas = {},
+    parceladas = [],
   } = cenario;
 
   t.mock.method(db.pool, 'query', async (sql, params) => {
@@ -35,6 +39,7 @@ function mockPool(t, cenario = {}) {
     if (sql.includes('DISTINCT recorrencia_id')) return { rows: vinculos };
     if (sql.includes('FROM cartoes')) return { rows: cartoes.map(id => ({ id })) };
     if (sql.includes('DISTINCT cartao_id')) return { rows: faturas };
+    if (sql.includes('parcela_grupo IS NOT NULL')) return { rows: parceladas };
     // projetarFaturasCartao: parcelas pendentes futuras de UM cartão
     if (sql.includes("as mes")) return { rows: parcelas[params[0]] || [] };
     return { rows: [] };
@@ -188,6 +193,93 @@ test('projetarProximosMeses: compra no cartão não vira despesa direta — só 
   // Mesmo filtro de resumoMensal/calcularSaldos: a parcela no cartão sai daqui
   // e entra apenas pela projeção de fatura, senão sairia duas vezes do saldo.
   assert.match(sqlLancadas, /cartao_id IS NULL OR descricao ILIKE 'Fatura %'/);
+});
+
+// ── Corte 4: parcelas de cartão que o banco ainda não lançou ────────────────
+// Dados 100% sintéticos. O risco que estes testes protegem é o mesmo que já
+// mordeu esta base uma vez: somar duas vezes o mesmo compromisso.
+
+test('projetarProximosMeses: banco que manda uma parcela por vez — as que faltam entram como projeção', async (t) => {
+  mockResolverIdentidade(t);
+  congelarHoje(t, '2026-08-10T15:00:00Z');
+  mockPool(t, {
+    cartoes: [42],
+    // Só a parcela 7/10 (agosto) existe como transação. Ela NÃO aparece em
+    // "lancadas" porque compra no cartão sai do corte 1 pelo filtro de cartão.
+    parceladas: [
+      { cartao_id: 42, parcela_grupo: 'loja ficticia|10', parcela_atual: 7, parcela_total: 10, valor: 100, chave: '2026-08' },
+    ],
+  });
+
+  const r = await db.projetarProximosMeses('user1@c.us', 6);
+  const porChave = Object.fromEntries(r.meses.map(m => [m.chave, m.despesas.parcelas]));
+
+  assert.deepEqual(porChave, {
+    '2026-08': 0, '2026-09': 100, '2026-10': 100, '2026-11': 100, '2026-12': 0, '2027-01': 0,
+  });
+  assert.equal(r.meses.find(m => m.chave === '2026-09').despesas.total, 100);
+});
+
+test('projetarProximosMeses: banco que já mandou TODAS as parcelas — nada é projetado (anti dupla contagem)', async (t) => {
+  mockResolverIdentidade(t);
+  congelarHoje(t, '2026-08-10T15:00:00Z');
+
+  // As parcelas futuras já existem como transação pendente: elas entram pelo
+  // corte 3 (projetarFaturasCartao) e não podem entrar de novo pelo corte 4.
+  const parceladas = [];
+  const parcelasPendentes = [];
+  const meses = ['2026-08', '2026-09', '2026-10', '2026-11'];
+  meses.forEach((mes, i) => {
+    parceladas.push({ cartao_id: 42, parcela_grupo: 'loja ficticia|10', parcela_atual: 7 + i, parcela_total: 10, valor: 100, chave: mes });
+    if (i > 0) parcelasPendentes.push({ valor: 100, mes });
+  });
+
+  mockPool(t, { cartoes: [42], parceladas, parcelas: { 42: parcelasPendentes } });
+
+  const r = await db.projetarProximosMeses('user1@c.us', 6);
+
+  for (const m of r.meses) {
+    assert.equal(m.despesas.parcelas, 0, `${m.chave} não pode projetar parcela que o banco já lançou`);
+  }
+  // O compromisso continua aparecendo — pelo corte de fatura, uma vez só.
+  assert.equal(r.meses.find(m => m.chave === '2026-09').despesas.faturasCartao, 100);
+  assert.equal(r.meses.find(m => m.chave === '2026-09').despesas.total, 100);
+});
+
+test('projetarProximosMeses: fatura já lançada no mês bloqueia também a parcela projetada', async (t) => {
+  mockResolverIdentidade(t);
+  congelarHoje(t, '2026-08-10T15:00:00Z');
+  mockPool(t, {
+    cartoes: [42],
+    lancadas: [{ chave: '2026-09', tipo: 'despesa', total: 800 }],
+    faturas: [{ cartao_id: 42, chave: '2026-09' }],
+    parceladas: [
+      { cartao_id: 42, parcela_grupo: 'loja ficticia|10', parcela_atual: 7, parcela_total: 10, valor: 100, chave: '2026-08' },
+    ],
+  });
+
+  const r = await db.projetarProximosMeses('user1@c.us', 6);
+  const setembro = r.meses.find(m => m.chave === '2026-09');
+
+  assert.equal(setembro.despesas.parcelas, 0, 'a fatura real de setembro já contém essa parcela');
+  assert.equal(setembro.despesas.total, 800);
+  assert.equal(r.meses.find(m => m.chave === '2026-10').despesas.parcelas, 100);
+});
+
+test('projetarProximosMeses: sem cartão cadastrado não consulta parcelas nem projeta', async (t) => {
+  mockResolverIdentidade(t);
+  congelarHoje(t, '2026-08-10T15:00:00Z');
+
+  let consultouParcelas = false;
+  t.mock.method(db.pool, 'query', async (sql) => {
+    if (sql.includes('parcela_grupo IS NOT NULL')) consultouParcelas = true;
+    return { rows: [] };
+  });
+
+  const r = await db.projetarProximosMeses('user1@c.us', 6);
+
+  assert.equal(consultouParcelas, false);
+  for (const m of r.meses) assert.equal(m.despesas.parcelas, 0);
 });
 
 test('projetarProximosMeses: sem recorrência nenhuma devolve 6 meses zerados (estado vazio do card)', async (t) => {

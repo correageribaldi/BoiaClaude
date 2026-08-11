@@ -84,7 +84,9 @@ test('upsertTransacaoPluggy: categoria_manual = TRUE preserva a categoria e aind
 
   const update = queries.find((q) => q.sql.includes('UPDATE transacoes'));
   assert.equal(update.sql.includes('categoria = '), false, 'categoria corrigida à mão não pode ser sobrescrita');
-  assert.deepEqual(update.params, ['tx-abc', 320.9, 'Compra no débito|MERCADO FICTICIO', '2026-08-02', 'pago']);
+  // Sem parcelamento na transação: as três colunas do Marco de parcelas vão
+  // como null (transação de conta corrente à vista).
+  assert.deepEqual(update.params, ['tx-abc', 320.9, 'Compra no débito|MERCADO FICTICIO', '2026-08-02', 'pago', null, null, null]);
 });
 
 test('upsertTransacaoPluggy: categoria_manual = FALSE continua atualizando a categoria (recategorização do histórico)', async (t) => {
@@ -111,5 +113,5 @@ test('upsertTransacaoPluggy: categoria_manual = FALSE continua atualizando a cat
 
   const update = queries.find((q) => q.sql.includes('UPDATE transacoes'));
   assert.match(update.sql, /categoria = \$4/);
-  assert.deepEqual(update.params, ['tx-abc', 320.9, 'Compra no débito|MERCADO FICTICIO', 'Supermercado', '2026-08-02', 'pago']);
+  assert.deepEqual(update.params, ['tx-abc', 320.9, 'Compra no débito|MERCADO FICTICIO', 'Supermercado', '2026-08-02', 'pago', null, null, null]);
 });

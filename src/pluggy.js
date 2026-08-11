@@ -12,6 +12,7 @@
 const https = require('https');
 const db = require('./database');
 const limites = require('./limites');
+const { extrairParcelamento, chaveGrupoParcela } = require('./parcelamento');
 
 // Lazy require: ./queue abre conexão TCP real ao Redis assim que importado
 // (top-level, dentro do módulo). Se carregássemos isso no topo deste arquivo,
@@ -646,16 +647,29 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
       // tem prioridade sobre a categoria que a Pluggy sugere.
       const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo, categoriaPrincipalDestino, descricao);
 
+      const valor = Math.abs(Number(tx.amount) || 0);
+      // Parcelamento: campo estruturado (creditCardMetadata) quando existe,
+      // com fallback pelo "X/Y" da descrição APENAS em cartão — ver
+      // src/parcelamento.js. parcela_grupo é o que amarra as parcelas da mesma
+      // compra e é o que impede a previsão de contar duas vezes a parcela que
+      // o banco já mandou.
+      const ehCartao = mapa.tipo === 'cartao';
+      const parcelamento = extrairParcelamento(tx, { ehCartao });
+      const parcelaGrupo = parcelamento ? chaveGrupoParcela(descricao, parcelamento.total) : null;
+
       await db.upsertTransacaoPluggy(usuarioId, {
         pluggyTransactionId: tx.id,
         tipo,
-        valor: Math.abs(Number(tx.amount) || 0),
+        valor,
         descricao,
         categoria,
         data: String(tx.date || '').slice(0, 10),
         status: mapearStatusTransacaoPluggy(tx.status),
         contaId: mapa.tipo === 'conta' ? mapa.cronos_conta_id : null,
-        cartaoId: mapa.tipo === 'cartao' ? mapa.cronos_cartao_id : null,
+        cartaoId: ehCartao ? mapa.cronos_cartao_id : null,
+        parcelaAtual: parcelamento ? parcelamento.atual : null,
+        parcelaTotal: parcelamento ? parcelamento.total : null,
+        parcelaGrupo,
       });
       if (tipo === 'despesa' && categoria) categoriasDespesaTocadas.add(categoria);
       total++;

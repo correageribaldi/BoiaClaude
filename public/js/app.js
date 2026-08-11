@@ -367,6 +367,19 @@ const CATEGORIA_EMOJI = {
 };
 
 /**
+ * Selo "parcela X de Y" a partir do dado ESTRUTURADO da Pluggy
+ * (creditCardMetadata), não do texto da descrição. Só aparece quando as duas
+ * colunas vieram preenchidas — transação manual, à vista ou de conta corrente
+ * não mostra nada.
+ */
+function badgeParcela(t) {
+  const atual = Number(t && t.parcela_atual);
+  const total = Number(t && t.parcela_total);
+  if (!Number.isInteger(atual) || !Number.isInteger(total) || total < 2) return '';
+  return ` <span title="Parcela ${atual} de ${total}" style="font-size:11px;opacity:.6">${atual}/${total}</span>`;
+}
+
+/**
  * Retorna HTML do ícone para uma transação.
  * Prioridade: marca conhecida (favicon) → categoria (emoji) → tipo (seta).
  */
@@ -651,7 +664,8 @@ function renderPrevisao(dados) {
     <p class="prev-nota">
       Valores <strong>projetados</strong>, não realizados: recorrências ativas +
       lançamentos já registrados no mês (inclusive parcelas futuras) + fatura de
-      cartão estimada.
+      cartão estimada + parcelas de compras no cartão que o banco ainda não
+      lançou.
     </p>`;
 }
 
@@ -924,7 +938,7 @@ function renderTabelaTransacoes(transacoes) {
     const isReceita = t.tipo === 'receita';
     tr.innerHTML = `
       <td>${fmtData(t.data)}</td>
-      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(t.descricao)}</strong>${t.recorrencia_id ? ' <span title="Recorrente" style="font-size:11px;opacity:.6">🔄</span>' : ''}</td>
+      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(t.descricao)}</strong>${badgeParcela(t)}${t.recorrencia_id ? ' <span title="Recorrente" style="font-size:11px;opacity:.6">🔄</span>' : ''}</td>
       <td><span style="font-size:12px;color:var(--text-muted)">${esc(t.categoria || '—')}</span></td>
       <td class="text-right ${isReceita ? 'valor-positivo' : 'valor-negativo'}">${isReceita ? '+' : '-'}${fmtMoeda(t.valor)}</td>
       <td>${t.projetado

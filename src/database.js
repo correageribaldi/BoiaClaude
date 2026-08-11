@@ -2,6 +2,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 const pluggyCrypto = require('./pluggyCrypto');
 const { normalizarEstabelecimento } = require('./estabelecimento');
+const { projetarParcelasRestantes } = require('./parcelamento');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -1128,6 +1129,26 @@ async function initTables() {
       UNIQUE (usuario_id, chave_estabelecimento, tipo)
     );
   `);
+
+  // ─── Parcelamento de compra no cartão (Pluggy creditCardMetadata) ───────────
+  // parcela_atual/parcela_total: dados estruturados da Pluggy (com fallback
+  // pela descrição só em cartão — ver src/parcelamento.js). parcela_grupo:
+  // chave heurística que amarra as parcelas da MESMA compra, porque o Open
+  // Finance não devolve identificador de compra (confirmado na doc da Pluggy).
+  // Todas nullable: transação manual, de conta corrente ou à vista não tem
+  // parcelamento nenhum, e NULL aqui significa exatamente isso — sem
+  // parcela_grupo a projeção simplesmente não enxerga a linha (feature inerte
+  // para o histórico já sincronizado, até a próxima sincronização completa).
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS parcela_atual SMALLINT;
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS parcela_total SMALLINT;
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS parcela_grupo TEXT;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_transacoes_parcela_grupo
+      ON transacoes(usuario_id, parcela_grupo)
+      WHERE parcela_grupo IS NOT NULL;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -1686,7 +1707,8 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   }
 
   let query = `
-    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id, cartao_id, conta_id
+    SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id, cartao_id, conta_id,
+           parcela_atual, parcela_total
     FROM transacoes
     WHERE usuario_id = $1
   `;
@@ -1952,6 +1974,15 @@ async function calcularSaldos(usuarioId) {
 //     é pulado, senão a fatura entraria por (1) e por (3).
 //     Ocorrência de recorrência ainda NÃO materializada nunca está aqui — (3) só
 //     enxerga transação existente — então (2) e (3) são disjuntos por construção.
+//  4. PARCELAS FUTURAS AINDA NÃO LANÇADAS — parcelas de compra no cartão que o
+//     banco ainda não enviou. Existem porque a Pluggy tem dois comportamentos,
+//     conforme a instituição: uns bancos mandam todas as parcelas logo após a
+//     compra (e aí elas já entram por (3), como transação pendente futura),
+//     outros criam uma por vez a cada fatura fechada (e aí a previsão ficaria
+//     cega para meses que já têm compromisso assumido). O corte é o mesmo de
+//     (2): projeta a parcela que falta MENOS a que já virou transação — no
+//     banco que manda tudo, a maior parcela conhecida já é a última e (4) soma
+//     zero sozinho. Ver src/parcelamento.js:projetarParcelasRestantes.
 //
 // Limitação herdada de projetarFaturasCartao: ela só olha `data >= NOW()`, então
 // a fatura projetada do mês corrente ignora compras já feitas neste mês. Mesmo
@@ -1980,7 +2011,7 @@ async function projetarProximosMeses(usuarioId, meses = 6) {
       inicioObj: new Date(ano, mes - 1, 1),
       fimObj:    new Date(ano, mes, 0),
       receitas:  { fixas: 0, lancadas: 0, total: 0 },
-      despesas:  { fixas: 0, lancadas: 0, faturasCartao: 0, total: 0 },
+      despesas:  { fixas: 0, lancadas: 0, faturasCartao: 0, parcelas: 0, total: 0 },
       saldo:     0,
     });
   }
@@ -2057,6 +2088,39 @@ async function projetarProximosMeses(usuarioId, meses = 6) {
         if (valor && valor > 0) m.despesas.faturasCartao += valor;
       }
     }
+
+    // ── (4) Parcelas futuras que o banco ainda não lançou ────────────────────
+    // Só entram as linhas com parcela_grupo gravado (sincronização a partir do
+    // Marco de parcelamento). Histórico sincronizado antes disso tem NULL e
+    // fica de fora — a projeção não inventa nada sobre dado que não tem, e uma
+    // sincronização completa preenche retroativamente.
+    //
+    // Janela de busca até 24 meses para trás da janela exibida: parcelamento
+    // longo (24x é o teto usual no Brasil) precisa da parcela conhecida mais
+    // recente, que pode ser anterior ao mês corrente. Parcela cujo mês já
+    // passou é descartada dentro de projetarParcelasRestantes.
+    const parcelasRes = await pool.query(
+      `SELECT cartao_id, parcela_grupo, parcela_atual, parcela_total, valor::float,
+              TO_CHAR(data, 'YYYY-MM') as chave
+       FROM transacoes
+       WHERE usuario_id = $1
+         AND cartao_id = ANY($2::int[])
+         AND parcela_grupo IS NOT NULL
+         AND parcela_atual IS NOT NULL
+         AND parcela_total IS NOT NULL
+         AND data >= ($3::date - INTERVAL '24 months')`,
+      [uid, cartaoIds, inicioJanela]
+    );
+
+    const parcelasProjetadas = projetarParcelasRestantes(parcelasRes.rows, {
+      chavesJanela: janela.map(m => m.chave),
+      mesAtual: janela[0].chave,
+      faturaJaLancada,
+    });
+    for (const m of janela) {
+      const valor = parcelasProjetadas[m.chave];
+      if (valor && valor > 0) m.despesas.parcelas += valor;
+    }
   }
 
   const arredondar = (n) => Math.round(n * 100) / 100;
@@ -2067,7 +2131,8 @@ async function projetarProximosMeses(usuarioId, meses = 6) {
     m.despesas.fixas         = arredondar(m.despesas.fixas);
     m.despesas.lancadas      = arredondar(m.despesas.lancadas);
     m.despesas.faturasCartao = arredondar(m.despesas.faturasCartao);
-    m.despesas.total         = arredondar(m.despesas.fixas + m.despesas.lancadas + m.despesas.faturasCartao);
+    m.despesas.parcelas      = arredondar(m.despesas.parcelas);
+    m.despesas.total         = arredondar(m.despesas.fixas + m.despesas.lancadas + m.despesas.faturasCartao + m.despesas.parcelas);
     m.saldo = arredondar(m.receitas.total - m.despesas.total);
     delete m.inicioObj;
     delete m.fimObj;
@@ -5325,6 +5390,7 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const {
     pluggyTransactionId, tipo, valor, descricao, categoria, data, status, contaId, cartaoId,
+    parcelaAtual = null, parcelaTotal = null, parcelaGrupo = null,
   } = dados;
 
   const existente = await pool.query(
@@ -5336,16 +5402,18 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
     if (existente.rows[0].categoria_manual) {
       await pool.query(
         `UPDATE transacoes
-         SET valor = $2, descricao = $3, data = $4, status = $5
+         SET valor = $2, descricao = $3, data = $4, status = $5,
+             parcela_atual = $6, parcela_total = $7, parcela_grupo = $8
          WHERE pluggy_transaction_id = $1`,
-        [pluggyTransactionId, valor, descricao, data, status]
+        [pluggyTransactionId, valor, descricao, data, status, parcelaAtual, parcelaTotal, parcelaGrupo]
       );
     } else {
       await pool.query(
         `UPDATE transacoes
-         SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6
+         SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6,
+             parcela_atual = $7, parcela_total = $8, parcela_grupo = $9
          WHERE pluggy_transaction_id = $1`,
-        [pluggyTransactionId, valor, descricao, categoria, data, status]
+        [pluggyTransactionId, valor, descricao, categoria, data, status, parcelaAtual, parcelaTotal, parcelaGrupo]
       );
     }
     return { id: existente.rows[0].id, novo: false };
@@ -5353,11 +5421,13 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
 
   const res = await pool.query(
     `INSERT INTO transacoes
-       (usuario_id, tipo, valor, descricao, categoria, data, status, conta_id, cartao_id, pluggy_transaction_id, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+       (usuario_id, tipo, valor, descricao, categoria, data, status, conta_id, cartao_id, pluggy_transaction_id,
+        parcela_atual, parcela_total, parcela_grupo, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id`,
-    [uid, tipo, valor, descricao, categoria || 'Outros', data, status, contaId || null, cartaoId || null, pluggyTransactionId]
+    [uid, tipo, valor, descricao, categoria || 'Outros', data, status, contaId || null, cartaoId || null, pluggyTransactionId,
+     parcelaAtual, parcelaTotal, parcelaGrupo]
   );
   return { id: res.rows[0].id, novo: true };
 }
