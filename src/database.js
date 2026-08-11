@@ -1167,6 +1167,22 @@ async function initTables() {
   await pool.query(`
     ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS contraparte_hash TEXT;
   `);
+  // ─── Nome limpo do estabelecimento (Pluggy merchant.businessName) ───────────
+  // descricao_exibicao: nome do estabelecimento como a Pluggy conhece, quando
+  // ela conhece (cobertura baixa — enriquecimento opcional, nunca requisito).
+  // A descrição CRUA continua em `descricao`: é ela que alimenta a chave de
+  // aprendizado por estabelecimento e a busca por texto, e perder o texto
+  // original do banco seria perder informação que não volta.
+  //
+  // descricao_manual: mesma ideia de categoria_manual, para o campo descrição.
+  // Sem essa marca não dá para cumprir a regra que a feature exige — "nome
+  // limpo nunca sobrescreve o que o usuário escreveu" —, porque não haveria
+  // como distinguir descrição vinda do banco de descrição digitada por ele.
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS descricao_exibicao TEXT;
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS descricao_manual BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS categoria_aprendida_documento (
       id SERIAL PRIMARY KEY,
@@ -1508,7 +1524,13 @@ async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
 
   // Literal fixo, não interpolação de entrada — campo já passou pelo whitelist
   // acima (mesma proteção que o `SET ${campo}` existente).
-  const marcarManual = campo === 'categoria' ? ', categoria_manual = TRUE' : '';
+  //
+  // descricao_manual existe pelo mesmo motivo de categoria_manual: sem a marca,
+  // o re-sync (e o nome limpo vindo de merchant.businessName) não teria como
+  // saber que aquele texto foi escrito pelo usuário e o sobrescreveria.
+  const marcarManual = campo === 'categoria' ? ', categoria_manual = TRUE'
+    : campo === 'descricao' ? ', descricao_manual = TRUE'
+    : '';
 
   // Origem exclusiva (ver normalizarOrigem): lançamento de cartão nunca recebe
   // conta_id. Sem esse CASE, editar uma compra no cartão pelo painel gravava a
@@ -1752,9 +1774,16 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
     console.warn(`[DB] consultarTransacoes ignorou dataFim invalida: "${dataFim}" (uid=${uid})`);
   }
 
+  // descricao_exibida: nome limpo do estabelecimento quando existe, texto cru
+  // do banco quando não. Descrição editada pelo usuário (descricao_manual)
+  // vence sempre — o enriquecimento nunca pode apagar o que ele escreveu. O
+  // campo `descricao` continua sendo devolvido cru: é ele que o modal de
+  // edição carrega e o que a busca por texto casa.
   let query = `
     SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id, cartao_id, conta_id,
-           parcela_atual, parcela_total
+           parcela_atual, parcela_total,
+           CASE WHEN descricao_manual THEN descricao
+                ELSE COALESCE(NULLIF(descricao_exibicao, ''), descricao) END AS descricao_exibida
     FROM transacoes
     WHERE usuario_id = $1
   `;
@@ -5488,15 +5517,22 @@ async function resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, c
 // (linha ~875).
 //
 // Exceção da categoria: se categoria_manual = TRUE, o usuário já corrigiu essa
-// linha à mão — valor/status/data/descrição continuam sendo atualizados
-// normalmente (o banco é a fonte da verdade para eles), mas a categoria fica
-// como está. Sem isso, todo re-sync desfazia a correção em silêncio.
+// linha à mão — valor/status/data continuam sendo atualizados normalmente (o
+// banco é a fonte da verdade para eles), mas a categoria fica como está. Sem
+// isso, todo re-sync desfazia a correção em silêncio.
+//
+// Mesma exceção para a descrição, via CASE no próprio UPDATE (decidido no
+// banco, sem ler a flag antes — não abre janela de corrida entre a leitura e a
+// escrita): descrição escrita pelo usuário não é sobrescrita pelo texto do
+// banco. descricao_exibicao é dado derivado (merchant.businessName) e é sempre
+// atualizado, com COALESCE para não apagar um nome já conhecido quando a
+// Pluggy não devolve merchant naquele sync.
 async function upsertTransacaoPluggy(usuarioId, dados) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const {
     pluggyTransactionId, tipo, valor, descricao, categoria, data, status, contaId, cartaoId,
     parcelaAtual = null, parcelaTotal = null, parcelaGrupo = null,
-    contraparteHash = null,
+    contraparteHash = null, descricaoExibicao = null,
   } = dados;
 
   const existente = await pool.query(
@@ -5508,20 +5544,24 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
     if (existente.rows[0].categoria_manual) {
       await pool.query(
         `UPDATE transacoes
-         SET valor = $2, descricao = $3, data = $4, status = $5,
+         SET valor = $2, descricao = CASE WHEN descricao_manual THEN descricao ELSE $3 END,
+             data = $4, status = $5,
              parcela_atual = $6, parcela_total = $7, parcela_grupo = $8,
-             contraparte_hash = COALESCE($9, contraparte_hash)
+             contraparte_hash = COALESCE($9, contraparte_hash),
+             descricao_exibicao = COALESCE($10, descricao_exibicao)
          WHERE pluggy_transaction_id = $1`,
-        [pluggyTransactionId, valor, descricao, data, status, parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash]
+        [pluggyTransactionId, valor, descricao, data, status, parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash, descricaoExibicao]
       );
     } else {
       await pool.query(
         `UPDATE transacoes
-         SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6,
+         SET valor = $2, descricao = CASE WHEN descricao_manual THEN descricao ELSE $3 END,
+             categoria = $4, data = $5, status = $6,
              parcela_atual = $7, parcela_total = $8, parcela_grupo = $9,
-             contraparte_hash = COALESCE($10, contraparte_hash)
+             contraparte_hash = COALESCE($10, contraparte_hash),
+             descricao_exibicao = COALESCE($11, descricao_exibicao)
          WHERE pluggy_transaction_id = $1`,
-        [pluggyTransactionId, valor, descricao, categoria, data, status, parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash]
+        [pluggyTransactionId, valor, descricao, categoria, data, status, parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash, descricaoExibicao]
       );
     }
     return { id: existente.rows[0].id, novo: false };
@@ -5530,12 +5570,12 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   const res = await pool.query(
     `INSERT INTO transacoes
        (usuario_id, tipo, valor, descricao, categoria, data, status, conta_id, cartao_id, pluggy_transaction_id,
-        parcela_atual, parcela_total, parcela_grupo, contraparte_hash, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+        parcela_atual, parcela_total, parcela_grupo, contraparte_hash, descricao_exibicao, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id`,
     [uid, tipo, valor, descricao, categoria || 'Outros', data, status, contaId || null, cartaoId || null, pluggyTransactionId,
-     parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash]
+     parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash, descricaoExibicao]
   );
   return { id: res.rows[0].id, novo: true };
 }

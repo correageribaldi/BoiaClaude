@@ -97,7 +97,7 @@ test('upsertTransacaoPluggy: transação nova faz INSERT com numero_usuario calc
   const insert = queries.find(q => q.sql.includes('INSERT INTO transacoes'));
   assert.deepEqual(insert.params, [
     'user1@c.us', 'despesa', 150.5, 'PIX MERCADO XYZ', 'Supermercado', '2026-08-01', 'pago', 10, null, 'tx-abc',
-    null, null, null, null,
+    null, null, null, null, null,
   ]);
 });
 
@@ -126,7 +126,7 @@ test('upsertTransacaoPluggy: grava parcelamento quando a transação é parcelad
   });
 
   const insert = queries.find(q => q.sql.includes('INSERT INTO transacoes'));
-  assert.deepEqual(insert.params.slice(-4), [7, 10, 'loja ficticia|10', null]);
+  assert.deepEqual(insert.params.slice(-5), [7, 10, 'loja ficticia|10', null, null]);
   assert.match(insert.sql, /parcela_atual, parcela_total, parcela_grupo/);
 });
 
@@ -157,7 +157,7 @@ test('upsertTransacaoPluggy: transação já existente (mesmo pluggy_transaction
   assert.equal(insertChamado, false, 'não deveria inserir quando já existe pelo pluggy_transaction_id');
 
   const update = queries.find(q => q.sql.includes('UPDATE transacoes'));
-  assert.deepEqual(update.params, ['tx-abc', 200, 'PIX MERCADO XYZ (atualizado)', 'Supermercado', '2026-08-01', 'pago', null, null, null, null]);
+  assert.deepEqual(update.params, ['tx-abc', 200, 'PIX MERCADO XYZ (atualizado)', 'Supermercado', '2026-08-01', 'pago', null, null, null, null, null]);
 });
 
 // ── removerTransacoesPluggyPorIds ────────────────────────────────────────────────

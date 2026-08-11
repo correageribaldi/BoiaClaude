@@ -214,7 +214,8 @@ test('upsertTransacaoPluggy: grava contraparte_hash no INSERT', async (t) => {
 
   const insert = queries.find(q => q.sql.includes('INSERT INTO transacoes'));
   assert.match(insert.sql, /contraparte_hash/);
-  assert.equal(insert.params[insert.params.length - 1], HASH_B);
+  // Penúltimo parâmetro: o último é descricao_exibicao (nome limpo da Pluggy).
+  assert.equal(insert.params.at(-2), HASH_B);
 });
 
 test('upsertTransacaoPluggy: re-sync sem documento não apaga o hash já gravado (COALESCE)', async (t) => {

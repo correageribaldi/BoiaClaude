@@ -679,6 +679,12 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
         parcelaTotal: parcelamento ? parcelamento.total : null,
         parcelaGrupo,
         contraparteHash,
+        // Nome limpo do estabelecimento — enriquecimento OPCIONAL (a Pluggy só
+        // devolve merchant numa fração das transações). Vai para coluna
+        // própria; a descrição crua do banco continua intacta em `descricao`.
+        descricaoExibicao: typeof tx.merchant?.businessName === 'string' && tx.merchant.businessName.trim()
+          ? tx.merchant.businessName.trim()
+          : null,
       });
       if (tipo === 'despesa' && categoria) categoriasDespesaTocadas.add(categoria);
       total++;

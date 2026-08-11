@@ -367,6 +367,17 @@ const CATEGORIA_EMOJI = {
 };
 
 /**
+ * Texto a EXIBIR para uma transação. O backend já decide (nome limpo do
+ * estabelecimento vs. descrição crua vs. o que o usuário digitou) e manda
+ * pronto em `descricao_exibida`; aqui só existe o fallback para projeções e
+ * outras linhas montadas no próprio front, que não passam pelo SELECT.
+ * O ícone continua saindo da descrição crua — é nela que estão as marcas.
+ */
+function descricaoExibida(t) {
+  return (t && (t.descricao_exibida || t.descricao)) || '';
+}
+
+/**
  * Selo "parcela X de Y" a partir do dado ESTRUTURADO da Pluggy
  * (creditCardMetadata), não do texto da descrição. Só aparece quando as duas
  * colunas vieram preenchidas — transação manual, à vista ou de conta corrente
@@ -825,7 +836,7 @@ async function carregarUltimasTx() {
       return `<div class="dash-tx-item">
         <div class="dash-tx-icon ${t.tipo}">${iconeTx(t.descricao, t.categoria, t.tipo)}</div>
         <div class="dash-tx-info">
-          <div class="dash-tx-desc">${t.descricao || '—'}</div>
+          <div class="dash-tx-desc">${descricaoExibida(t) || '—'}</div>
           <div class="dash-tx-meta">${fmtData(t.data)}${t.categoria ? ' · ' + t.categoria : ''}</div>
         </div>
         <div class="dash-tx-valor ${t.tipo}">${fmtMoeda(t.valor)}</div>
@@ -938,7 +949,7 @@ function renderTabelaTransacoes(transacoes) {
     const isReceita = t.tipo === 'receita';
     tr.innerHTML = `
       <td>${fmtData(t.data)}</td>
-      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(t.descricao)}</strong>${badgeParcela(t)}${t.recorrencia_id ? ' <span title="Recorrente" style="font-size:11px;opacity:.6">🔄</span>' : ''}</td>
+      <td><span class="tx-icon-inline">${iconeTx(t.descricao, t.categoria, t.tipo)}</span> <strong>${esc(descricaoExibida(t))}</strong>${badgeParcela(t)}${t.recorrencia_id ? ' <span title="Recorrente" style="font-size:11px;opacity:.6">🔄</span>' : ''}</td>
       <td><span style="font-size:12px;color:var(--text-muted)">${esc(t.categoria || '—')}</span></td>
       <td class="text-right ${isReceita ? 'valor-positivo' : 'valor-negativo'}">${isReceita ? '+' : '-'}${fmtMoeda(t.valor)}</td>
       <td>${t.projetado
