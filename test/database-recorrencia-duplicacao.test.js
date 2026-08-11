@@ -69,7 +69,11 @@ test('adicionarTransacaoComRecorrencia: usa ON CONFLICT DO NOTHING contra a trav
     'user1@c.us', 'receita', 1500, 'Salário', 'Salário', '2026-08-01', 'pendente', 369
   );
 
-  assert.match(sqlCapturada, /ON CONFLICT \(recorrencia_id, \(date_trunc\('month', data\)\)\)/);
+  // data::timestamp força a sobrecarga IMMUTABLE de date_trunc — sem o cast,
+  // o Postgres recusa a expressão no índice (STABLE, não IMMUTABLE) e o boot
+  // cai (incidente de produção já vivido nesta correção). O alvo do ON
+  // CONFLICT precisa citar a MESMA expressão do índice, literalmente.
+  assert.match(sqlCapturada, /ON CONFLICT \(recorrencia_id, \(date_trunc\('month', data::timestamp\)\)\)/);
   assert.match(sqlCapturada, /DO NOTHING/);
 });
 
@@ -101,7 +105,7 @@ test('limparRecorrenciasDuplicadas: prioriza a transação da Pluggy, depois a m
 
   await db.limparRecorrenciasDuplicadas();
 
-  assert.match(sqlCapturada, /PARTITION BY recorrencia_id, date_trunc\('month', data\)/);
+  assert.match(sqlCapturada, /PARTITION BY recorrencia_id, date_trunc\('month', data::timestamp\)/);
   // pluggy_transaction_id IS NULL = false (0) vem primeiro no ASC — ou seja,
   // quem TEM pluggy_transaction_id (veio da Pluggy) é o rn=1 preservado.
   assert.match(sqlCapturada, /ORDER BY \(pluggy_transaction_id IS NULL\) ASC, criado_em ASC, id ASC/);
@@ -118,4 +122,45 @@ test('limparRecorrenciasDuplicadas: é idempotente (roda de novo sem args extras
   await db.limparRecorrenciasDuplicadas();
 
   assert.equal(chamadas, 2, 'cada chamada dispara exatamente um DELETE, seguro para rodar de novo no próximo boot');
+});
+
+// ── Blindagem: incidente de produção — a criação do índice (função de
+// date_trunc não-IMMUTABLE) propagou pra fora de initTables e derrubou o
+// boot em loop de restart. Daqui pra frente, falha nessas duas migrações
+// específicas loga e SEGUE o boot — nunca derruba o app inteiro. ────────────
+
+test('initTables: falha ao criar idx_transacoes_recorrencia_mes não derruba o boot', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql) => {
+    if (sql.includes('idx_transacoes_recorrencia_mes')) {
+      throw new Error('functions in index expression must be marked IMMUTABLE');
+    }
+    return { rows: [] };
+  });
+  const erroLogado = t.mock.method(console, 'error', () => {});
+
+  await assert.doesNotReject(() => db.initTables());
+
+  assert.ok(
+    erroLogado.mock.calls.some(c => String(c.arguments[0]).includes('idx_transacoes_recorrencia_mes')),
+    'o erro precisa ser logado, não engolido silenciosamente'
+  );
+});
+
+test('initTables: falha na limpeza retroativa (DELETE) não derruba o boot', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'query', async (sql) => {
+    if (sql.includes('DELETE FROM transacoes') && sql.includes('ranked')) {
+      throw new Error('erro simulado na limpeza retroativa');
+    }
+    return { rows: [] };
+  });
+  const erroLogado = t.mock.method(console, 'error', () => {});
+
+  await assert.doesNotReject(() => db.initTables());
+
+  assert.ok(
+    erroLogado.mock.calls.some(c => String(c.arguments[0]).includes('limpar recorrências duplicadas')),
+    'o erro precisa ser logado, não engolido silenciosamente'
+  );
 });

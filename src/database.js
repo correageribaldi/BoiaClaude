@@ -188,7 +188,7 @@ async function limparRecorrenciasDuplicadas() {
     WITH ranked AS (
       SELECT id,
              ROW_NUMBER() OVER (
-               PARTITION BY recorrencia_id, date_trunc('month', data)
+               PARTITION BY recorrencia_id, date_trunc('month', data::timestamp)
                ORDER BY (pluggy_transaction_id IS NULL) ASC, criado_em ASC, id ASC
              ) AS rn
       FROM transacoes
@@ -1285,17 +1285,40 @@ async function initTables() {
   //
   // Precisa rodar ANTES do índice único abaixo: se sobrar duplicata, a
   // criação do índice falha.
-  await limparRecorrenciasDuplicadas();
+  //
+  // BLINDAGEM: incidente de produção — a primeira versão deste índice usava
+  // date_trunc('month', data) sem cast. date_trunc(text, timestamptz) é
+  // STABLE (depende do fuso da sessão), não IMMUTABLE, e o Postgres recusa
+  // função não-IMMUTABLE em expressão de índice. O erro propagou pra fora de
+  // initTables, derrubou a conexão no boot e o app entrou em loop de restart.
+  // Por isso a limpeza E a criação do índice rodam em try/catch: uma migração
+  // nova falhando não pode impedir o app inteiro de subir. Se cair aqui, os
+  // dados continuam protegidos pela checagem em aplicação (webserver.js) —
+  // mais fraca que o índice, mas o app fica no ar enquanto se investiga.
+  try {
+    await limparRecorrenciasDuplicadas();
+  } catch (err) {
+    console.error('[DB] initTables: falha ao limpar recorrências duplicadas (boot segue sem a limpeza):', err.message);
+  }
 
   // Trava real: independente da lógica de aplicação, o banco nunca deixa
   // existir mais de uma transação materializada da mesma recorrência no
   // mesmo mês. adicionarTransacaoComRecorrencia trata a violação (ON CONFLICT
   // DO NOTHING) sem quebrar o laço de materialização — ver comentário lá.
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_transacoes_recorrencia_mes
-      ON transacoes (recorrencia_id, (date_trunc('month', data)))
-      WHERE recorrencia_id IS NOT NULL;
-  `);
+  //
+  // data::timestamp (não timestamptz) força a sobrecarga IMMUTABLE de
+  // date_trunc — obrigatório para entrar em índice. O ON CONFLICT de
+  // adicionarTransacaoComRecorrencia precisa citar a MESMA expressão,
+  // literalmente, ou o Postgres não reconhece o alvo do conflito.
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_transacoes_recorrencia_mes
+        ON transacoes (recorrencia_id, (date_trunc('month', data::timestamp)))
+        WHERE recorrencia_id IS NOT NULL;
+    `);
+  } catch (err) {
+    console.error('[DB] initTables: falha ao criar idx_transacoes_recorrencia_mes (boot segue sem a trava de índice):', err.message);
+  }
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -1401,7 +1424,7 @@ async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descrica
     `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, conta_id, numero_usuario)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
-     ON CONFLICT (recorrencia_id, (date_trunc('month', data))) WHERE recorrencia_id IS NOT NULL
+     ON CONFLICT (recorrencia_id, (date_trunc('month', data::timestamp))) WHERE recorrencia_id IS NOT NULL
      DO NOTHING
      RETURNING id, numero_usuario`,
     [uid, tipo, valor, descricao, categoria || 'Outros',
