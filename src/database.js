@@ -175,6 +175,34 @@ async function resolverUsuarioPrincipal(usuarioId) {
   return principal;
 }
 
+// Limpeza retroativa IDEMPOTENTE de recorrências materializadas em duplicata
+// (ver bug descrito em initTables, chamada logo abaixo, ANTES do índice único
+// idx_transacoes_recorrencia_mes). Para cada (recorrencia_id, mês), mantém
+// UMA transação e apaga as demais. Prioridade de qual mantém:
+//   1) a mais antiga que veio da Pluggy (pluggy_transaction_id IS NOT NULL)
+//      — é a transação real; as duplicatas foram geradas depois pelo bug;
+//   2) se nenhuma veio da Pluggy, a mais antiga por criado_em/id (a original,
+//      lançada manualmente ou pela primeira materialização).
+async function limparRecorrenciasDuplicadas() {
+  const result = await pool.query(`
+    WITH ranked AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY recorrencia_id, date_trunc('month', data)
+               ORDER BY (pluggy_transaction_id IS NULL) ASC, criado_em ASC, id ASC
+             ) AS rn
+      FROM transacoes
+      WHERE recorrencia_id IS NOT NULL
+    )
+    DELETE FROM transacoes
+    WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+    RETURNING id;
+  `);
+  if (result.rowCount > 0) {
+    console.log(`[DB] limparRecorrenciasDuplicadas: ${result.rowCount} transação(ões) duplicada(s) removida(s) (recorrência já materializada no mês)`);
+  }
+}
+
 async function initTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS categorias (
@@ -1245,6 +1273,29 @@ async function initTables() {
       UNIQUE (usuario_id, documento_hash, tipo)
     );
   `);
+
+  // ─── Trava anti-duplicação de recorrências materializadas ──────────────────
+  // Bug de produção: GET /api/transactions materializava projeções de
+  // recorrência dentro de um endpoint de LEITURA. Quando a requisição tinha
+  // qualquer filtro (tipo/conta/cartão/status), a lista usada para checar "essa
+  // recorrência já tem transação no mês" vinha filtrada e ficava vazia, e o
+  // código materializava de novo a cada combinação de filtro aberta no painel
+  // — inflando receitas/despesas do usuário a cada carregamento (ver correção
+  // em webserver.js e em adicionarTransacaoComRecorrencia).
+  //
+  // Precisa rodar ANTES do índice único abaixo: se sobrar duplicata, a
+  // criação do índice falha.
+  await limparRecorrenciasDuplicadas();
+
+  // Trava real: independente da lógica de aplicação, o banco nunca deixa
+  // existir mais de uma transação materializada da mesma recorrência no
+  // mesmo mês. adicionarTransacaoComRecorrencia trata a violação (ON CONFLICT
+  // DO NOTHING) sem quebrar o laço de materialização — ver comentário lá.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transacoes_recorrencia_mes
+      ON transacoes (recorrencia_id, (date_trunc('month', data)))
+      WHERE recorrencia_id IS NOT NULL;
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -1341,15 +1392,27 @@ function calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj) {
 async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId, cartaoId = null, contaId = null) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const origem = normalizarOrigem(cartaoId, contaId);
+  // ON CONFLICT contra idx_transacoes_recorrencia_mes (recorrencia_id + mês):
+  // esta função é chamada em laço por GET /api/transactions (materialização
+  // de projeções) e pode ser acionada de novo para a mesma ocorrência por
+  // requisições concorrentes/repetidas. Sem o DO NOTHING o INSERT falharia
+  // com 23505 e o laço de materialização quebraria no meio.
   const result = await pool.query(
     `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, conta_id, numero_usuario)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
+     ON CONFLICT (recorrencia_id, (date_trunc('month', data))) WHERE recorrencia_id IS NOT NULL
+     DO NOTHING
      RETURNING id, numero_usuario`,
     [uid, tipo, valor, descricao, categoria || 'Outros',
      data || dataHojeBR(), status || 'pago', recorrenciaId || null,
      origem.cartaoId, origem.contaId]
   );
+  if (result.rows.length === 0) {
+    // Já existe transação materializada para essa recorrência neste mês —
+    // não é erro, é o caso normal que a trava do banco existe para cobrir.
+    return { lastInsertRowid: null, dbId: null, duplicado: true };
+  }
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
 }
 
@@ -1882,6 +1945,27 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   params.push(limite || 20);
 
   const result = await pool.query(query, params);
+  return result.rows;
+}
+
+// Usada por GET /api/transactions para decidir quais ocorrências projetadas
+// já têm transação real (e não devem ser materializadas de novo). Query
+// ENXUTA, e de propósito SEM qualquer filtro de tipo/conta/cartão/status —
+// bug de produção corrigido aqui: reusar a lista já filtrada da própria
+// requisição fazia o endpoint materializar a mesma recorrência de novo a
+// cada combinação de filtro aberta no painel (idsComTransacao ficava vazio
+// sempre que havia filtro, porque a recorrência não passava no filtro).
+async function listarRecorrenciaIdsNoPeriodo(usuarioId, dataInicio, dataFim) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const dataInicioValida = normalizarDataISO(dataInicio);
+  const dataFimValida = normalizarDataISO(dataFim);
+  const result = await pool.query(
+    `SELECT recorrencia_id, TO_CHAR(data, 'YYYY-MM-DD') as data
+     FROM transacoes
+     WHERE usuario_id = $1 AND recorrencia_id IS NOT NULL
+       AND data >= $2 AND data <= $3`,
+    [uid, dataInicioValida, dataFimValida]
+  );
   return result.rows;
 }
 
@@ -5904,6 +5988,8 @@ module.exports = {
   listarCategoriasParaIA,
   listarSubcategoriasPorTipo,
   consultarTransacoes,
+  listarRecorrenciaIdsNoPeriodo,
+  limparRecorrenciasDuplicadas,
   consultarTotalTransacoes,
   liquidarTransacao,
   liquidarTransacaoPorId,

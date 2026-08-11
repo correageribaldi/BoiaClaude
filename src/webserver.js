@@ -201,13 +201,14 @@ app.get('/api/transactions', autenticar, async (req, res) => {
         const dataFimObj = new Date(dataFim + 'T12:00:00');
         const ocorrencias = db.calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj);
 
-        // Excluir projeções já cobertas por transação real (qualquer status, para cobrir itens pulados)
-        // Busca sem filtro de status para garantir que itens "pago" (pulados) também suprimam projeções
-        const todasNoMes = status
-          ? await db.consultarTransacoes(req.usuarioId, { dataInicio: dataInicio || null, dataFim: dataFim || null, limite: 1000 })
-          : transacoes;
+        // Excluir projeções já cobertas por transação real (qualquer status, para cobrir itens pulados).
+        // SEMPRE via query dedicada e SEM filtro de tipo/conta/cartão/status — nunca reusar
+        // `transacoes`, que já vem filtrada pelos parâmetros da requisição. Bug de produção: ao
+        // reusar a lista filtrada, qualquer filtro aberto no painel esvaziava idsComTransacao e o
+        // bloco abaixo materializava a mesma recorrência de novo a cada combinação de filtro.
+        const recorrenciasNoPeriodo = await db.listarRecorrenciaIdsNoPeriodo(req.usuarioId, dataInicio, dataFim);
         const idsComTransacao = new Set(
-          todasNoMes
+          recorrenciasNoPeriodo
             .filter(t => t.recorrencia_id != null)
             .map(t => t.recorrencia_id)
         );
