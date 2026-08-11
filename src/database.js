@@ -1149,6 +1149,36 @@ async function initTables() {
       ON transacoes(usuario_id, parcela_grupo)
       WHERE parcela_grupo IS NOT NULL;
   `);
+
+  // ─── Aprendizado de categoria por DOCUMENTO da contraparte ──────────────────
+  // A Pluggy entrega CPF/CNPJ de quem pagou/recebeu em praticamente toda
+  // transação de conta — identidade muito mais estável que o texto da
+  // descrição, que muda de forma a cada lançamento do mesmo prestador.
+  //
+  // A coluna guarda HASH, nunca o documento: é dado pessoal de TERCEIRO e o
+  // produto não precisa do valor, só de saber se é a mesma contraparte. HMAC
+  // com a chave mestra da instalação, que vive fora do banco — ver
+  // src/contraparte.js para o raciocínio completo (CPF puro tem espaço de
+  // busca pequeno demais para um hash sem segredo proteger alguma coisa).
+  //
+  // Tabela separada de categoria_aprendida, e não uma coluna a mais lá, para
+  // não mexer na UNIQUE de uma tabela que já está em produção com dado do
+  // usuário — migração aditiva pura, sem janela de risco.
+  await pool.query(`
+    ALTER TABLE transacoes ADD COLUMN IF NOT EXISTS contraparte_hash TEXT;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS categoria_aprendida_documento (
+      id SERIAL PRIMARY KEY,
+      usuario_id TEXT NOT NULL,
+      documento_hash TEXT NOT NULL,
+      tipo TEXT NOT NULL CHECK(tipo IN ('despesa', 'receita')),
+      categoria TEXT NOT NULL,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (usuario_id, documento_hash, tipo)
+    );
+  `);
 }
 
 // ─── Recorrências ────────────────────────────────────────────────────────────
@@ -1492,7 +1522,7 @@ async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   const result = await pool.query(
     `UPDATE transacoes SET ${setClause}
      WHERE numero_usuario = $2 AND usuario_id = $3
-     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, cartao_id, conta_id`,
+     RETURNING numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, cartao_id, conta_id, contraparte_hash`,
     [novoValor, numeroUsuario, uid]
   );
   const atualizada = result.rows[0] || null;
@@ -1501,13 +1531,29 @@ async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   // lançamentos do mesmo lugar (ver registrarCategoriaAprendida). Nunca derruba
   // a edição em si — se o aprendizado falhar, a transação já foi atualizada e
   // era isso que o usuário pediu.
+  //
+  // Os dois aprendizados são gravados quando a transação tem documento da
+  // contraparte: o textual continua cobrindo os lançamentos sem paymentData
+  // (compra no cartão, por exemplo), e o por documento cobre o mesmo prestador
+  // quando ele aparece com outra descrição. Um não substitui o outro.
   if (atualizada && campo === 'categoria') {
     try {
       await registrarCategoriaAprendida(uid, atualizada.descricao, atualizada.tipo, atualizada.categoria);
     } catch (err) {
       console.error('[DB] Falha ao registrar categoria aprendida (edição preservada):', err.message);
     }
+    if (atualizada.contraparte_hash) {
+      try {
+        await registrarCategoriaAprendidaDocumento(uid, atualizada.contraparte_hash, atualizada.tipo, atualizada.categoria);
+      } catch (err) {
+        console.error('[DB] Falha ao registrar categoria aprendida por documento (edição preservada):', err.message);
+      }
+    }
   }
+
+  // contraparte_hash é detalhe interno do aprendizado — não vai para a resposta
+  // da API nem para a tela. Quem chama recebe exatamente os campos de antes.
+  if (atualizada) delete atualizada.contraparte_hash;
 
   return atualizada;
 }
@@ -5255,10 +5301,62 @@ async function buscarCategoriaAprendida(usuarioId, descricao, tipo) {
   return buscarCategoriaAprendidaResolvida(uid, descricao, tipo);
 }
 
+// ─── Aprendizado por DOCUMENTO da contraparte (CPF/CNPJ hasheado) ────────────
+//
+// Mesma ideia do aprendizado por texto, com uma chave melhor: o hash do
+// documento de quem pagou/recebeu. Vale mais que a chave textual porque o
+// mesmo prestador aparece com descrições diferentes a cada lançamento, e o
+// documento é o mesmo sempre.
+//
+// `documentoHash` já chega hasheado de src/contraparte.js — esta camada nunca
+// vê, grava nem loga o documento em si. hash nulo (sem paymentData, sem chave
+// mestra configurada) simplesmente não aprende nem consulta.
+
+async function registrarCategoriaAprendidaDocumento(usuarioId, documentoHash, tipo, categoria) {
+  if (!documentoHash || !categoria) return null;
+
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const tipoChave = tipo === 'receita' ? 'receita' : 'despesa';
+
+  await pool.query(
+    `INSERT INTO categoria_aprendida_documento (usuario_id, documento_hash, tipo, categoria)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (usuario_id, documento_hash, tipo)
+     DO UPDATE SET categoria = EXCLUDED.categoria, atualizado_em = NOW()`,
+    [uid, documentoHash, tipoChave, categoria]
+  );
+
+  return documentoHash;
+}
+
+// Variante com o usuário JÁ resolvido — mesmo motivo de
+// buscarCategoriaAprendidaResolvida (chamada dentro do laço de sync).
+async function buscarCategoriaAprendidaDocumentoResolvida(uid, documentoHash, tipo) {
+  if (!documentoHash) return null;
+
+  const res = await pool.query(
+    `SELECT categoria FROM categoria_aprendida_documento
+     WHERE usuario_id = $1 AND documento_hash = $2 AND tipo = $3`,
+    [uid, documentoHash, tipo === 'receita' ? 'receita' : 'despesa']
+  );
+  return res.rows[0]?.categoria || null;
+}
+
+async function buscarCategoriaAprendidaDocumento(usuarioId, documentoHash, tipo) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  return buscarCategoriaAprendidaDocumentoResolvida(uid, documentoHash, tipo);
+}
+
 // Resolve a categoria de uma transação Pluggy para o Cronos:
-// 0. Aprendizado do próprio usuário para aquele estabelecimento (ver acima) —
-//    tem prioridade sobre tudo, inclusive quando a Pluggy não manda categoria
-//    nenhuma (que é exatamente o caso das transações que caíram em "Outros").
+// 0a. Aprendizado por DOCUMENTO da contraparte (CPF/CNPJ hasheado) — a chave
+//    mais forte que existe aqui: o mesmo prestador muda de descrição a cada
+//    lançamento, mas não muda de documento. Por isso vem ANTES da chave
+//    textual; quando as duas discordam, a do documento é a que reflete "eu já
+//    disse quem é essa pessoa/empresa".
+// 0b. Aprendizado do próprio usuário para aquele estabelecimento (ver acima) —
+//    tem prioridade sobre tudo que vem da Pluggy, inclusive quando ela não
+//    manda categoria nenhuma (que é exatamente o caso das transações que
+//    caíram em "Outros").
 // 1. Match EXATO (case/acento-insensível) contra uma subcategoria já
 //    cadastrada do usuário — ver resolverCategoriaPluggyPorTaxonomia. Tem que
 //    vir ANTES do fuzzy: senão "Compras" batendo ao mesmo tempo em "Compras" E
@@ -5282,18 +5380,25 @@ async function buscarCategoriaAprendida(usuarioId, descricao, tipo) {
 //    pioraria a ambiguidade): fallback genérico já usado no fluxo manual
 //    (CATEGORIA_GENERICA_POR_TIPO em src/agente-financeiro.js).
 // descricao: descrição CRUA da transação (a mesma que vai ser gravada), usada
-// só para consultar o aprendizado. Último parâmetro e opcional para não mexer
-// nos call sites que não têm essa informação.
-async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categoriaPrincipalDestino = null, descricao = null) {
+// só para consultar o aprendizado. contraparteHash: hash do CPF/CNPJ do outro
+// lado (ver src/contraparte.js) — nunca o documento. Últimos parâmetros e
+// opcionais para não mexer nos call sites que não têm essa informação.
+async function resolverCategoriaPluggy(usuarioId, categoriaPluggy, tipo, categoriaPrincipalDestino = null, descricao = null, contraparteHash = null) {
   const generica = CATEGORIA_GENERICA_PLUGGY_POR_TIPO[tipo] || 'Outros';
 
-  // Sem descrição para consultar aprendizado e sem categoria da Pluggy: não há
-  // o que decidir, cai no genérico sem tocar no banco.
-  if (!descricao && !categoriaPluggy) return generica;
+  // Sem nada para consultar aprendizado (nem descrição, nem documento) e sem
+  // categoria da Pluggy: não há o que decidir, cai no genérico sem tocar no banco.
+  if (!descricao && !categoriaPluggy && !contraparteHash) return generica;
 
   const uid = await resolverUsuarioPrincipal(usuarioId);
 
-  // (0) Aprendizado do usuário — consultado ANTES do early return de categoria
+  // (0a) Aprendizado por documento — chave mais confiável, vem primeiro.
+  if (contraparteHash) {
+    const porDocumento = await buscarCategoriaAprendidaDocumentoResolvida(uid, contraparteHash, tipo);
+    if (porDocumento) return porDocumento;
+  }
+
+  // (0b) Aprendizado por texto — consultado ANTES do early return de categoria
   // ausente de propósito: transação sem categoria na Pluggy é justamente a que
   // mais se beneficia de "eu já disse o que é esse lugar".
   if (descricao) {
@@ -5391,6 +5496,7 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   const {
     pluggyTransactionId, tipo, valor, descricao, categoria, data, status, contaId, cartaoId,
     parcelaAtual = null, parcelaTotal = null, parcelaGrupo = null,
+    contraparteHash = null,
   } = dados;
 
   const existente = await pool.query(
@@ -5403,17 +5509,19 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
       await pool.query(
         `UPDATE transacoes
          SET valor = $2, descricao = $3, data = $4, status = $5,
-             parcela_atual = $6, parcela_total = $7, parcela_grupo = $8
+             parcela_atual = $6, parcela_total = $7, parcela_grupo = $8,
+             contraparte_hash = COALESCE($9, contraparte_hash)
          WHERE pluggy_transaction_id = $1`,
-        [pluggyTransactionId, valor, descricao, data, status, parcelaAtual, parcelaTotal, parcelaGrupo]
+        [pluggyTransactionId, valor, descricao, data, status, parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash]
       );
     } else {
       await pool.query(
         `UPDATE transacoes
          SET valor = $2, descricao = $3, categoria = $4, data = $5, status = $6,
-             parcela_atual = $7, parcela_total = $8, parcela_grupo = $9
+             parcela_atual = $7, parcela_total = $8, parcela_grupo = $9,
+             contraparte_hash = COALESCE($10, contraparte_hash)
          WHERE pluggy_transaction_id = $1`,
-        [pluggyTransactionId, valor, descricao, categoria, data, status, parcelaAtual, parcelaTotal, parcelaGrupo]
+        [pluggyTransactionId, valor, descricao, categoria, data, status, parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash]
       );
     }
     return { id: existente.rows[0].id, novo: false };
@@ -5422,12 +5530,12 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   const res = await pool.query(
     `INSERT INTO transacoes
        (usuario_id, tipo, valor, descricao, categoria, data, status, conta_id, cartao_id, pluggy_transaction_id,
-        parcela_atual, parcela_total, parcela_grupo, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+        parcela_atual, parcela_total, parcela_grupo, contraparte_hash, numero_usuario)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
        (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
      RETURNING id`,
     [uid, tipo, valor, descricao, categoria || 'Outros', data, status, contaId || null, cartaoId || null, pluggyTransactionId,
-     parcelaAtual, parcelaTotal, parcelaGrupo]
+     parcelaAtual, parcelaTotal, parcelaGrupo, contraparteHash]
   );
   return { id: res.rows[0].id, novo: true };
 }
@@ -5731,6 +5839,8 @@ module.exports = {
   resolverCategoriaPluggy,
   registrarCategoriaAprendida,
   buscarCategoriaAprendida,
+  registrarCategoriaAprendidaDocumento,
+  buscarCategoriaAprendidaDocumento,
   garantirCategoriaPrincipal,
   upsertTransacaoPluggy,
   removerTransacoesPluggyPorIds,

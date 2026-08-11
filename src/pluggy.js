@@ -13,6 +13,7 @@ const https = require('https');
 const db = require('./database');
 const limites = require('./limites');
 const { extrairParcelamento, chaveGrupoParcela } = require('./parcelamento');
+const { hashContraparte } = require('./contraparte');
 
 // Lazy require: ./queue abre conexão TCP real ao Redis assim que importado
 // (top-level, dentro do módulo). Se carregássemos isso no topo deste arquivo,
@@ -645,7 +646,14 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
       const categoriaPrincipalDestino = categoriaPrincipalParaGrupoRaiz(tx.categoryId, categoriasPluggy);
       // descricao no fim: aprendizado do usuário para aquele estabelecimento
       // tem prioridade sobre a categoria que a Pluggy sugere.
-      const categoria = await db.resolverCategoriaPluggy(usuarioId, categoriaTraduzida, tipo, categoriaPrincipalDestino, descricao);
+      // Identidade da contraparte: HASH do CPF/CNPJ de quem pagou/recebeu
+      // (nunca o documento — ver src/contraparte.js). Chave de aprendizado
+      // mais forte que a descrição, por isso entra na resolução de categoria
+      // com prioridade sobre a chave textual.
+      const contraparteHash = hashContraparte(tx.paymentData, tipo);
+      const categoria = await db.resolverCategoriaPluggy(
+        usuarioId, categoriaTraduzida, tipo, categoriaPrincipalDestino, descricao, contraparteHash
+      );
 
       const valor = Math.abs(Number(tx.amount) || 0);
       // Parcelamento: campo estruturado (creditCardMetadata) quando existe,
@@ -670,6 +678,7 @@ async function sincronizarItem(usuarioId, itemId, opcoes = {}) {
         parcelaAtual: parcelamento ? parcelamento.atual : null,
         parcelaTotal: parcelamento ? parcelamento.total : null,
         parcelaGrupo,
+        contraparteHash,
       });
       if (tipo === 'despesa' && categoria) categoriasDespesaTocadas.add(categoria);
       total++;
