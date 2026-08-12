@@ -75,6 +75,7 @@ test('upsertTransacaoPluggy: transação nova faz INSERT com numero_usuario calc
   t.mock.method(db.pool, 'query', async (sql, params) => {
     queries.push({ sql, params });
     if (sql.includes('FROM transacoes WHERE pluggy_transaction_id')) return { rows: [] };
+    if (sql.includes('FROM recorrencias')) return { rows: [] };
     if (sql.includes('INSERT INTO transacoes')) return { rows: [{ id: 42 }] };
     throw new Error(`Query inesperada: ${sql}`);
   });
@@ -95,9 +96,11 @@ test('upsertTransacaoPluggy: transação nova faz INSERT com numero_usuario calc
   assert.equal(resultado.id, 42);
 
   const insert = queries.find(q => q.sql.includes('INSERT INTO transacoes'));
+  // $11 é recorrencia_id — null aqui porque o usuário não tem regra que case
+  // (ver test/database-pluggy-recorrencia.test.js para o caminho vinculado).
   assert.deepEqual(insert.params, [
     'user1@c.us', 'despesa', 150.5, 'PIX MERCADO XYZ', 'Supermercado', '2026-08-01', 'pago', 10, null, 'tx-abc',
-    null, null, null, null, null,
+    null, null, null, null, null, null,
   ]);
 });
 
@@ -107,6 +110,7 @@ test('upsertTransacaoPluggy: grava parcelamento quando a transação é parcelad
   t.mock.method(db.pool, 'query', async (sql, params) => {
     queries.push({ sql, params });
     if (sql.includes('FROM transacoes WHERE pluggy_transaction_id')) return { rows: [] };
+    if (sql.includes('FROM recorrencias')) return { rows: [] };
     if (sql.includes('INSERT INTO transacoes')) return { rows: [{ id: 43 }] };
     throw new Error(`Query inesperada: ${sql}`);
   });

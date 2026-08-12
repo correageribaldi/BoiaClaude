@@ -202,6 +202,7 @@ test('upsertTransacaoPluggy: grava contraparte_hash no INSERT', async (t) => {
   t.mock.method(db.pool, 'query', async (sql, params) => {
     queries.push({ sql, params });
     if (sql.includes('FROM transacoes WHERE pluggy_transaction_id')) return { rows: [] };
+    if (sql.includes('FROM recorrencias')) return { rows: [] };
     if (sql.includes('INSERT INTO transacoes')) return { rows: [{ id: 90 }] };
     throw new Error(`Query inesperada: ${sql}`);
   });

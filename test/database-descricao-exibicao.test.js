@@ -24,6 +24,7 @@ test('upsertTransacaoPluggy: nome limpo vai para descricao_exibicao, não por ci
   t.mock.method(db.pool, 'query', async (sql, params) => {
     queries.push({ sql, params });
     if (sql.includes('FROM transacoes WHERE pluggy_transaction_id')) return { rows: [] };
+    if (sql.includes('FROM recorrencias')) return { rows: [] };
     if (sql.includes('INSERT INTO transacoes')) return { rows: [{ id: 100 }] };
     throw new Error(`Query inesperada: ${sql}`);
   });
