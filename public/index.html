@@ -1063,6 +1063,50 @@
   </div>
 </div>
 
+<!-- ── Modal de editar janela e faixa de uma recorrência existente ───────
+     Único caminho para dar (ou tirar) janela e faixa de uma regra que já
+     existe — nasceu antes destas colunas ou passou batido pelo passo
+     opcional na criação. Os quatro campos vão numa chamada só
+     (PUT /api/recorrencias/:id/regra); ver salvarRecRegra em app.js e
+     atualizarJanelaFaixaRecorrencia em src/database.js. -->
+<div class="modal-overlay hidden" id="modal-rec-regra">
+  <div class="modal-box modal-box-center">
+    <div class="modal-header">
+      <h3 id="rec-regra-titulo">Janela e faixa</h3>
+      <button class="modal-close" onclick="fecharModalRecRegra()">✕</button>
+    </div>
+    <input type="hidden" id="rec-regra-id">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Janela de dias</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" id="rec-regra-dia-inicial" class="input" min="1" max="31" placeholder="do dia">
+        <span style="color:var(--text-muted);font-size:13px">a</span>
+        <input type="number" id="rec-regra-dia-limite" class="input" min="1" max="31" placeholder="até o dia">
+      </div>
+      <p class="empty-hint hidden" id="rec-regra-janela-aviso" style="text-align:left;padding-top:6px">
+        Esta regra é semanal — casa pelo dia da semana, não usa janela de dias do mês.
+      </p>
+    </div>
+    <div class="form-group" style="margin-bottom:8px">
+      <label style="color:var(--text-muted);font-size:13px">Faixa de valor do mês (R$)</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" id="rec-regra-valor-min" class="input" step="0.01" min="0" placeholder="mínimo">
+        <span style="color:var(--text-muted);font-size:13px">a</span>
+        <input type="number" id="rec-regra-valor-max" class="input" step="0.01" min="0" placeholder="máximo">
+      </div>
+    </div>
+    <p class="empty-hint" style="text-align:left;padding:0 0 16px">
+      Vale para o total do mês, não para cada entrada. Deixe em branco para
+      não usar faixa (ou apague o que já estiver preenchido para voltar ao
+      comportamento sem faixa).
+    </p>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="fecharModalRecRegra()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarRecRegra()">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Modal de nova caixinha ──────────────────────────────────────────── -->
 <div class="modal-overlay hidden" id="modal-nova-caixinha">
   <div class="modal-box modal-box-center">

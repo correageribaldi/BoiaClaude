@@ -3998,6 +3998,11 @@ async function carregarRecorrenciasDoMes() {
   if (!recs.length) { wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
 
+  // Cache local por id: o modal de editar janela/faixa precisa da regra
+  // inteira (inclusive frequência, pra saber se a janela se aplica) sem
+  // depender de um novo round-trip — a lista acabou de trazer tudo.
+  _recsCache = new Map(recs.map(r => [r.id, r]));
+
   list.innerHTML = '';
   const DIAS_SEMANA = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
   for (const r of recs) {
@@ -4013,6 +4018,7 @@ async function carregarRecorrenciasDoMes() {
           <span class="rec-meta">${esc(freq)} · ${fmtMoeda(r.valor)} · ${esc(r.categoria || '—')}${textoRegraCasamento(r)}</span>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="action-btn" title="Editar janela e faixa" onclick="abrirModalEditarRecRegra(${r.id})">✏️</button>
           <button class="action-btn" title="Excluir" onclick="excluirRecorrenciaConfirm(${r.id}, '${esc(r.descricao)}')">🗑️</button>
         </div>
       </div>
@@ -4023,6 +4029,8 @@ async function carregarRecorrenciasDoMes() {
 
   atualizarResumoRecorrencias(recs);
 }
+
+let _recsCache = new Map();
 
 // O cabeçalho do bloco recolhido já responde a pergunta principal do mês, para
 // a informação não custar um clique: quanto entrou do previsto somando todas
@@ -4132,6 +4140,64 @@ async function excluirRecorrenciaConfirm(id, desc) {
   try {
     await api(`/api/recurrences/${id}`, { method: 'DELETE' });
     toast('Recorrência excluída.', 'success');
+    carregarTransacoes();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Editar janela e faixa de uma recorrência existente ───────────────────────
+//
+// Único caminho para dar janela/faixa a uma regra que já existe sem uma — sem
+// isto, uma regra criada antes destas colunas (ou sem o passo opcional
+// preenchido) ficaria presa para sempre. Os quatro campos vão numa chamada só
+// (PUT /api/recorrencias/:id/regra): ver o comentário de
+// atualizarJanelaFaixaRecorrencia em src/database.js para o porquê de não
+// reusar o PUT campo-a-campo aqui.
+function abrirModalEditarRecRegra(id) {
+  const r = _recsCache.get(id);
+  if (!r) return;
+
+  // Janela de dias só existe para mensal/anual (semanal casa pelo dia da
+  // semana — ver normalizarRegraCasamento). Desabilitar em vez de esconder:
+  // o usuário vê por que o campo não se aplica em vez de estranhar o sumiço.
+  const janelaAplica = r.frequencia === 'mensal' || r.frequencia === 'anual';
+
+  document.getElementById('rec-regra-id').value = r.id;
+  document.getElementById('rec-regra-titulo').textContent = `Janela e faixa — ${r.descricao}`;
+  document.getElementById('rec-regra-dia-inicial').value = r.dia_inicial ?? '';
+  document.getElementById('rec-regra-dia-limite').value = r.dia_limite ?? '';
+  document.getElementById('rec-regra-valor-min').value = r.valor_min ?? '';
+  document.getElementById('rec-regra-valor-max').value = r.valor_max ?? '';
+  document.getElementById('rec-regra-dia-inicial').disabled = !janelaAplica;
+  document.getElementById('rec-regra-dia-limite').disabled = !janelaAplica;
+  document.getElementById('rec-regra-janela-aviso').classList.toggle('hidden', janelaAplica);
+
+  document.getElementById('modal-rec-regra').classList.remove('hidden');
+}
+
+function fecharModalRecRegra() {
+  document.getElementById('modal-rec-regra').classList.add('hidden');
+}
+
+// Campo vazio vira null explícito — é como o usuário limpa um lado (ou os
+// dois) da janela/faixa e volta ao comportamento antigo (sem faixa/derivada).
+async function salvarRecRegra() {
+  const id = parseInt(document.getElementById('rec-regra-id').value);
+  const valorOuNulo = (elId) => {
+    const v = document.getElementById(elId).value.trim();
+    return v === '' ? null : v;
+  };
+
+  const body = {
+    dia_inicial: valorOuNulo('rec-regra-dia-inicial'),
+    dia_limite:  valorOuNulo('rec-regra-dia-limite'),
+    valor_min:   valorOuNulo('rec-regra-valor-min'),
+    valor_max:   valorOuNulo('rec-regra-valor-max'),
+  };
+
+  try {
+    await api(`/api/recorrencias/${id}/regra`, { method: 'PUT', body: JSON.stringify(body) });
+    toast('Janela e faixa atualizadas.', 'success');
+    fecharModalRecRegra();
     carregarTransacoes();
   } catch (err) { toast(err.message, 'error'); }
 }
