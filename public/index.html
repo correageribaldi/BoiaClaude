@@ -886,7 +886,7 @@
     <div id="nova-tx-rec-fields" class="hidden">
       <div class="form-group" style="margin-bottom:16px">
         <label style="color:var(--text-muted);font-size:13px">Frequência</label>
-        <select id="nova-tx-rec-freq" class="input">
+        <select id="nova-tx-rec-freq" class="input" onchange="sugerirRegraNovaTx()">
           <option value="mensal">Mensal</option>
           <option value="semanal">Semanal</option>
         </select>
@@ -902,6 +902,31 @@
         <label style="color:var(--text-muted);font-size:13px">Número de repetições</label>
         <input type="number" id="nova-tx-rec-vezes" class="input" min="2" max="120" placeholder="Ex: 12">
       </div>
+      <!-- Os dois eixos com que o próximo lançamento do banco reconhece esta
+           regra: em que dias a ocorrência do mês cai e quanto o mês pode somar.
+           Já vêm sugeridos a partir da própria transação (ver sugerirRegraNovaTx).
+           Campo vazio = sem regra, comportamento padrão. -->
+      <div id="nova-tx-rec-janela-wrap" class="form-group" style="margin-bottom:16px">
+        <label style="color:var(--text-muted);font-size:13px">Janela de dias</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="number" id="nova-tx-rec-dia-inicial" class="input" min="1" max="31" placeholder="do dia">
+          <span style="color:var(--text-muted);font-size:13px">a</span>
+          <input type="number" id="nova-tx-rec-dia-limite" class="input" min="1" max="31" placeholder="até o dia">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:8px">
+        <label style="color:var(--text-muted);font-size:13px">Faixa de valor do mês (R$)</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="number" id="nova-tx-rec-valor-min" class="input" step="0.01" min="0" placeholder="mínimo">
+          <span style="color:var(--text-muted);font-size:13px">a</span>
+          <input type="number" id="nova-tx-rec-valor-max" class="input" step="0.01" min="0" placeholder="máximo">
+        </div>
+      </div>
+      <p class="empty-hint" style="text-align:left;padding:0 0 16px">
+        Vale para o total do mês, não para cada entrada: se o valor chegar em
+        partes, todas somam nesta mesma recorrência até o máximo. Deixe em
+        branco para não usar faixa.
+      </p>
     </div>
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="fecharModalNovaTx()">Cancelar</button>
@@ -1252,7 +1277,7 @@
       <div id="editar-tx-rec-fields" class="hidden" style="margin-top:12px">
         <div class="form-group" style="margin-bottom:16px">
           <label style="color:var(--text-muted);font-size:13px">Frequência</label>
-          <select id="editar-tx-rec-freq" class="input">
+          <select id="editar-tx-rec-freq" class="input" onchange="sugerirRegraEditarTx()">
             <option value="mensal">Mensal</option>
             <option value="semanal">Semanal</option>
           </select>
@@ -1264,13 +1289,33 @@
             <button class="toggle-btn" type="button" data-val="vezes" onclick="toggleEditarRecDuracao(this)">Por X vezes</button>
           </div>
         </div>
-        <div id="editar-tx-rec-vezes-wrap" class="form-group hidden" style="margin-bottom:8px">
+        <div id="editar-tx-rec-vezes-wrap" class="form-group hidden" style="margin-bottom:16px">
           <label style="color:var(--text-muted);font-size:13px">Número de repetições</label>
           <input type="number" id="editar-tx-rec-vezes" class="input" min="2" max="120" placeholder="Ex: 12">
         </div>
+        <!-- Mesmos campos de regra do modal de nova transação: os dois caminhos
+             criam recorrência, e uma regra criada por um tem de reconhecer os
+             lançamentos como a criada pelo outro. -->
+        <div id="editar-tx-rec-janela-wrap" class="form-group" style="margin-bottom:16px">
+          <label style="color:var(--text-muted);font-size:13px">Janela de dias</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="editar-tx-rec-dia-inicial" class="input" min="1" max="31" placeholder="do dia">
+            <span style="color:var(--text-muted);font-size:13px">a</span>
+            <input type="number" id="editar-tx-rec-dia-limite" class="input" min="1" max="31" placeholder="até o dia">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label style="color:var(--text-muted);font-size:13px">Faixa de valor do mês (R$)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="editar-tx-rec-valor-min" class="input" step="0.01" min="0" placeholder="mínimo">
+            <span style="color:var(--text-muted);font-size:13px">a</span>
+            <input type="number" id="editar-tx-rec-valor-max" class="input" step="0.01" min="0" placeholder="máximo">
+          </div>
+        </div>
         <p class="empty-hint" style="text-align:left;padding:0">
           Este lançamento vira a 1ª ocorrência. Os próximos entram como previsão —
-          nenhum lançamento futuro é criado agora.
+          nenhum lançamento futuro é criado agora. A faixa vale para o total do
+          mês: se o valor chegar em partes, todas somam nesta mesma recorrência.
         </p>
       </div>
     </div>

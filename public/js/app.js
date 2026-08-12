@@ -1238,9 +1238,26 @@ async function abrirModalEditar(tx) {
 
 let _editarRecDuracao = 'indeterminado';
 
+// Sugestão a partir do lançamento em edição — mesma conta do modal de nova
+// transação, lendo os campos já preenchidos (o usuário pode ter corrigido
+// valor ou data antes de marcar como recorrente).
+function sugerirRegraEditarTx() {
+  _sugerirRegra({
+    freqId: 'editar-tx-rec-freq',
+    janelaWrapId: 'editar-tx-rec-janela-wrap',
+    diaInicialId: 'editar-tx-rec-dia-inicial',
+    diaLimiteId: 'editar-tx-rec-dia-limite',
+    valorMinId: 'editar-tx-rec-valor-min',
+    valorMaxId: 'editar-tx-rec-valor-max',
+    data: document.getElementById('editar-tx-data')?.value,
+    valor: document.getElementById('editar-tx-valor')?.value,
+  });
+}
+
 function toggleEditarRecorrenciaFields() {
   const checked = document.getElementById('editar-tx-recorrente').checked;
   document.getElementById('editar-tx-rec-fields').classList.toggle('hidden', !checked);
+  if (checked) sugerirRegraEditarTx();
 }
 
 function toggleEditarRecDuracao(btn) {
@@ -1296,7 +1313,16 @@ async function salvarEdicaoTx() {
     if (virarRecorrente) {
       await api(`/api/transactions/${id}/recorrencia`, {
         method: 'POST',
-        body: JSON.stringify({ frequencia: document.getElementById('editar-tx-rec-freq').value, vezes }),
+        body: JSON.stringify({
+          frequencia: document.getElementById('editar-tx-rec-freq').value,
+          vezes,
+          ...lerCamposRegra({
+            diaInicialId: 'editar-tx-rec-dia-inicial',
+            diaLimiteId: 'editar-tx-rec-dia-limite',
+            valorMinId: 'editar-tx-rec-valor-min',
+            valorMaxId: 'editar-tx-rec-valor-max',
+          }),
+        }),
       });
     }
     toast(virarRecorrente ? '🔄 Lançamento marcado como recorrente!' : '✅ Transação atualizada!', 'success');
@@ -3430,11 +3456,91 @@ function toggleNovaTxStatus(btn) {
 
 let _recDuracao = 'indeterminado';
 
+// ── Sugestão de janela e faixa a partir do próprio lançamento ────────────────
+//
+// Os dois eixos com que o lançamento importado do banco vai reconhecer a regra
+// (ver src/recorrencia-match.js) são obrigatórios para o casamento funcionar
+// bem, mas ninguém quer preencher quatro números à mão toda vez. A sugestão
+// sai do lançamento que está sendo criado; o usuário ajusta ou apaga.
+//
+// A janela é ±5 dias em torno do dia do lançamento — exatamente a janela que o
+// backend deriva sozinho para regra sem janela explícita (JANELA_DIAS_PADRAO),
+// então aceitar a sugestão não muda comportamento nenhum, só torna a regra
+// editável.
+//
+// A faixa vai do valor do lançamento até 1,5× ele. O piso é o valor porque é o
+// que o usuário espera receber/pagar; o teto dá espaço para a parte que chega
+// depois (a comissão em cima do salário, o mês com reajuste) entrar na mesma
+// recorrência em vez de virar lançamento avulso. Ele arredonda ou apaga se não
+// for o caso — faixa em branco devolve o comportamento de fechar no valor.
+const RECORRENCIA_JANELA_SUGERIDA = 5;
+const RECORRENCIA_TETO_SUGERIDO = 1.5;
+
+function _sugerirRegra({ freqId, janelaWrapId, diaInicialId, diaLimiteId, valorMinId, valorMaxId, data, valor }) {
+  const mensal = document.getElementById(freqId)?.value !== 'semanal';
+  const wrap = document.getElementById(janelaWrapId);
+  if (wrap) wrap.classList.toggle('hidden', !mensal);
+
+  const dia = data ? new Date(data + 'T12:00:00').getDate() : null;
+  const inicial = document.getElementById(diaInicialId);
+  const limite = document.getElementById(diaLimiteId);
+  if (inicial && limite) {
+    // Regra semanal não tem janela de mês — o backend descarta as colunas de
+    // qualquer jeito, e deixar número na tela sugeriria um efeito que não existe.
+    const podeSugerir = mensal && Number.isFinite(dia);
+    inicial.value = podeSugerir ? Math.max(1, dia - RECORRENCIA_JANELA_SUGERIDA) : '';
+    limite.value  = podeSugerir ? Math.min(31, dia + RECORRENCIA_JANELA_SUGERIDA) : '';
+  }
+
+  const min = document.getElementById(valorMinId);
+  const max = document.getElementById(valorMaxId);
+  const v = Number(valor);
+  if (min && max) {
+    const valido = Number.isFinite(v) && v > 0;
+    min.value = valido ? v.toFixed(2) : '';
+    max.value = valido ? (Math.ceil(v * RECORRENCIA_TETO_SUGERIDO)).toFixed(2) : '';
+  }
+}
+
+// Campos de regra do formulário no formato que a API espera (snake_case), com
+// vazio virando null — "sem janela"/"sem faixa" é resposta legítima e é o que
+// mantém o comportamento antigo para quem não quer configurar nada.
+function lerCamposRegra({ diaInicialId, diaLimiteId, valorMinId, valorMaxId }) {
+  const num = (id) => {
+    const bruto = document.getElementById(id)?.value;
+    if (bruto === undefined || bruto === null || bruto === '') return null;
+    const n = Number(bruto);
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    dia_inicial: num(diaInicialId),
+    dia_limite: num(diaLimiteId),
+    valor_min: num(valorMinId),
+    valor_max: num(valorMaxId),
+  };
+}
+
+function sugerirRegraNovaTx() {
+  _sugerirRegra({
+    freqId: 'nova-tx-rec-freq',
+    janelaWrapId: 'nova-tx-rec-janela-wrap',
+    diaInicialId: 'nova-tx-rec-dia-inicial',
+    diaLimiteId: 'nova-tx-rec-dia-limite',
+    valorMinId: 'nova-tx-rec-valor-min',
+    valorMaxId: 'nova-tx-rec-valor-max',
+    data: document.getElementById('nova-tx-data')?.value,
+    valor: document.getElementById('nova-tx-valor')?.value,
+  });
+}
+
 function toggleRecorrenciaFields() {
   const checked = document.getElementById('nova-tx-recorrente').checked;
   document.getElementById('nova-tx-rec-fields').classList.toggle('hidden', !checked);
   // Parcelas e recorrência são mutuamente exclusivos
   document.getElementById('nova-tx-parcelas').closest('.form-group').classList.toggle('hidden', checked);
+  // Sugere no momento de marcar, quando data e valor já foram digitados —
+  // sugerir na abertura do modal pegaria os campos vazios.
+  if (checked) sugerirRegraNovaTx();
 }
 
 function toggleRecDuracao(btn) {
@@ -3539,6 +3645,15 @@ async function salvarNovaTx() {
       };
       if (freq === 'mensal') body.dia_mes = dt.getDate();
       if (freq === 'semanal') body.dia_semana = dt.getDay();
+
+      // Campo vazio vai como null de propósito: é "sem janela"/"sem faixa", e
+      // o backend trata isso como a regra sem os dois eixos.
+      Object.assign(body, lerCamposRegra({
+        diaInicialId: 'nova-tx-rec-dia-inicial',
+        diaLimiteId: 'nova-tx-rec-dia-limite',
+        valorMinId: 'nova-tx-rec-valor-min',
+        valorMaxId: 'nova-tx-rec-valor-max',
+      }));
 
       if (_recDuracao === 'vezes') {
         const vezes = parseInt(document.getElementById('nova-tx-rec-vezes').value);
