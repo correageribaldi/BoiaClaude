@@ -88,11 +88,13 @@ async function criarPendentesDeRecorrencias() {
           [usuarioId, o.recorrencia_id, anoMes]
         );
         if (existeRes.rows.length === 0) {
-          // Criar transação pendente para o lembrete
+          // Criar transação pendente para o lembrete. projetada = TRUE: é o
+          // sistema materializando a ocorrência do dia, não um fato do
+          // extrato — ver adicionarTransacaoComRecorrencia.
           await db.adicionarTransacaoComRecorrencia(
             usuarioId, o.tipo, o.valor, o.descricao,
             o.categoria, hojeISO, 'pendente', o.recorrencia_id,
-            o.cartao_id, o.conta_id
+            o.cartao_id, o.conta_id, true
           );
           console.log(`[RECORRENCIA] Criada pendente lazy: ${o.descricao} (${usuarioId})`);
         }

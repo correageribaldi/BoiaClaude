@@ -176,31 +176,38 @@ async function resolverUsuarioPrincipal(usuarioId) {
   return principal;
 }
 
-// Limpeza retroativa IDEMPOTENTE de recorrências materializadas em duplicata
-// (ver bug descrito em initTables, chamada logo abaixo, ANTES do índice único
-// idx_transacoes_recorrencia_mes). Para cada (recorrencia_id, mês), mantém
-// UMA transação e apaga as demais. Prioridade de qual mantém:
-//   1) a mais antiga que veio da Pluggy (pluggy_transaction_id IS NOT NULL)
-//      — é a transação real; as duplicatas foram geradas depois pelo bug;
-//   2) se nenhuma veio da Pluggy, a mais antiga por criado_em/id (a original,
-//      lançada manualmente ou pela primeira materialização).
-async function limparRecorrenciasDuplicadas() {
+// Limpeza retroativa IDEMPOTENTE de PROJEÇÕES em duplicata (ver bug descrito
+// em initTables, chamada de lá, ANTES do índice único idx_transacoes_projecao_mes).
+//
+// PERIGO QUE ESTA FUNÇÃO JÁ FOI: a versão anterior particionava por
+// (recorrencia_id, mês) sobre TODAS as transações da recorrência e apagava
+// toda segunda linha, a cada boot. Aquilo era correto enquanto o modelo era
+// "uma transação por mês"; virou destruição de dados no modelo de acumulação,
+// onde salário + comissão no mesmo mês são duas entradas legítimas da mesma
+// recorrência. A cada restart o usuário perderia a segunda entrada, sem aviso.
+//
+// Agora o escopo é só `projetada = TRUE`: a duplicata que este projeto precisa
+// varrer é a projeção materializada em duplicidade — nunca um lançamento real.
+// Para cada (recorrencia_id, mês) mantém a projeção mais antiga (criado_em/id)
+// e apaga as demais.
+async function limparProjecoesDuplicadas() {
   const result = await pool.query(`
     WITH ranked AS (
       SELECT id,
              ROW_NUMBER() OVER (
                PARTITION BY recorrencia_id, date_trunc('month', data::timestamp)
-               ORDER BY (pluggy_transaction_id IS NULL) ASC, criado_em ASC, id ASC
+               ORDER BY criado_em ASC, id ASC
              ) AS rn
       FROM transacoes
       WHERE recorrencia_id IS NOT NULL
+        AND projetada = TRUE
     )
     DELETE FROM transacoes
     WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
     RETURNING id;
   `);
   if (result.rowCount > 0) {
-    console.log(`[DB] limparRecorrenciasDuplicadas: ${result.rowCount} transação(ões) duplicada(s) removida(s) (recorrência já materializada no mês)`);
+    console.log(`[DB] limparProjecoesDuplicadas: ${result.rowCount} projeção(ões) duplicada(s) removida(s) (mesma recorrência, mesmo mês)`);
   }
 }
 
@@ -1275,50 +1282,172 @@ async function initTables() {
     );
   `);
 
-  // ─── Trava anti-duplicação de recorrências materializadas ──────────────────
-  // Bug de produção: GET /api/transactions materializava projeções de
-  // recorrência dentro de um endpoint de LEITURA. Quando a requisição tinha
-  // qualquer filtro (tipo/conta/cartão/status), a lista usada para checar "essa
-  // recorrência já tem transação no mês" vinha filtrada e ficava vazia, e o
-  // código materializava de novo a cada combinação de filtro aberta no painel
-  // — inflando receitas/despesas do usuário a cada carregamento (ver correção
-  // em webserver.js e em adicionarTransacaoComRecorrencia).
+  // ─── Modelo de acumulação: projeção explícita, janela e consolidação ───────
   //
-  // Precisa rodar ANTES do índice único abaixo: se sobrar duplicata, a
-  // criação do índice falha.
+  // Contexto. Até aqui o sistema assumia UMA transação por (recorrência, mês):
+  // o índice único idx_transacoes_recorrencia_mes proibia a segunda, e
+  // limparRecorrenciasDuplicadas apagava a segunda a cada boot. Isso conteve o
+  // bug de materialização em duplicata, mas é incompatível com o que o produto
+  // passa a fazer: uma receita recorrente pode chegar em VÁRIAS entradas no
+  // mesmo mês (salário + comissão, por exemplo), e todas são legítimas.
   //
-  // BLINDAGEM: incidente de produção — a primeira versão deste índice usava
-  // date_trunc('month', data) sem cast. date_trunc(text, timestamptz) é
-  // STABLE (depende do fuso da sessão), não IMMUTABLE, e o Postgres recusa
-  // função não-IMMUTABLE em expressão de índice. O erro propagou pra fora de
-  // initTables, derrubou a conexão no boot e o app entrou em loop de restart.
-  // Por isso a limpeza E a criação do índice rodam em try/catch: uma migração
-  // nova falhando não pode impedir o app inteiro de subir. Se cair aqui, os
-  // dados continuam protegidos pela checagem em aplicação (webserver.js) —
-  // mais fraca que o índice, mas o app fica no ar enquanto se investiga.
+  // O que muda: a trava deixa de ser "uma transação por mês" e passa a ser
+  // "uma PROJEÇÃO por mês". Para isso a projeção deixa de ser inferida
+  // (`pendente` + sem pluggy_transaction_id — que também descreve um
+  // lançamento manual do usuário) e vira coluna explícita `projetada`.
+  //
+  // Cada bloco abaixo é idempotente E tem try/catch próprio: migração que
+  // falha loga e o boot segue. Um erro aqui já derrubou produção em loop de
+  // restart e não pode se repetir. A ORDEM importa e está comentada em cada
+  // etapa.
+
+  // (0) Registro de migrações de uma passada só. Existe por causa do backfill
+  // de `projetada`, que é heurístico: rodar a cada boot marcaria como projeção
+  // lançamentos manuais pendentes criados DEPOIS da migração, e a limpeza os
+  // apagaria. Uma vez aplicado, nunca mais roda.
   try {
-    await limparRecorrenciasDuplicadas();
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS migracoes_aplicadas (
+        nome TEXT PRIMARY KEY,
+        aplicada_em TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
   } catch (err) {
-    console.error('[DB] initTables: falha ao limpar recorrências duplicadas (boot segue sem a limpeza):', err.message);
+    console.error('[DB] initTables: falha ao criar migracoes_aplicadas (backfills de uma passada podem repetir):', err.message);
   }
 
-  // Trava real: independente da lógica de aplicação, o banco nunca deixa
-  // existir mais de uma transação materializada da mesma recorrência no
-  // mesmo mês. adicionarTransacaoComRecorrencia trata a violação (ON CONFLICT
-  // DO NOTHING) sem quebrar o laço de materialização — ver comentário lá.
+  // (1) Colunas novas em transacoes.
+  //   projetada  — esta linha foi materializada por uma regra de recorrência
+  //                (não é um fato do extrato). É a chave da trava nova.
+  //   observacao — texto livre do usuário, para anotar o que aquela entrada
+  //                é ("comissão", "13º"). Nunca escrito pelo sync.
+  try {
+    await pool.query(`
+      ALTER TABLE transacoes
+        ADD COLUMN IF NOT EXISTS projetada BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE transacoes
+        ADD COLUMN IF NOT EXISTS observacao TEXT;
+    `);
+  } catch (err) {
+    console.error('[DB] initTables: falha ao criar colunas projetada/observacao:', err.message);
+  }
+
+  // (2) Backfill de `projetada` para o histórico. Heurística de uma passada só,
+  // a mesma que o código usava para inferir projeção antes da coluna existir.
+  // Best-effort assumido: um lançamento manual pendente vinculado à mão a uma
+  // recorrência (via tornarTransacaoRecorrente) é indistinguível de uma
+  // projeção nos dados antigos e será marcado como projeção. Daqui para frente
+  // não há ambiguidade — só adicionarTransacaoComRecorrencia marca projetada.
+  try {
+    const jaAplicada = await pool.query(
+      `SELECT 1 FROM migracoes_aplicadas WHERE nome = 'backfill_projetada_2026_08'`
+    );
+    if (jaAplicada.rows.length === 0) {
+      const res = await pool.query(`
+        UPDATE transacoes SET projetada = TRUE
+        WHERE recorrencia_id IS NOT NULL
+          AND pluggy_transaction_id IS NULL
+          AND status = 'pendente'
+          AND projetada = FALSE
+      `);
+      await pool.query(
+        `INSERT INTO migracoes_aplicadas (nome) VALUES ('backfill_projetada_2026_08')
+         ON CONFLICT (nome) DO NOTHING`
+      );
+      console.log(`[DB] initTables: backfill de transacoes.projetada aplicado (${res.rowCount} linha[s]).`);
+    }
+  } catch (err) {
+    console.error('[DB] initTables: falha no backfill de projetada (boot segue):', err.message);
+  }
+
+  // (3) Janela explícita da recorrência. Até aqui a janela de casamento era
+  // derivada em código (dia_mes ± 5); agora é dado da regra, editável.
+  //
+  // O backfill preserva o comportamento atual: [dia_mes - 5, dia_mes + 5],
+  // grampeado em [1, 31]. Só preenche onde está NULL, então é idempotente e
+  // não desfaz janela que o usuário tenha ajustado. Diferença conhecida e
+  // aceita: para dia_mes >= 29 em mês curto, a janela derivada antiga
+  // encostava no último dia do mês pelo lado de baixo (fevereiro, dia 23);
+  // a explícita fica um ou dois dias mais estreita. Frequência semanal/diária
+  // não usa essas colunas — continua no dia da semana (ver recorrencia-match).
+  try {
+    await pool.query(`
+      ALTER TABLE recorrencias
+        ADD COLUMN IF NOT EXISTS dia_inicial INTEGER CHECK (dia_inicial BETWEEN 1 AND 31);
+      ALTER TABLE recorrencias
+        ADD COLUMN IF NOT EXISTS dia_limite INTEGER CHECK (dia_limite BETWEEN 1 AND 31);
+    `);
+    await pool.query(`
+      UPDATE recorrencias
+      SET dia_inicial = GREATEST(1, dia_mes - 5),
+          dia_limite  = LEAST(31, dia_mes + 5)
+      WHERE dia_mes IS NOT NULL
+        AND frequencia IN ('mensal', 'anual')
+        AND (dia_inicial IS NULL OR dia_limite IS NULL)
+    `);
+  } catch (err) {
+    console.error('[DB] initTables: falha ao criar/backfillar janela das recorrências:', err.message);
+  }
+
+  // (4) Consolidação: fecha o mês de uma recorrência pelo total REAL que
+  // entrou, em vez do valor previsto. Tabela própria (e não uma coluna em
+  // recorrencias) porque é um fato POR COMPETÊNCIA, e porque apagar a linha é
+  // o desfazer — a ação é reversível por construção.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS recorrencias_consolidacoes (
+        id SERIAL PRIMARY KEY,
+        usuario_id TEXT NOT NULL,
+        recorrencia_id INTEGER NOT NULL REFERENCES recorrencias(id) ON DELETE CASCADE,
+        competencia TEXT NOT NULL,
+        valor_total NUMERIC(12,2) NOT NULL,
+        quantidade INTEGER NOT NULL DEFAULT 0,
+        consolidado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (recorrencia_id, competencia)
+      );
+      CREATE INDEX IF NOT EXISTS idx_consolidacoes_usuario
+        ON recorrencias_consolidacoes(usuario_id, competencia);
+    `);
+  } catch (err) {
+    console.error('[DB] initTables: falha ao criar recorrencias_consolidacoes:', err.message);
+  }
+
+  // (5) Limpeza retroativa — AGORA só de projeções em duplicata. Precisa rodar
+  // ANTES da criação do índice (duplicata remanescente faz o CREATE falhar) e
+  // DEPOIS do backfill de `projetada` (sem ele não haveria o que comparar).
+  // Ver limparProjecoesDuplicadas para o motivo de ela ter deixado de apagar
+  // "toda segunda linha do mês".
+  try {
+    await limparProjecoesDuplicadas();
+  } catch (err) {
+    console.error('[DB] initTables: falha ao limpar projeções duplicadas (boot segue sem a limpeza):', err.message);
+  }
+
+  // (6) Fora a trava antiga. Ela proíbe exatamente o que a acumulação exige:
+  // duas transações reais da mesma recorrência no mesmo mês. Enquanto ela
+  // existir, a segunda entrada do mês é recusada com 23505 e o vínculo é
+  // perdido (upsertTransacaoPluggy degrada para lançamento avulso).
+  try {
+    await pool.query(`DROP INDEX IF EXISTS idx_transacoes_recorrencia_mes;`);
+  } catch (err) {
+    console.error('[DB] initTables: falha ao remover idx_transacoes_recorrencia_mes (acumulação fica bloqueada):', err.message);
+  }
+
+  // (7) Trava nova: no máximo uma PROJEÇÃO por (recorrência, mês) — que era o
+  // bug original — e nenhum limite para lançamentos reais.
   //
   // data::timestamp (não timestamptz) força a sobrecarga IMMUTABLE de
   // date_trunc — obrigatório para entrar em índice. O ON CONFLICT de
-  // adicionarTransacaoComRecorrencia precisa citar a MESMA expressão,
-  // literalmente, ou o Postgres não reconhece o alvo do conflito.
+  // adicionarTransacaoComRecorrencia precisa citar a MESMA expressão e o MESMO
+  // predicado, literalmente, ou o Postgres não reconhece o alvo do conflito.
   try {
     await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_transacoes_recorrencia_mes
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_transacoes_projecao_mes
         ON transacoes (recorrencia_id, (date_trunc('month', data::timestamp)))
-        WHERE recorrencia_id IS NOT NULL;
+        WHERE recorrencia_id IS NOT NULL AND projetada = TRUE;
     `);
   } catch (err) {
-    console.error('[DB] initTables: falha ao criar idx_transacoes_recorrencia_mes (boot segue sem a trava de índice):', err.message);
+    console.error('[DB] initTables: falha ao criar idx_transacoes_projecao_mes (boot segue sem a trava de índice):', err.message);
   }
 }
 
@@ -1413,28 +1542,53 @@ function calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj) {
 // A origem (cartaoId/contaId) vem da regra — ver normalizarOrigem: cartão e
 // conta são mutuamente exclusivos, senão o lançamento entraria duas vezes no
 // saldo (uma direto na conta, outra pela fatura).
-async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId, cartaoId = null, contaId = null) {
+//
+// `projetada` diz se a linha é uma PROJEÇÃO (o sistema materializando a
+// ocorrência de uma regra) ou um lançamento real que por acaso nasce vinculado
+// à regra (onboarding declarando o que já aconteceu, "pular ocorrência",
+// confirmação do usuário). O default é FALSE de propósito: um chamador novo
+// que esqueça o parâmetro cria um lançamento real a mais — visível e
+// corrigível — em vez de disputar em silêncio o slot único da projeção com
+// ON CONFLICT DO NOTHING, que engoliria a linha sem erro nenhum.
+async function adicionarTransacaoComRecorrencia(usuarioId, tipo, valor, descricao, categoria, data, status, recorrenciaId, cartaoId = null, contaId = null, projetada = false) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const origem = normalizarOrigem(cartaoId, contaId);
-  // ON CONFLICT contra idx_transacoes_recorrencia_mes (recorrencia_id + mês):
-  // esta função é chamada em laço por GET /api/transactions (materialização
-  // de projeções) e pode ser acionada de novo para a mesma ocorrência por
-  // requisições concorrentes/repetidas. Sem o DO NOTHING o INSERT falharia
-  // com 23505 e o laço de materialização quebraria no meio.
-  const result = await pool.query(
-    `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, conta_id, numero_usuario)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-       (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
-     ON CONFLICT (recorrencia_id, (date_trunc('month', data::timestamp))) WHERE recorrencia_id IS NOT NULL
-     DO NOTHING
-     RETURNING id, numero_usuario`,
-    [uid, tipo, valor, descricao, categoria || 'Outros',
-     data || dataHojeBR(), status || 'pago', recorrenciaId || null,
-     origem.cartaoId, origem.contaId]
-  );
+  // ON CONFLICT contra idx_transacoes_projecao_mes (recorrencia_id + mês, só
+  // para projetada = TRUE): esta função é chamada em laço por
+  // GET /api/transactions (materialização de projeções) e pode ser acionada de
+  // novo para a mesma ocorrência por requisições concorrentes/repetidas. Sem o
+  // DO NOTHING o INSERT falharia com 23505 e o laço quebraria no meio.
+  //
+  // O predicado do ON CONFLICT repete o do índice palavra por palavra — é
+  // assim que o Postgres identifica qual índice arbitra o conflito. Como a
+  // trava só existe para projeção, uma inserção real (projetada = FALSE) não
+  // tem alvo de conflito e precisa de um INSERT sem a cláusula: duas entradas
+  // reais no mesmo mês são exatamente o que a acumulação permite.
+  const result = projetada
+    ? await pool.query(
+      `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, conta_id, projetada, numero_usuario)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE,
+         (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
+       ON CONFLICT (recorrencia_id, (date_trunc('month', data::timestamp)))
+         WHERE recorrencia_id IS NOT NULL AND projetada = TRUE
+       DO NOTHING
+       RETURNING id, numero_usuario`,
+      [uid, tipo, valor, descricao, categoria || 'Outros',
+       data || dataHojeBR(), status || 'pago', recorrenciaId || null,
+       origem.cartaoId, origem.contaId]
+    )
+    : await pool.query(
+      `INSERT INTO transacoes (usuario_id, tipo, valor, descricao, categoria, data, status, recorrencia_id, cartao_id, conta_id, projetada, numero_usuario)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE,
+         (SELECT COALESCE(MAX(numero_usuario), 0) + 1 FROM transacoes WHERE usuario_id = $1))
+       RETURNING id, numero_usuario`,
+      [uid, tipo, valor, descricao, categoria || 'Outros',
+       data || dataHojeBR(), status || 'pago', recorrenciaId || null,
+       origem.cartaoId, origem.contaId]
+    );
   if (result.rows.length === 0) {
-    // Já existe transação materializada para essa recorrência neste mês —
-    // não é erro, é o caso normal que a trava do banco existe para cobrir.
+    // Já existe PROJEÇÃO daquela recorrência neste mês — não é erro, é o caso
+    // normal que a trava do banco existe para cobrir.
     return { lastInsertRowid: null, dbId: null, duplicado: true };
   }
   return { lastInsertRowid: result.rows[0].numero_usuario, dbId: result.rows[0].id };
@@ -6185,7 +6339,7 @@ module.exports = {
   listarSubcategoriasPorTipo,
   consultarTransacoes,
   listarRecorrenciaIdsNoPeriodo,
-  limparRecorrenciasDuplicadas,
+  limparProjecoesDuplicadas,
   consultarTotalTransacoes,
   liquidarTransacao,
   liquidarTransacaoPorId,

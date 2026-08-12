@@ -218,7 +218,12 @@ app.get('/api/transactions', autenticar, async (req, res) => {
           .filter(o => !tipo || o.tipo === tipo)
           .filter(o => !descricao || o.descricao.toLowerCase().includes(descricao.toLowerCase()));
 
-        // Auto-materializar projeções do mês atual como transações reais
+        // Auto-materializar projeções do mês atual como transações reais.
+        // projetada = TRUE (último argumento): estas linhas são o sistema
+        // materializando a regra, não fato do extrato. É essa marca que a
+        // trava idx_transacoes_projecao_mes usa para impedir a segunda
+        // projeção do mês, e é ela que autoriza o lançamento real da Pluggy a
+        // absorver esta linha quando o dinheiro de verdade chega.
         const hojeISO = new Date().toISOString().substring(0, 10);
         const anoMesAtual = hojeISO.substring(0, 7);
         const periodoEhMesAtual = dataInicio && dataInicio.substring(0, 7) === anoMesAtual;
@@ -229,7 +234,7 @@ app.get('/api/transactions', autenticar, async (req, res) => {
               await db.adicionarTransacaoComRecorrencia(
                 req.usuarioId, proj.tipo, proj.valor, proj.descricao, proj.categoria,
                 proj.data, 'pendente', proj.recorrencia_id,
-                proj.cartao_id, proj.conta_id
+                proj.cartao_id, proj.conta_id, true
               );
             } catch (err) {
               console.error('[WEB] Erro ao materializar projeção:', err.message);

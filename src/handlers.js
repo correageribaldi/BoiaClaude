@@ -4605,11 +4605,14 @@ async function handleTransacaoRecorrente(usuarioId, resultado) {
       diaM, diaS, null, null
     );
 
-    // 2. Criar transação pendente para a próxima ocorrência (para o sistema de lembretes)
+    // 2. Criar transação pendente para a próxima ocorrência (para o sistema de
+    // lembretes). projetada = TRUE: nada aconteceu ainda, é a regra sendo
+    // materializada — ver adicionarTransacaoComRecorrencia.
     const dataStr = calcularDataPendente(dia_mes || null);
     await db.adicionarTransacaoComRecorrencia(
       usuarioId, tipo || 'despesa', valor, descricao,
-      categoria || 'Outros', dataStr, 'pendente', recorrenciaId
+      categoria || 'Outros', dataStr, 'pendente', recorrenciaId,
+      null, null, true
     );
 
     const emoji = (tipo === 'despesa') ? '📉' : '📈';
@@ -8156,7 +8159,10 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     );
     const dataStr = calcularDataPendenteMesAtual(r.dia);
     const status = (r.dia && r.dia < diaHoje) ? 'pago' : 'pendente';
-    await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, status, recorrenciaId);
+    // Dia já passou → o usuário declarou um fato ('pago', lançamento real).
+    // Dia ainda não chegou → é projeção, e como tal pode ser absorvida pelo
+    // lançamento real quando ele chegar pela Pluggy.
+    await db.adicionarTransacaoComRecorrencia(usuarioId, 'receita', r.valor, r.descricao, r.categoria || 'Outros', dataStr, status, recorrenciaId, null, null, status === 'pendente');
   }
 
   // Despesas fixas → regra de recorrência + transação no mês atual
@@ -8169,7 +8175,8 @@ async function salvarDadosPontoZero(usuarioId, estado) {
     );
     const dataStr = calcularDataPendenteMesAtual(d.dia);
     const status = (d.dia && d.dia < diaHoje) ? 'pago' : 'pendente';
-    await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, status, recorrenciaId);
+    // Mesma regra das receitas fixas acima: pendente é projeção, pago é fato.
+    await db.adicionarTransacaoComRecorrencia(usuarioId, 'despesa', d.valor, d.descricao, d.categoria || 'Outros', dataStr, status, recorrenciaId, null, null, status === 'pendente');
   }
 
   // Cartões → criar cartão + gastos detalhados ou fatura simples
