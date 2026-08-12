@@ -550,6 +550,19 @@
             <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaCaixinha()">+ Nova Reserva</button>
           </div>
         </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span>🔄 Recorrências</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <p class="accordion-desc" style="font-size:11px">Contas e receitas fixas. Uma regra pode chegar em partes no mês (ex.: salário + comissão) — o painel acompanha o quanto já entrou contra o previsto do mês corrente. Quando não vier mais nada, feche o mês pelo total real.</p>
+            <div id="recorrencias-list"></div>
+            <div id="recorrencias-empty" class="empty-state hidden">Nenhuma recorrência cadastrada.</div>
+            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaRecorrencia()">+ Nova Recorrência</button>
+          </div>
+        </div>
       </div>
     </section>
 

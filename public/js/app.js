@@ -1362,7 +1362,7 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarPluggyStatus()]);
+  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarPluggyStatus(), carregarRecorrencias()]);
 }
 
 // ── Pluggy (Open Finance) ───────────────────────────────────────────────────
@@ -3936,16 +3936,85 @@ async function carregarRecorrencias() {
     const freq = r.frequencia === 'mensal' ? `Mensal (dia ${r.dia_mes || '—'})` :
                  r.frequencia === 'semanal' ? `Semanal (${DIAS_SEMANA[r.dia_semana] || '—'})` : r.frequencia;
     row.innerHTML = `
-      <div class="rec-info">
-        <span class="rec-nome">${isReceita ? '📈' : '📉'} ${esc(r.descricao)}</span>
-        <span class="rec-meta">${esc(freq)} · ${fmtMoeda(r.valor)} · ${esc(r.categoria || '—')}</span>
+      <div class="rec-row-topo">
+        <div class="rec-info">
+          <span class="rec-nome">${isReceita ? '📈' : '📉'} ${esc(r.descricao)}</span>
+          <span class="rec-meta">${esc(freq)} · ${fmtMoeda(r.valor)} · ${esc(r.categoria || '—')}</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="action-btn" title="Excluir" onclick="excluirRecorrenciaConfirm(${r.id}, '${esc(r.descricao)}')">🗑️</button>
+        </div>
       </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button class="action-btn" title="Excluir" onclick="excluirRecorrenciaConfirm(${r.id}, '${esc(r.descricao)}')">🗑️</button>
-      </div>
+      ${renderBaldeRecorrencia(r)}
     `;
     list.appendChild(row);
   }
+}
+
+// Estado do balde do mês corrente de uma regra — quanto já entrou de verdade
+// contra o previsto (ver buscarEstadosBaldeMes em src/database.js).
+//
+// balde null = a regra não tem nenhuma ocorrência prevista nesta competência
+// (ex.: começou depois, ou já terminou) — nada para mostrar, e mostrar uma
+// barra vazia aqui só confundiria.
+function renderBaldeRecorrencia(r) {
+  const b = r.balde;
+  if (!b || b.previsto == null) return '';
+
+  const acoes = [];
+  if (b.consolidado) {
+    acoes.push(`<button class="rec-balde-acao" onclick="desconsolidarRecorrenciaConfirm(${r.id}, '${b.competencia}', '${esc(r.descricao)}')">Reabrir</button>`);
+  } else if (b.somaReal > 0) {
+    acoes.push(`<button class="rec-balde-acao" onclick="consolidarRecorrenciaConfirm(${r.id}, '${b.competencia}', '${esc(r.descricao)}')">Fechar mês</button>`);
+  }
+  const acoesHtml = acoes.length ? `<div class="rec-balde-acoes">${acoes.join('')}</div>` : '';
+
+  // Mês fechado pelo usuário: sem barra, texto fixo — a barra é sobre "ainda
+  // caminhando para o previsto", e um mês consolidado já não está.
+  if (b.consolidado) {
+    return `
+      <div class="rec-balde rec-balde-consolidado">
+        <div class="rec-balde-topo">
+          <span class="rec-balde-selo">✅ Mês fechado</span>
+          ${acoesHtml}
+        </div>
+        <div class="limite-valores">${fmtMoeda(b.somaReal)} em ${b.qtdReal} lançamento${b.qtdReal === 1 ? '' : 's'}</div>
+      </div>
+    `;
+  }
+
+  // Nada entrou ainda: sem barra vazia (não informa nada), só o previsto.
+  if (b.somaReal <= 0) {
+    return `
+      <div class="rec-balde">
+        <div class="rec-balde-topo">
+          <span class="rec-balde-label">Previsto ${fmtMoeda(b.previsto)} — nada entrou ainda este mês</span>
+          ${acoesHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  const completo = b.somaReal >= b.previsto;
+  // falta > 0 = ainda dentro da janela, esperando o resto. falta === 0 com
+  // soma < previsto = janela encerrada, o resto não vem mais (mês incompleto
+  // mas "fechado pela regra", diferente de "coberto").
+  const classe = completo ? 'ok' : (b.falta > 0 ? 'atencao' : 'alerta');
+  const largura = Math.min(100, b.previsto ? (b.somaReal / b.previsto) * 100 : 0);
+  const statusTexto = completo
+    ? 'mês coberto'
+    : (b.falta > 0 ? `faltam ${fmtMoeda(b.falta)}` : 'janela encerrada — o resto não vem mais');
+
+  return `
+    <div class="rec-balde">
+      <div class="rec-balde-topo">
+        <span class="rec-balde-label limite-${classe}">${statusTexto}</span>
+        ${acoesHtml}
+      </div>
+      <div class="limite-barra"><div class="limite-barra-fill limite-barra-${classe}" style="width:${largura}%"></div></div>
+      <div class="limite-valores">${fmtMoeda(b.somaReal)} de ${fmtMoeda(b.previsto)}</div>
+    </div>
+  `;
 }
 
 async function excluirRecorrenciaConfirm(id, desc) {
@@ -3953,6 +4022,33 @@ async function excluirRecorrenciaConfirm(id, desc) {
   try {
     await api(`/api/recurrences/${id}`, { method: 'DELETE' });
     toast('Recorrência excluída.', 'success');
+    carregarRecorrencias();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// Consolidar fecha o balde do mês pelo total REAL que entrou — a projeção
+// remanescente some. Reversível (ver desconsolidarRecorrenciaConfirm), mas o
+// efeito não é óbvio pelo nome do botão, daí a confirmação explicando.
+async function consolidarRecorrenciaConfirm(id, competencia, desc) {
+  const ok = confirm(
+    `Fechar o mês de "${desc}" (${competencia})?\n\n` +
+    `O mês fecha pelo total que já entrou e a projeção que faltava some. ` +
+    `Pode reabrir depois se mudar de ideia.`
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/recorrencias/${id}/consolidar`, { method: 'POST', body: JSON.stringify({ competencia }) });
+    toast('Mês fechado.', 'success');
+    carregarRecorrencias();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function desconsolidarRecorrenciaConfirm(id, competencia, desc) {
+  const ok = confirm(`Reabrir o mês de "${desc}" (${competencia})? A projeção do que ainda falta volta a valer.`);
+  if (!ok) return;
+  try {
+    await api(`/api/recorrencias/${id}/consolidar?competencia=${encodeURIComponent(competencia)}`, { method: 'DELETE' });
+    toast('Mês reaberto.', 'success');
     carregarRecorrencias();
   } catch (err) { toast(err.message, 'error'); }
 }
