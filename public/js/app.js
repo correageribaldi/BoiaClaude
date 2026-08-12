@@ -1197,6 +1197,7 @@ async function abrirModalEditar(tx) {
   document.getElementById('editar-tx-descricao').value = tx.descricao;
   document.getElementById('editar-tx-valor').value = tx.valor;
   document.getElementById('editar-tx-data').value = tx.data;
+  document.getElementById('editar-tx-observacao').value = tx.observacao || '';
   const sel = document.getElementById('editar-tx-categoria');
   if (tx.categoria) {
     sel.value = tx.categoria;
@@ -1268,6 +1269,7 @@ async function salvarEdicaoTx() {
     descricao: document.getElementById('editar-tx-descricao').value.trim(),
     valor: parseFloat(document.getElementById('editar-tx-valor').value),
     data: document.getElementById('editar-tx-data').value,
+    observacao: document.getElementById('editar-tx-observacao').value.trim(),
   };
   // Compra no cartão não tem conta — não mandar o campo evita gravar as duas
   // origens juntas (o backend também recusa, ver atualizarTransacao).

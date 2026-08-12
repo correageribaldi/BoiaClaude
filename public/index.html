@@ -1222,6 +1222,13 @@
       <label style="color:var(--text-muted);font-size:13px">Data</label>
       <input type="date" id="editar-tx-data" class="input">
     </div>
+    <!-- Anotação do usuário sobre o lançamento. Existe para o caso da
+         recorrência que chega em partes: marcar que a segunda entrada é
+         comissão, 13º, adiantamento. Nunca é escrita pela sincronização. -->
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="color:var(--text-muted);font-size:13px">Observação</label>
+      <input type="text" id="editar-tx-observacao" class="input" maxlength="200" placeholder="ex: comissão do mês">
+    </div>
     <!-- Marcar um lançamento existente como fixo. Some quando a transação já
          pertence a uma regra (aí aparece só o aviso abaixo). -->
     <div id="editar-tx-rec-wrap" class="form-group" style="margin-bottom:16px">
