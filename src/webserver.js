@@ -1323,6 +1323,36 @@ app.put('/api/recorrencias/:id', autenticar, async (req, res) => {
   }
 });
 
+// Janela (dia_inicial/dia_limite) e faixa (valor_min/valor_max) são PARES —
+// ver o comentário de atualizarJanelaFaixaRecorrencia em src/database.js.
+// Rota própria (em vez de reusar PUT /api/recorrencias/:id campo a campo)
+// para que os quatro valores sejam gravados numa instrução só, sem estado
+// intermediário inválido (ex.: janela invertida por meio caminho).
+//
+// É o único caminho para dar faixa a uma regra que já existe sem uma — as 101
+// recorrências em produção nasceram antes destas colunas e, sem esta rota,
+// ficariam sem faixa para sempre (só recriando do zero a partir de um
+// lançamento novo).
+app.put('/api/recorrencias/:id/regra', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { dia_inicial, dia_limite, valor_min, valor_max } = req.body;
+    const resultado = await db.atualizarJanelaFaixaRecorrencia(req.usuarioId, id, {
+      diaInicial: dia_inicial, diaLimite: dia_limite, valorMin: valor_min, valorMax: valor_max,
+    });
+    if (!resultado) return res.status(404).json({ erro: 'Recorrência não encontrada' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] PUT /api/recorrencias/:id/regra:', err.message);
+    // Par invertido é erro de preenchimento, não falha de servidor: o modal
+    // precisa do 400 para mostrar a mensagem ao usuário (mesmo padrão do
+    // POST /api/recorrencias).
+    const preenchimento = /inválida/i.test(err.message);
+    res.status(preenchimento ? 400 : 500).json({ erro: err.message });
+  }
+});
+
 // ── Redirect pós-pagamento InfinityPay ───────────────────────────────────────
 // InfinityPay redireciona o browser do cliente aqui após pagamento confirmado
 // URL: GET /pagamento/sucesso?order_nsu=...&transaction_nsu=...&slug=...&receipt_url=...

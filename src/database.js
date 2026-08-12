@@ -2001,6 +2001,56 @@ async function atualizarRecorrencia(usuarioId, recorrenciaId, campo, novoValor) 
   return result.rows[0] || null;
 }
 
+// atualizarJanelaFaixaRecorrencia -> regra atualizada | null (não encontrada)
+//
+// Janela (dia_inicial/dia_limite) e faixa (valor_min/valor_max) são PARES: a
+// leitura de cada um só faz sentido junto do outro lado (ver limitesDaJanela e
+// faixaDaRegra em src/recorrencia-match.js). atualizarRecorrencia atualiza um
+// campo por vez porque foi desenhada para os campos escalares de sempre
+// (valor, descricao...) — usá-la aqui, campo a campo, deixaria a regra
+// passando por um estado intermediário gravado (ex.: dia_inicial novo com
+// dia_limite velho, possivelmente invertidos) entre uma chamada e a outra.
+//
+// Esta função existe para ser o único caminho de escrita dos quatro campos:
+// UMA instrução UPDATE grava os quatro juntos, então não existe estado
+// intermediário visível para nenhum outro request — ou os quatro valores
+// novos valem, ou (se a validação falhar) nenhum é gravado.
+//
+// O chamador manda sempre os quatro valores (o modal de edição carrega a
+// regra inteira antes de abrir), null para "sem esse lado" — é o mesmo
+// contrato de criarRecorrencia/tornarTransacaoRecorrente. Não há merge com o
+// que já está no banco: meio par salvo por engano é pior que nenhum (mesma
+// razão documentada em normalizarRegraCasamento).
+//
+// A validação (par invertido) é a mesma normalizarRegraCasamento usada na
+// criação — reusar em vez de duplicar é o que garante que criar e editar uma
+// regra aceitam e recusam exatamente os mesmos dados.
+async function atualizarJanelaFaixaRecorrencia(usuarioId, recorrenciaId, { diaInicial, diaLimite, valorMin, valorMax } = {}) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+
+  const atual = await pool.query(
+    `SELECT frequencia FROM recorrencias WHERE id = $1 AND usuario_id = $2 AND ativo = TRUE`,
+    [recorrenciaId, uid]
+  );
+  const regraAtual = atual.rows[0];
+  if (!regraAtual) return null;
+
+  // Validado com a frequência real da regra: só mensal/anual usa janela de
+  // dias (ver normalizarRegraCasamento) — editar a faixa de uma regra semanal
+  // não deve gravar dia_inicial/dia_limite como dado morto.
+  const casamento = normalizarRegraCasamento({ diaInicial, diaLimite, valorMin, valorMax, frequencia: regraAtual.frequencia });
+
+  const result = await pool.query(
+    `UPDATE recorrencias
+     SET dia_inicial = $1, dia_limite = $2, valor_min = $3, valor_max = $4
+     WHERE id = $5 AND usuario_id = $6 AND ativo = TRUE
+     RETURNING id, tipo, valor::float, descricao, categoria, frequencia, dia_mes, dia_semana,
+               dia_inicial, dia_limite, valor_min::float AS valor_min, valor_max::float AS valor_max`,
+    [casamento.diaInicial, casamento.diaLimite, casamento.valorMin, casamento.valorMax, recorrenciaId, uid]
+  );
+  return result.rows[0] || null;
+}
+
 async function buscarRecorrenciaPorId(usuarioId, recorrenciaId) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -6771,6 +6821,7 @@ module.exports = {
   atualizarTransacao,
   excluirTransacao,
   atualizarRecorrencia,
+  atualizarJanelaFaixaRecorrencia,
   buscarRecorrenciaPorId,
   buscarRecorrenciasPorDescricao,
   desativarRecorrencia,
