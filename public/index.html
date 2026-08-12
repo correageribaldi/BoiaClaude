@@ -379,6 +379,25 @@
         </div>
       </div>
 
+      <!-- ── Recorrências do mês ──────────────────────────────────────────
+           Fica junto dos lançamentos, e não numa tela própria, porque é sobre
+           o MESMO dinheiro: a barra responde "quanto do previsto já entrou"
+           para as linhas que estão logo abaixo. Recolhido por padrão e com o
+           total do mês no próprio cabeçalho — a resposta de uma olhada não
+           custa clique, e o detalhe por regra não empurra a lista para baixo.
+           Escondido inteiro para quem não tem recorrência. -->
+      <div class="accordion hidden" id="tx-rec-wrap" style="margin-bottom:14px">
+        <div class="accordion-item">
+          <button class="accordion-header" onclick="toggleAccordion(this)">
+            <span id="tx-rec-resumo">🔄 Recorrências</span>
+            <span class="accordion-icon">›</span>
+          </button>
+          <div class="accordion-body hidden">
+            <div id="tx-rec-list"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="filter-bar">
         <div class="filter-tabs">
           <button class="filter-tab active" data-filter="" data-filter-tipo="">Todas</button>
@@ -551,18 +570,6 @@
           </div>
         </div>
 
-        <div class="accordion-item">
-          <button class="accordion-header" onclick="toggleAccordion(this)">
-            <span>🔄 Recorrências</span>
-            <span class="accordion-icon">›</span>
-          </button>
-          <div class="accordion-body hidden">
-            <p class="accordion-desc" style="font-size:11px">Contas e receitas fixas. Uma regra pode chegar em partes no mês (ex.: salário + comissão) — o painel acompanha o quanto já entrou contra o previsto do mês corrente. Quando não vier mais nada, feche o mês pelo total real.</p>
-            <div id="recorrencias-list"></div>
-            <div id="recorrencias-empty" class="empty-state hidden">Nenhuma recorrência cadastrada.</div>
-            <button class="btn btn-primary" style="margin-top:12px" onclick="abrirModalNovaRecorrencia()">+ Nova Recorrência</button>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -1168,66 +1175,6 @@
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="fecharModalLembrete()">Cancelar</button>
       <button class="btn btn-primary" onclick="salvarNovoLembrete()">Salvar</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── Modal de nova recorrência ───────────────────────────────────────── -->
-<div class="modal-overlay hidden" id="modal-nova-recorrencia">
-  <div class="modal-box modal-box-center">
-    <div class="modal-header">
-      <h3>Nova Recorrência</h3>
-      <button class="modal-close" onclick="fecharModalRecorrencia()">✕</button>
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Tipo</label>
-      <div class="toggle-bar">
-        <button class="toggle-btn active" data-val="despesa" onclick="toggleRecTipo(this)">Despesa</button>
-        <button class="toggle-btn" data-val="receita" onclick="toggleRecTipo(this)">Receita</button>
-      </div>
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Descrição</label>
-      <input type="text" id="rec-descricao" class="input" placeholder="Ex: Aluguel, Salário...">
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Valor (R$)</label>
-      <input type="number" id="rec-valor" class="input" step="0.01" min="0" placeholder="0,00">
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Categoria</label>
-      <select id="rec-categoria" class="input"></select>
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Frequência</label>
-      <select id="rec-frequencia" class="input" onchange="toggleRecFreqFields()">
-        <option value="mensal">Mensal</option>
-        <option value="semanal">Semanal</option>
-      </select>
-    </div>
-    <div id="rec-dia-mes-wrap" class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Dia do Mês</label>
-      <input type="number" id="rec-dia-mes" class="input" min="1" max="31" placeholder="1-31">
-    </div>
-    <div id="rec-dia-semana-wrap" class="form-group hidden" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Dia da Semana</label>
-      <select id="rec-dia-semana" class="input">
-        <option value="0">Domingo</option><option value="1">Segunda</option><option value="2">Terça</option>
-        <option value="3">Quarta</option><option value="4">Quinta</option><option value="5">Sexta</option>
-        <option value="6">Sábado</option>
-      </select>
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Data Início</label>
-      <input type="date" id="rec-data-inicio" class="input">
-    </div>
-    <div class="form-group" style="margin-bottom:16px">
-      <label style="color:var(--text-muted);font-size:13px">Data Fim (opcional)</label>
-      <input type="date" id="rec-data-fim" class="input">
-    </div>
-    <div style="display:flex;gap:12px;justify-content:flex-end">
-      <button class="btn btn-secondary" onclick="fecharModalRecorrencia()">Cancelar</button>
-      <button class="btn btn-primary" onclick="salvarNovaRecorrencia()">Salvar</button>
     </div>
   </div>
 </div>

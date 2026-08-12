@@ -1585,7 +1585,6 @@ html:not([data-theme="light"]) .modal-box {
 #modal-nova-caixinha,
 #modal-deposito-caixinha,
 #modal-novo-lembrete,
-#modal-nova-recorrencia { align-items: center; }
 
 /* ── Input style for modals ─────────────────────────────────────────────── */
 .input {

@@ -1066,6 +1066,10 @@ async function carregarTransacoes() {
   catch (err) { if (err.message !== 'Sessão expirada') toast('Erro ao carregar transações', 'error'); return; }
 
   renderTabelaTransacoes(transacoes);
+  // Depois da tabela e sem await: o bloco de recorrências é contexto do mês,
+  // não pode atrasar a lista que o usuário veio ver. Falha dele não derruba a
+  // tela (carregarRecorrenciasDoMes engole o erro escondendo o bloco).
+  carregarRecorrenciasDoMes();
 }
 
 function renderTabelaTransacoes(transacoes) {
@@ -1388,7 +1392,7 @@ async function excluirProjetado(recorrenciaId, descricao, data) {
 
 // ── Categorias ────────────────────────────────────────────────────────────────
 async function carregarCategorias() {
-  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarPluggyStatus(), carregarRecorrencias()]);
+  await Promise.all([carregarContas(), carregarCartoes(), carregarOrcamento(), carregarCaixinhas(), carregarPluggyStatus()]);
 }
 
 // ── Pluggy (Open Finance) ───────────────────────────────────────────────────
@@ -3229,7 +3233,7 @@ function inicializar() {
   });
 
   // Close modals on overlay click
-  ['modal-nova-tx','modal-novo-cartao','modal-nova-caixinha','modal-deposito-caixinha','modal-novo-lembrete','modal-nova-recorrencia'].forEach(id => {
+  ['modal-nova-tx','modal-novo-cartao','modal-nova-caixinha','modal-deposito-caixinha','modal-novo-lembrete'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', e => { if (e.target === el) el.classList.add('hidden'); });
   });
@@ -3969,80 +3973,32 @@ async function excluirLembreteConfirm(id, recorrente) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
-// ── Recorrências CRUD ────────────────────────────────────────────────────────
-let _recTipo = 'despesa';
+// ── Recorrências (dentro da tela de Transações) ──────────────────────────────
+//
+// Recorrência não tem mais tela nem criação própria: ela nasce de um lançamento
+// (modal de nova transação ou de editar), e o acompanhamento vive junto dos
+// lançamentos, porque é sobre o mesmo dinheiro. O que aparece aqui é o estado
+// do mês que a lista logo abaixo está mostrando.
+//
+// Segue o navegador de mês da tela (estado.tx): a competência muda junto, e
+// "quanto entrou do previsto" é sempre sobre o mês que está na frente do
+// usuário, não sobre o mês corrente.
+async function carregarRecorrenciasDoMes() {
+  const wrap = document.getElementById('tx-rec-wrap');
+  const list = document.getElementById('tx-rec-list');
+  if (!wrap || !list) return;
 
-function toggleRecTipo(btn) {
-  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  _recTipo = btn.dataset.val;
-  carregarCategoriasSelect('rec-categoria', _recTipo);
-}
-
-function toggleRecFreqFields() {
-  const freq = document.getElementById('rec-frequencia').value;
-  document.getElementById('rec-dia-mes-wrap').classList.toggle('hidden', freq !== 'mensal');
-  document.getElementById('rec-dia-semana-wrap').classList.toggle('hidden', freq !== 'semanal');
-}
-
-async function abrirModalNovaRecorrencia() {
-  _recTipo = 'despesa';
-  await carregarCategoriasSelect('rec-categoria', _recTipo);
-
-  document.getElementById('rec-descricao').value = '';
-  document.getElementById('rec-valor').value = '';
-  document.getElementById('rec-frequencia').value = 'mensal';
-  document.getElementById('rec-dia-mes').value = '';
-  document.getElementById('rec-data-inicio').value = new Date().toISOString().substring(0, 10);
-  document.getElementById('rec-data-fim').value = '';
-  document.getElementById('rec-dia-mes-wrap').classList.remove('hidden');
-  document.getElementById('rec-dia-semana-wrap').classList.add('hidden');
-  document.getElementById('modal-nova-recorrencia').classList.remove('hidden');
-}
-
-function fecharModalRecorrencia() {
-  document.getElementById('modal-nova-recorrencia').classList.add('hidden');
-}
-
-async function salvarNovaRecorrencia() {
-  const descricao = document.getElementById('rec-descricao').value.trim();
-  const valor = parseFloat(document.getElementById('rec-valor').value);
-  const categoria = document.getElementById('rec-categoria').value || null;
-  const frequencia = document.getElementById('rec-frequencia').value;
-  const data_inicio = document.getElementById('rec-data-inicio').value;
-  const data_fim = document.getElementById('rec-data-fim').value || null;
-
-  if (!descricao) { toast('Preencha a descrição', 'error'); return; }
-  if (!valor || valor <= 0) { toast('Valor inválido', 'error'); return; }
-
-  const body = { tipo: _recTipo, valor, descricao, categoria, frequencia, data_inicio, data_fim };
-  if (frequencia === 'mensal') body.dia_mes = parseInt(document.getElementById('rec-dia-mes').value) || 1;
-  if (frequencia === 'semanal') body.dia_semana = parseInt(document.getElementById('rec-dia-semana').value);
-
-  try {
-    await api('/api/recorrencias', { method: 'POST', body: JSON.stringify(body) });
-    toast('Recorrência criada!', 'success');
-    fecharModalRecorrencia();
-    carregarRecorrencias();
-  } catch (err) { toast(err.message, 'error'); }
-}
-
-async function carregarRecorrencias() {
+  const competencia = `${estado.tx.ano}-${String(estado.tx.mes).padStart(2, '0')}`;
   let recs;
-  try { recs = await api('/api/recorrencias'); }
-  catch { return; }
+  try { recs = await api(`/api/recorrencias?competencia=${competencia}`); }
+  catch { wrap.classList.add('hidden'); return; }
 
-  const list = document.getElementById('recorrencias-list');
-  if (!list) return;
-  const empty = document.getElementById('recorrencias-empty');
+  // Sem recorrência nenhuma o bloco some inteiro — quem não usa a função não
+  // ganha um acordeão vazio no meio da tela.
+  if (!recs.length) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+
   list.innerHTML = '';
-
-  if (!recs.length) {
-    empty.classList.remove('hidden');
-    return;
-  }
-  empty.classList.add('hidden');
-
   const DIAS_SEMANA = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
   for (const r of recs) {
     const row = document.createElement('div');
@@ -4054,7 +4010,7 @@ async function carregarRecorrencias() {
       <div class="rec-row-topo">
         <div class="rec-info">
           <span class="rec-nome">${isReceita ? '📈' : '📉'} ${esc(r.descricao)}</span>
-          <span class="rec-meta">${esc(freq)} · ${fmtMoeda(r.valor)} · ${esc(r.categoria || '—')}</span>
+          <span class="rec-meta">${esc(freq)} · ${fmtMoeda(r.valor)} · ${esc(r.categoria || '—')}${textoRegraCasamento(r)}</span>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="action-btn" title="Excluir" onclick="excluirRecorrenciaConfirm(${r.id}, '${esc(r.descricao)}')">🗑️</button>
@@ -4064,10 +4020,46 @@ async function carregarRecorrencias() {
     `;
     list.appendChild(row);
   }
+
+  atualizarResumoRecorrencias(recs);
 }
 
-// Estado do balde do mês corrente de uma regra — quanto já entrou de verdade
-// contra o previsto (ver buscarEstadosBaldeMes em src/database.js).
+// O cabeçalho do bloco recolhido já responde a pergunta principal do mês, para
+// a informação não custar um clique: quanto entrou do previsto somando todas
+// as regras, e quantas ainda esperam algo.
+function atualizarResumoRecorrencias(recs) {
+  const resumo = document.getElementById('tx-rec-resumo');
+  if (!resumo) return;
+
+  const comBalde = recs.filter(r => r.balde && r.balde.previsto != null);
+  if (!comBalde.length) {
+    resumo.textContent = `🔄 Recorrências (${recs.length})`;
+    return;
+  }
+  const entrou = comBalde.reduce((s, r) => s + (r.balde.somaReal || 0), 0);
+  const previsto = comBalde.reduce((s, r) => s + (r.balde.previsto || 0), 0);
+  const abertas = comBalde.filter(r => !r.balde.consolidado && (r.balde.falta || 0) > 0).length;
+  const pendencia = abertas ? ` · ${abertas} em aberto` : '';
+  resumo.textContent = `🔄 Recorrências — ${fmtMoeda(entrou)} de ${fmtMoeda(previsto)}${pendencia}`;
+}
+
+// Os dois eixos de casamento, quando o usuário configurou algum: é o que
+// explica por que um lançamento entrou (ou não entrou) naquela recorrência.
+function textoRegraCasamento(r) {
+  const partes = [];
+  if (Number.isInteger(r.dia_inicial) && Number.isInteger(r.dia_limite)) {
+    partes.push(`dias ${r.dia_inicial}–${r.dia_limite}`);
+  }
+  if (r.valor_min != null || r.valor_max != null) {
+    const de = r.valor_min != null ? fmtMoeda(r.valor_min) : '—';
+    const ate = r.valor_max != null ? fmtMoeda(r.valor_max) : '—';
+    partes.push(`${de} a ${ate}`);
+  }
+  return partes.length ? ` · ${esc(partes.join(' · '))}` : '';
+}
+
+// Estado do balde do mês de uma regra — quanto já entrou de verdade contra o
+// previsto (ver buscarEstadosBaldeMes em src/database.js).
 //
 // balde null = a regra não tem nenhuma ocorrência prevista nesta competência
 // (ex.: começou depois, ou já terminou) — nada para mostrar, e mostrar uma
@@ -4132,12 +4124,15 @@ function renderBaldeRecorrencia(r) {
   `;
 }
 
+// Todas as ações recarregam a tela de Transações inteira, não só o bloco:
+// excluir a regra, fechar ou reabrir o mês mexem nas PROJEÇÕES, que são linhas
+// da lista logo abaixo. Atualizar só o acordeão deixaria a lista mentindo.
 async function excluirRecorrenciaConfirm(id, desc) {
   if (!confirm(`Excluir a recorrência "${desc}"?`)) return;
   try {
     await api(`/api/recurrences/${id}`, { method: 'DELETE' });
     toast('Recorrência excluída.', 'success');
-    carregarRecorrencias();
+    carregarTransacoes();
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -4154,7 +4149,7 @@ async function consolidarRecorrenciaConfirm(id, competencia, desc) {
   try {
     await api(`/api/recorrencias/${id}/consolidar`, { method: 'POST', body: JSON.stringify({ competencia }) });
     toast('Mês fechado.', 'success');
-    carregarRecorrencias();
+    carregarTransacoes();
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -4164,7 +4159,7 @@ async function desconsolidarRecorrenciaConfirm(id, competencia, desc) {
   try {
     await api(`/api/recorrencias/${id}/consolidar?competencia=${encodeURIComponent(competencia)}`, { method: 'DELETE' });
     toast('Mês reaberto.', 'success');
-    carregarRecorrencias();
+    carregarTransacoes();
   } catch (err) { toast(err.message, 'error'); }
 }
 
