@@ -15,20 +15,37 @@
 // linha da Pluggy passa por baixo dele com NULL.
 //
 // Critério de casamento (decisão do dono do produto): mesma ORIGEM (descrição
-// normalizada) + mesmo tipo + data dentro da janela da regra. O valor NÃO
-// entra: uma recorrência de R$ 1.850 pode chegar como R$ 1.500 + R$ 350, e
-// exigir valor exato faria a segunda entrada virar lançamento avulso.
+// normalizada) + mesmo tipo + data dentro da janela da regra + o lançamento
+// cabendo na FAIXA DE VALOR da regra (recorrencias.valor_min/valor_max).
 //
-// O valor deixa de ser critério de casamento e vira critério de ENCERRAMENTO:
-// enquanto a soma real do mês não alcança o previsto e a janela não fechou, o
-// balde daquela recorrência segue aberto e novas entradas acumulam nele (ver
-// resolverVinculoRecorrencia em src/database.js).
+// A faixa é o segundo eixo da especificação — "entre 1500 e 2500 entre os dias
+// 1 e 5" — e entra com um cuidado que o valor exato não tinha: ela vale para o
+// TOTAL ACUMULADO do mês, nunca para a entrada isolada. Uma recorrência de
+// R$ 1.850 pode chegar como R$ 1.500 + R$ 350, e exigir que cada entrada
+// estivesse dentro da faixa faria a segunda virar lançamento avulso.
 //
-// Consequência direta: duas regras com a mesma origem e a mesma janela ficam
-// indistinguíveis — o que antes o valor desempatava. Nesse caso nada é
-// vinculado e o conflito é logado; o desempate é do usuário, reorganizando as
-// regras. Vincular à regra errada reescreve o histórico em silêncio; não
-// vincular deixa um lançamento avulso, que é visível e corrigível.
+// Daí a assimetria deliberada entre os dois lados da faixa:
+//
+//   valor_max ELIMINA. Um lançamento que sozinho já passa do teto não pode
+//   pertencer àquele mês por nenhuma combinação de acumulação — a soma só
+//   cresce. É o critério que desempata duas regras da mesma origem.
+//
+//   valor_min NÃO elimina, por construção. Toda entrada parcial é menor que o
+//   piso enquanto o mês não fecha; testar contra ele mataria a acumulação, que
+//   é exatamente o bug que este módulo existe para não recriar. O piso é
+//   declaração de expectativa (aparece na tela e marca a regra como
+//   "específica" no desempate), não filtro.
+//
+// O valor também é critério de ENCERRAMENTO: enquanto a soma real do mês não
+// alcança o teto e a janela não fechou, o balde daquela recorrência segue
+// aberto e novas entradas acumulam nele (ver resolverVinculoRecorrencia em
+// src/database.js). Com faixa configurada o teto é `valor_max`; sem faixa
+// continua sendo `recorrencias.valor`, como antes.
+//
+// Ambiguidade que sobra depois da faixa (duas regras da mesma origem, mesma
+// janela, ambas cabendo) continua não vinculando nada, e o conflito é logado.
+// Vincular à regra errada reescreve o histórico em silêncio; não vincular
+// deixa um lançamento avulso, que é visível e corrigível.
 
 const { normalizarEstabelecimento } = require('./estabelecimento');
 
@@ -79,12 +96,83 @@ function diaDaSemana(p) {
 
 // NUMERIC(12,2) nos dois lados (recorrencias.valor e transacoes.valor):
 // comparar e somar em centavos inteiros é a precisão em que o dado realmente
-// existe, e evita o 0.1 + 0.2 do ponto flutuante. Usado no encerramento do
-// balde por valor, não no casamento.
+// existe, e evita o 0.1 + 0.2 do ponto flutuante.
 function centavos(valor) {
   const n = Number(valor);
   if (!Number.isFinite(n)) return null;
   return Math.round(n * 100);
+}
+
+// faixaDaRegra(regra) -> { min, max } em centavos, ou null quando a regra não
+// tem faixa nenhuma.
+//
+// null é o caso das 101 regras que já existiam quando as colunas nasceram: sem
+// faixa, tudo se comporta exatamente como antes. Qualquer um dos dois lados
+// pode vir null isoladamente (faixa aberta de um lado só).
+//
+// Faixa invertida (min > max) é dado impossível — não existe lançamento que a
+// satisfaça, e tratá-la ao pé da letra transformaria um erro de digitação em
+// "esta regra nunca mais casa com nada", em silêncio. Devolve null: a regra
+// volta a se comportar como se não tivesse faixa. A validação que impede a
+// inversão de ser gravada mora em normalizarRegraCasamento (src/database.js);
+// aqui é a rede de baixo, para dado que já esteja no banco.
+// Leitura ESTRITA, e não `centavos` direto: Number(null) é 0, e a coluna vazia
+// chega do Postgres como null. Passar por centavos sem este filtro daria
+// { min: 0, max: 0 } para toda regra sem faixa — teto zero, balde fechado no
+// primeiro lançamento, todas as recorrências do banco quebradas de uma vez.
+// centavos continua permissivo porque os outros usos dele (soma real) querem
+// mesmo tratar ausência como zero.
+function centavosOuNulo(valor) {
+  if (valor === null || valor === undefined || valor === '') return null;
+  return centavos(valor);
+}
+
+function faixaDaRegra(regra) {
+  if (!regra) return null;
+  const min = centavosOuNulo(regra.valor_min);
+  const max = centavosOuNulo(regra.valor_max);
+  if (min === null && max === null) return null;
+  if (min !== null && max !== null && min > max) return null;
+  return { min, max };
+}
+
+// tetoDoBalde(regra, valorPrevisto) -> centavos | null
+//
+// O ponto em que a acumulação do mês para de aceitar entrada nova. Com faixa é
+// `valor_max`; sem faixa é o previsto da regra, que era o único critério antes
+// de a faixa existir.
+//
+// Consequência a ter em mente ao ler a tela: com faixa, o balde NÃO fecha mais
+// ao alcançar `recorrencias.valor`. Uma regra de R$ 1.850 com faixa até
+// R$ 2.500 segue aberta depois dos R$ 1.850 — é isso que permite a comissão
+// que chega depois entrar na mesma recorrência em vez de virar avulso. A
+// projeção (faltaDaOcorrencia) continua olhando `recorrencias.valor`: o que
+// ainda se ESPERA receber é o previsto, o teto é só até onde se ACEITA.
+function tetoDoBalde(regra, valorPrevisto) {
+  const faixa = faixaDaRegra(regra);
+  if (faixa && faixa.max !== null) return faixa.max;
+  return centavos(valorPrevisto);
+}
+
+// cabeNoTeto(regra, valorLancamento, somaAcumulada) -> boolean
+//
+// "Este lançamento ainda cabe no mês daquela regra?" — soma acumulada + valor
+// contra `valor_max`. Sem faixa (ou sem teto) cabe sempre.
+//
+// somaAcumulada 0 é o padrão de propósito: é o piso da soma real, e faz a
+// resposta valer como eliminação segura mesmo para quem não tem como saber o
+// estado do balde (o filtro puro). Quem sabe — o desempate, que recebe as
+// somas do mês — passa o valor real e elimina com mais precisão.
+//
+// Valor não numérico não elimina: sem dado confiável, o lado seguro do erro é
+// deixar os outros critérios (origem, tipo, janela) decidirem.
+function cabeNoTeto(regra, valorLancamento, somaAcumulada = 0) {
+  const faixa = faixaDaRegra(regra);
+  if (!faixa || faixa.max === null) return true;
+  const valor = centavos(valorLancamento);
+  if (valor === null) return true;
+  const soma = centavos(somaAcumulada) || 0;
+  return soma + valor <= faixa.max;
 }
 
 // Descrição equivalente = MESMA chave de estabelecimento dos dois lados.
@@ -224,7 +312,11 @@ function janelaEncerradaEm(regra, dataISO) {
 //
 // O filtro de tipo é repetido aqui mesmo já existindo na query
 // (buscarRecorrenciasCandidatas): a função precisa valer sozinha, sem depender
-// de qual SELECT a alimentou. `valor` não é filtro — ver o cabeçalho.
+// de qual SELECT a alimentou.
+//
+// O valor entra por um lado só: o lançamento que SOZINHO estoura `valor_max`
+// não pode pertencer àquele mês (a soma só cresce). Nada é testado contra
+// `valor_min` — ver o cabeçalho para o porquê de o piso não poder filtrar.
 function filtrarRecorrenciasCompativeis(regras, lancamento, opcoes = {}) {
   if (!Array.isArray(regras) || regras.length === 0) return [];
   if (!lancamento || !partesData(lancamento.data)) return [];
@@ -238,15 +330,66 @@ function filtrarRecorrenciasCompativeis(regras, lancamento, opcoes = {}) {
     if (regra.tipo !== lancamento.tipo) return false;
     if (!regraVigenteNaData(regra, lancamento.data)) return false;
     if (normalizarEstabelecimento(regra.descricao) !== chave) return false;
+    if (!cabeNoTeto(regra, lancamento.valor)) return false;
     return dentroDaJanela(regra, lancamento.data, opcoes);
   });
+}
+
+// escolherRecorrencia(compativeis, lancamento, opcoes) -> { regra, motivo }
+//
+// O desempate que a faixa de valor devolveu ao sistema. Antes dela, duas
+// regras da mesma origem na mesma janela eram indistinguíveis e o lançamento
+// virava avulso — perda de vínculo justamente no caso que o usuário tinha
+// configurado com mais cuidado.
+//
+// `opcoes.somaPorRegra` é um Map<recorrencia_id, soma real do mês>. Sem ele o
+// desempate assume soma 0, o que só torna a eliminação mais conservadora.
+//
+// Dois critérios, nesta ordem, ambos por ELIMINAÇÃO — nenhum deles escolhe
+// entre candidatas equivalentes, porque escolher no empate é sortear:
+//
+//   (1) Teto: descarta quem não teria como receber este lançamento sem
+//       estourar o próprio `valor_max`. É o critério da especificação — regra
+//       de R$ 1.500–2.500 e regra de R$ 300–500, mesma contraparte, mesma
+//       janela: a entrada de R$ 1.500 só cabe na primeira.
+//
+//   (2) Específica vence genérica: se, entre as que sobraram, exatamente uma
+//       tem faixa configurada, ela vence a(s) sem faixa. A faixa é um ato
+//       deliberado do usuário para distinguir aquela regra; a regra sem faixa
+//       é a de propósito geral.
+//
+// Sobrando mais de uma candidata, devolve regra null e motivo 'ambiguo' — o
+// comportamento de antes, preservado de propósito.
+function escolherRecorrencia(compativeis, lancamento = {}, opcoes = {}) {
+  const lista = Array.isArray(compativeis) ? compativeis.filter(Boolean) : [];
+  if (lista.length === 0) return { regra: null, motivo: 'sem_candidata' };
+  if (lista.length === 1) return { regra: lista[0], motivo: 'unica' };
+
+  const somaPorRegra = opcoes.somaPorRegra instanceof Map ? opcoes.somaPorRegra : new Map();
+  const somaDe = (regra) => somaPorRegra.get(regra.id) || 0;
+
+  const cabem = lista.filter((regra) => cabeNoTeto(regra, lancamento.valor, somaDe(regra)));
+  if (cabem.length === 1) return { regra: cabem[0], motivo: 'faixa_teto' };
+  // Nenhuma comporta o lançamento: não há candidata legítima, e escolher a
+  // "menos ruim" seria inventar. Segue como avulso.
+  if (cabem.length === 0) return { regra: null, motivo: 'ambiguo' };
+
+  const comFaixa = cabem.filter((regra) => faixaDaRegra(regra) !== null);
+  if (comFaixa.length === 1) return { regra: comFaixa[0], motivo: 'faixa_especifica' };
+
+  return { regra: null, motivo: 'ambiguo' };
 }
 
 // baldeFechado(estado) -> boolean
 //
 // Encerramento da acumulação, com as duas condições da especificação: o que
-// vier primeiro entre "a soma real alcançou o previsto" e "a janela do mês
-// passou". Consolidação manual fecha por decisão do usuário.
+// vier primeiro entre "a soma real alcançou o teto" e "a janela do mês passou".
+// Consolidação manual fecha por decisão do usuário.
+//
+// O teto é `valor_max` quando a regra tem faixa e `valorPrevisto` quando não
+// tem — ver tetoDoBalde. `valorPrevisto` continua no argumento (em vez de sair
+// só da regra) porque quem chama nem sempre fecha contra `recorrencias.valor`:
+// a projeção do mês pode ter valor próprio.
 //
 // Puro para poder ser testado sozinho e para que o painel, o sync e a projeção
 // respondam a mesma pergunta com a mesma conta.
@@ -254,12 +397,12 @@ function baldeFechado({ valorPrevisto, somaReal, regra, data, consolidado = fals
   if (consolidado) return true;
   if (janelaEncerradaEm(regra, data)) return true;
 
-  const previsto = centavos(valorPrevisto);
+  const teto = tetoDoBalde(regra, valorPrevisto);
   const soma = centavos(somaReal);
-  if (previsto === null || soma === null) return false;
-  // Alcançar exatamente o previsto fecha. Ultrapassar é permitido (o real pode
-  // ser maior), só não abre espaço para uma entrada seguinte.
-  return soma >= previsto;
+  if (teto === null || soma === null) return false;
+  // Alcançar exatamente o teto fecha. Ultrapassar é permitido (a última entrada
+  // pode passar do limite), só não abre espaço para uma entrada seguinte.
+  return soma >= teto;
 }
 
 module.exports = {
@@ -269,6 +412,10 @@ module.exports = {
   dentroDaJanela,
   janelaEncerradaEm,
   limitesDaJanela,
+  faixaDaRegra,
+  tetoDoBalde,
+  cabeNoTeto,
   baldeFechado,
   filtrarRecorrenciasCompativeis,
+  escolherRecorrencia,
 };

@@ -7,8 +7,12 @@ const {
   dentroDaJanela,
   janelaEncerradaEm,
   limitesDaJanela,
+  faixaDaRegra,
+  tetoDoBalde,
+  cabeNoTeto,
   baldeFechado,
   filtrarRecorrenciasCompativeis,
+  escolherRecorrencia,
 } = require('../src/recorrencia-match');
 
 // Todos os dados abaixo são SINTÉTICOS. Nomes fictícios, valores inventados.
@@ -251,4 +255,168 @@ test('consolidação do usuário fecha o balde independentemente de valor e data
 test('centavos não escorregam no ponto flutuante (0.1 + 0.2)', () => {
   const regra = regraMensal({ valor: 0.3, dia_inicial: 1, dia_limite: 28 });
   assert.equal(baldeFechado({ valorPrevisto: 0.3, somaReal: 0.1 + 0.2, regra, data: '2026-09-05' }), true);
+});
+
+// ── Faixa de valor ───────────────────────────────────────────────────────────
+//
+// Especificação do dono: "configurei um valor entre 1500 e 2500 entre os dias
+// 1 e 5" — dois eixos, janela de dias E faixa de valor, com a faixa valendo
+// para o TOTAL DO MÊS, não para cada entrada.
+
+// Regra com faixa: previsto R$ 1.850, aceita de R$ 1.500 a R$ 2.500 no mês.
+function regraComFaixa(extra = {}) {
+  return regraMensal({ valor_min: 1500, valor_max: 2500, ...extra });
+}
+
+test('faixaDaRegra: regra sem as colunas preenchidas não tem faixa (as 101 regras antigas)', () => {
+  assert.equal(faixaDaRegra(regraMensal()), null);
+  assert.equal(faixaDaRegra(regraMensal({ valor_min: null, valor_max: null })), null);
+});
+
+test('faixaDaRegra: faixa aberta de um lado só continua valendo', () => {
+  assert.deepEqual(faixaDaRegra(regraMensal({ valor_max: 2500 })), { min: null, max: 250000 });
+  assert.deepEqual(faixaDaRegra(regraMensal({ valor_min: 1500 })), { min: 150000, max: null });
+});
+
+test('faixaDaRegra: faixa invertida é ignorada em vez de matar a regra', () => {
+  // Erro de digitação não pode virar "esta regra nunca mais casa com nada".
+  assert.equal(faixaDaRegra(regraMensal({ valor_min: 2500, valor_max: 1500 })), null);
+});
+
+test('tetoDoBalde: com faixa o teto é valor_max; sem faixa continua o previsto', () => {
+  assert.equal(tetoDoBalde(regraComFaixa(), 1850), 250000);
+  assert.equal(tetoDoBalde(regraMensal(), 1850), 185000);
+});
+
+test('cabeNoTeto: entrada parcial cabe; entrada que sozinha estoura o teto não', () => {
+  const regra = regraComFaixa();
+  assert.equal(cabeNoTeto(regra, 350), true, 'parcial pequena é o caso da acumulação');
+  assert.equal(cabeNoTeto(regra, 2500), true, 'exatamente o teto cabe');
+  assert.equal(cabeNoTeto(regra, 2600), false);
+});
+
+test('cabeNoTeto: soma acumulada conta — o que já entrou ocupa espaço no balde', () => {
+  const regra = regraComFaixa();
+  assert.equal(cabeNoTeto(regra, 350, 1500), true, '1.500 + 350 = 1.850, dentro dos 2.500');
+  assert.equal(cabeNoTeto(regra, 1200, 1500), false, '1.500 + 1.200 estoura');
+});
+
+test('cabeNoTeto: regra sem teto aceita qualquer valor', () => {
+  assert.equal(cabeNoTeto(regraMensal(), 99999), true);
+  assert.equal(cabeNoTeto(regraMensal({ valor_min: 1500 }), 99999), true, 'piso não elimina');
+});
+
+// ── Faixa no filtro ──────────────────────────────────────────────────────────
+
+test('faixa: acumulação preservada — 1.500 e 350 casam com a MESMA regra', () => {
+  const regras = [regraComFaixa()];
+  assert.equal(filtrarRecorrenciasCompativeis(regras, lancamento({ valor: 1500, data: '2026-09-01' })).length, 1);
+  assert.equal(filtrarRecorrenciasCompativeis(regras, lancamento({ valor: 350, data: '2026-09-03' })).length, 1,
+    'entrada abaixo do piso é parcela do mês, não motivo para recusar');
+});
+
+test('faixa: lançamento que sozinho passa do teto não casa', () => {
+  const compativeis = filtrarRecorrenciasCompativeis([regraComFaixa()], lancamento({ valor: 4000 }));
+  assert.deepEqual(compativeis, []);
+});
+
+test('faixa: regra sem faixa continua casando com qualquer valor (comportamento de hoje)', () => {
+  assert.equal(filtrarRecorrenciasCompativeis([regraMensal()], lancamento({ valor: 99999 })).length, 1);
+});
+
+// ── escolherRecorrencia: o desempate que a faixa devolveu ────────────────────
+
+test('escolher: candidata única é escolhida sem precisar de faixa', () => {
+  const escolha = escolherRecorrencia([regraMensal({ id: 7 })], { valor: 1500 });
+  assert.equal(escolha.regra.id, 7);
+  assert.equal(escolha.motivo, 'unica');
+});
+
+test('escolher: o caso da especificação — faixa larga x faixa estreita, mesma origem e janela', () => {
+  // Duas regras da mesma contraparte na mesma janela. Hoje isso vira avulso;
+  // com faixa, os R$ 1.500 só cabem na regra de 1.500–2.500.
+  const larga = regraComFaixa({ id: 20 });
+  const estreita = regraMensal({ id: 21, valor: 400, valor_min: 300, valor_max: 500 });
+
+  const escolha = escolherRecorrencia([larga, estreita], { valor: 1500 });
+  assert.equal(escolha.regra.id, 20);
+  assert.equal(escolha.motivo, 'faixa_teto');
+});
+
+test('escolher: teto leva em conta o que já entrou no mês de cada candidata', () => {
+  const a = regraComFaixa({ id: 20 });                                          // 1.500–2.500
+  const b = regraMensal({ id: 21, valor: 3000, valor_min: 100, valor_max: 3000 });
+  // A já recebeu 2.400 dos 2.500; os 300 que chegam não cabem mais nela.
+  const somaPorRegra = new Map([[20, 2400], [21, 0]]);
+
+  const escolha = escolherRecorrencia([a, b], { valor: 300 }, { somaPorRegra });
+  assert.equal(escolha.regra.id, 21);
+  assert.equal(escolha.motivo, 'faixa_teto');
+});
+
+test('escolher: regra com faixa vence a regra genérica sem faixa', () => {
+  const especifica = regraComFaixa({ id: 20 });
+  const generica = regraMensal({ id: 21 });
+
+  const escolha = escolherRecorrencia([especifica, generica], { valor: 1600 });
+  assert.equal(escolha.regra.id, 20);
+  assert.equal(escolha.motivo, 'faixa_especifica');
+});
+
+test('escolher: duas regras sem faixa continuam ambíguas — nada é vinculado', () => {
+  const escolha = escolherRecorrencia([regraMensal({ id: 20 }), regraMensal({ id: 21 })], { valor: 1500 });
+  assert.equal(escolha.regra, null);
+  assert.equal(escolha.motivo, 'ambiguo');
+});
+
+test('escolher: duas faixas que ambas comportam o lançamento continuam ambíguas', () => {
+  const a = regraComFaixa({ id: 20 });
+  const b = regraMensal({ id: 21, valor_min: 1000, valor_max: 3000 });
+
+  const escolha = escolherRecorrencia([a, b], { valor: 1500 });
+  assert.equal(escolha.regra, null, 'escolher entre duas faixas válidas seria sorteio');
+});
+
+test('escolher: nenhuma candidata comportando o lançamento não elege a "menos ruim"', () => {
+  const a = regraMensal({ id: 20, valor_max: 500 });
+  const b = regraMensal({ id: 21, valor_max: 800 });
+
+  const escolha = escolherRecorrencia([a, b], { valor: 4000 });
+  assert.equal(escolha.regra, null);
+  assert.equal(escolha.motivo, 'ambiguo');
+});
+
+test('escolher: lista vazia devolve motivo próprio, sem estourar', () => {
+  assert.deepEqual(escolherRecorrencia([], { valor: 10 }), { regra: null, motivo: 'sem_candidata' });
+  assert.deepEqual(escolherRecorrencia(null, { valor: 10 }), { regra: null, motivo: 'sem_candidata' });
+});
+
+// ── Faixa × encerramento do balde ────────────────────────────────────────────
+
+test('balde com faixa NÃO fecha ao alcançar o previsto — fecha no teto da faixa', () => {
+  // É a interação que muda o comportamento: sem faixa, R$ 1.850 fechavam o mês
+  // e a comissão seguinte virava avulso. Com faixa até R$ 2.500, ela entra.
+  const regra = regraComFaixa();
+  assert.equal(baldeFechado({ valorPrevisto: 1850, somaReal: 1850, regra, data: '2026-09-06' }), false);
+  assert.equal(baldeFechado({ valorPrevisto: 1850, somaReal: 2500, regra, data: '2026-09-06' }), true);
+});
+
+test('balde com faixa ainda fecha quando a janela do mês vence', () => {
+  const regra = regraComFaixa({ dia_inicial: 1, dia_limite: 10 });
+  assert.equal(baldeFechado({ valorPrevisto: 1850, somaReal: 1600, regra, data: '2026-09-11' }), true);
+});
+
+test('balde com faixa ainda fecha por consolidação do usuário', () => {
+  const regra = regraComFaixa();
+  assert.equal(baldeFechado({ valorPrevisto: 1850, somaReal: 1600, regra, data: '2026-09-06', consolidado: true }), true);
+});
+
+test('balde de regra sem faixa fecha no previsto, exatamente como antes', () => {
+  const regra = regraMensal({ valor: 1850 });
+  assert.equal(baldeFechado({ valorPrevisto: 1850, somaReal: 1850, regra, data: '2026-09-06' }), true);
+});
+
+test('faixa invertida no banco não trava o balde: volta a fechar pelo previsto', () => {
+  const regra = regraMensal({ valor: 1850, valor_min: 2500, valor_max: 1500 });
+  assert.equal(baldeFechado({ valorPrevisto: 1850, somaReal: 1850, regra, data: '2026-09-06' }), true);
 });

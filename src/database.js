@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const pluggyCrypto = require('./pluggyCrypto');
 const { normalizarEstabelecimento } = require('./estabelecimento');
 const { projetarParcelasRestantes } = require('./parcelamento');
-const { filtrarRecorrenciasCompativeis, baldeFechado, janelaEncerradaEm } = require('./recorrencia-match');
+const { filtrarRecorrenciasCompativeis, escolherRecorrencia, baldeFechado, janelaEncerradaEm } = require('./recorrencia-match');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -1389,6 +1389,34 @@ async function initTables() {
     console.error('[DB] initTables: falha ao criar/backfillar janela das recorrências:', err.message);
   }
 
+  // (3b) Faixa de valor da recorrência — o segundo eixo do casamento, ao lado
+  // da janela de dias ("entre R$ 1.500 e R$ 2.500 entre os dias 1 e 5").
+  //
+  // SEM BACKFILL, de propósito: NULL nos dois lados significa "regra sem
+  // faixa", e regra sem faixa se comporta exatamente como antes destas colunas
+  // existirem (o balde fecha em recorrencias.valor, nenhum lançamento é
+  // eliminado por valor). É o que mantém as regras que já estão no banco
+  // intactas — inventar uma faixa para elas mudaria em silêncio o que já casa
+  // hoje.
+  //
+  // SEM CONSTRAINT, também de propósito. A checagem que faria sentido é entre
+  // as duas colunas (valor_min <= valor_max), e constraint de tabela não tem
+  // ADD ... IF NOT EXISTS: cada boot seguinte tentaria criar de novo e falharia
+  // no duplicate_object. A validação mora em normalizarRegraCasamento, e
+  // faixaDaRegra (src/recorrencia-match.js) ignora faixa invertida que já
+  // esteja gravada. ADD COLUMN de coluna anulável sem default é metadado puro
+  // no Postgres — não reescreve a tabela e não trava o boot.
+  try {
+    await pool.query(`
+      ALTER TABLE recorrencias
+        ADD COLUMN IF NOT EXISTS valor_min NUMERIC(12,2);
+      ALTER TABLE recorrencias
+        ADD COLUMN IF NOT EXISTS valor_max NUMERIC(12,2);
+    `);
+  } catch (err) {
+    console.error('[DB] initTables: falha ao criar faixa de valor das recorrências:', err.message);
+  }
+
   // (4) Consolidação: fecha o mês de uma recorrência pelo total REAL que
   // entrou, em vez do valor previsto. Tabela própria (e não uma coluna em
   // recorrencias) porque é um fato POR COMPETÊNCIA, e porque apagar a linha é
@@ -1483,6 +1511,8 @@ async function listarRecorrencias(usuarioId) {
   const result = await pool.query(
     `SELECT id, tipo, valor::float, descricao, categoria, frequencia,
             dia_mes, dia_semana, cartao_id, conta_id,
+            dia_inicial, dia_limite,
+            valor_min::float AS valor_min, valor_max::float AS valor_max,
             TO_CHAR(data_inicio, 'YYYY-MM-DD') as data_inicio,
             TO_CHAR(data_fim,    'YYYY-MM-DD') as data_fim
      FROM recorrencias
@@ -6164,15 +6194,17 @@ async function resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, c
 // I/O: buscar candidatas, checar o mês e decidir o que fazer com uma projeção
 // já materializada.
 //
-// A query corta por tipo + vigência; descrição e janela ficam para o módulo
-// puro. Valor NÃO entra: a acumulação existe justamente para o caso em que a
-// entrada vale menos que o previsto.
+// A query corta por tipo + vigência; descrição, janela e faixa ficam para o
+// módulo puro. Nenhum corte por valor no SQL: a acumulação existe justamente
+// para o caso em que a entrada vale menos que o previsto, e o único lado da
+// faixa que elimina (o teto) precisa da soma do mês para valer direito.
 const DATA_ISO_ESTRITA = /^\d{4}-\d{2}-\d{2}$/;
 
 async function buscarRecorrenciasCandidatas(uid, { tipo, data }) {
   const res = await pool.query(
     `SELECT id, tipo, valor::float AS valor, descricao, frequencia, dia_mes, dia_semana,
             dia_inicial, dia_limite,
+            valor_min::float AS valor_min, valor_max::float AS valor_max,
             TO_CHAR(data_inicio, 'YYYY-MM-DD') AS data_inicio,
             TO_CHAR(data_fim,    'YYYY-MM-DD') AS data_fim
      FROM recorrencias
@@ -6184,6 +6216,28 @@ async function buscarRecorrenciasCandidatas(uid, { tipo, data }) {
     [uid, tipo, data]
   );
   return res.rows;
+}
+
+// Soma real do mês de VÁRIAS regras de uma vez -> Map<recorrencia_id, soma>.
+//
+// Só é chamada no caminho ambíguo (mais de uma regra casando com o mesmo
+// lançamento), que é raro: no caminho comum de uma candidata só, o estado do
+// balde já vem de buscarEstadoBalde e uma query a mais seria desperdício em
+// todo sync. Agregada em vez de uma consulta por candidata pelo mesmo motivo
+// de buscarEstadosBaldeMes — o laço de sincronização não pode virar N+1.
+async function buscarSomasReaisMes(uid, recorrenciaIds, data) {
+  if (!recorrenciaIds || recorrenciaIds.length === 0) return new Map();
+  const res = await pool.query(
+    `SELECT recorrencia_id,
+            COALESCE(SUM(valor) FILTER (WHERE projetada = FALSE), 0)::float AS soma_real
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND recorrencia_id = ANY($2::int[])
+       AND date_trunc('month', data::timestamp) = date_trunc('month', $3::date::timestamp)
+     GROUP BY recorrencia_id`,
+    [uid, recorrenciaIds, data]
+  );
+  return new Map(res.rows.map((r) => [r.recorrencia_id, r.soma_real]));
 }
 
 // Estado do balde de uma recorrência num mês: quanto já entrou de verdade
@@ -6227,7 +6281,7 @@ async function buscarEstadoBalde(uid, recorrenciaId, data) {
 // é a estimativa do mês inteiro, e mantê-la ao lado do dinheiro que entrou
 // contaria o valor duas vezes. A partir da segunda entrada não há mais
 // projeção para absorver — aí é acumulação pura.
-async function resolverVinculoRecorrencia(uid, { tipo, descricao, data }) {
+async function resolverVinculoRecorrencia(uid, { tipo, valor, descricao, data }) {
   const semVinculo = { recorrenciaId: null, absorver: [] };
 
   if (!DATA_ISO_ESTRITA.test(String(data || ''))) return semVinculo;
@@ -6238,15 +6292,24 @@ async function resolverVinculoRecorrencia(uid, { tipo, descricao, data }) {
   const candidatas = await buscarRecorrenciasCandidatas(uid, { tipo, data });
   if (candidatas.length === 0) return semVinculo;
 
-  const compativeis = filtrarRecorrenciasCompativeis(candidatas, { tipo, descricao, data });
+  const compativeis = filtrarRecorrenciasCompativeis(candidatas, { tipo, valor, descricao, data });
   if (compativeis.length === 0) return semVinculo;
 
-  // Ambiguidade: duas regras com a MESMA origem e a MESMA janela. Sem o valor
-  // como desempate (a acumulação o removeu do casamento), não há critério
-  // técnico para escolher — escolher seria sorteio. O desempate é do usuário,
-  // reorganizando as regras. Log sem a descrição (contém nome de contraparte);
-  // os ids bastam para investigar.
+  // Mais de uma regra casando: a faixa de valor desempata (ver
+  // escolherRecorrencia). Só aqui a soma do mês de cada candidata é buscada —
+  // no caminho de uma candidata só ela não muda decisão nenhuma.
+  let escolha = { regra: compativeis[0], motivo: 'unica' };
   if (compativeis.length > 1) {
+    const somaPorRegra = await buscarSomasReaisMes(uid, compativeis.map(r => r.id), data);
+    escolha = escolherRecorrencia(compativeis, { valor }, { somaPorRegra });
+  }
+
+  // Ambiguidade que a faixa não resolveu: duas regras com a MESMA origem, a
+  // MESMA janela e ambas comportando o lançamento. Não há critério técnico para
+  // escolher — escolher seria sorteio. O desempate é do usuário, dando faixa a
+  // uma delas ou reorganizando as regras. Log sem a descrição (contém nome de
+  // contraparte); os ids bastam para investigar.
+  if (!escolha.regra) {
     console.warn(
       `[DB] Pluggy × recorrência: ${compativeis.length} regras casam com o mesmo lançamento ` +
       `(${data}, ${tipo}) — ids [${compativeis.map(r => r.id).join(', ')}]. ` +
@@ -6255,12 +6318,23 @@ async function resolverVinculoRecorrencia(uid, { tipo, descricao, data }) {
     return semVinculo;
   }
 
-  const regra = compativeis[0];
+  const regra = escolha.regra;
+  if (escolha.motivo !== 'unica') {
+    console.log(
+      `[DB] Pluggy × recorrência: ${compativeis.length} candidatas em ${data} (${tipo}) — ` +
+      `desempate por ${escolha.motivo} escolheu a regra #${regra.id}.`
+    );
+  }
   const balde = await buscarEstadoBalde(uid, regra.id, data);
 
-  // Balde fechado = a acumulação daquele mês acabou, por valor alcançado, por
+  // Balde fechado = a acumulação daquele mês acabou, por teto alcançado, por
   // janela vencida ou por consolidação do usuário. A entrada que chega depois
   // não pertence à recorrência: vira avulso.
+  //
+  // `valorPrevisto: regra.valor` é o teto de regra SEM faixa. Com faixa, quem
+  // manda é `valor_max` e baldeFechado ignora este argumento (ver tetoDoBalde)
+  // — é o que mantém o balde aberto depois de alcançar o previsto, esperando a
+  // parte que ainda pode vir dentro da faixa.
   if (baldeFechado({
     valorPrevisto: regra.valor,
     somaReal: balde.somaReal,
@@ -6349,7 +6423,7 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   let recorrenciaId = null;
   let absorver = [];
   try {
-    const vinculo = await resolverVinculoRecorrencia(uid, { tipo, descricao, data });
+    const vinculo = await resolverVinculoRecorrencia(uid, { tipo, valor, descricao, data });
     recorrenciaId = vinculo.recorrenciaId;
     absorver = vinculo.absorver;
   } catch (err) {

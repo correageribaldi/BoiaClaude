@@ -96,6 +96,19 @@ function mockBanco(t, opcoes = {}) {
       return { rows: recorrencias };
     }
 
+    // Somas do mês de VÁRIAS regras de uma vez (desempate por faixa). Precisa
+    // vir antes do estado do balde: as duas queries compartilham o FILTER, e
+    // esta se distingue pelo GROUP BY / lista de ids.
+    if (sql.includes('GROUP BY recorrencia_id')) {
+      const [, ids, dataISO] = params;
+      return {
+        rows: ids.map((id) => ({
+          recorrencia_id: id,
+          soma_real: doMes(id, dataISO).filter((l) => !l.projetada).reduce((s, l) => s + l.valor, 0),
+        })),
+      };
+    }
+
     // Estado do balde: soma do que é real, ids do que é projeção.
     if (sql.includes('FILTER (WHERE projetada = FALSE)')) {
       const mes = doMes(params[1], params[2]);
@@ -199,6 +212,119 @@ test('ambiguidade (duas regras casam igual) NÃO vincula a nenhuma e loga para d
   assert.equal(logs.warn.length, 1);
   assert.match(logs.warn[0], /60, 61/);
   assert.doesNotMatch(logs.warn[0], /Fulano/, 'log não carrega nome de contraparte');
+});
+
+// ── Faixa de valor: o desempate da ambiguidade ──────────────────────────────
+//
+// Especificação do dono: "se o vínculo funcionar por espaço de dias e valor,
+// exemplo entre 1500 a 2500, resolve o problema inclusive se o valor não entrar
+// de uma vez só". A faixa é o eixo que faltava para o sistema parar de desistir
+// quando duas regras da mesma contraparte casam com o mesmo lançamento.
+
+test('faixa desempata duas regras da mesma origem e mesma janela', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const { chamadas } = mockBanco(t, {
+    recorrencias: [
+      regra({ id: 60, valor: 1850, valor_min: 1500, valor_max: 2500 }),
+      regra({ id: 61, valor: 400, valor_min: 300, valor_max: 500 }),
+    ],
+  });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 1500 }));
+
+  assert.equal(resultado.recorrenciaId, 60, 'R$ 1.500 não cabe na regra de 300–500');
+  assert.equal(insertDe(chamadas).params[10], 60);
+});
+
+test('faixa desempata olhando o que JÁ entrou no mês de cada candidata', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  // A regra 60 já recebeu R$ 2.400 dos R$ 2.500 do teto: os R$ 300 que chegam
+  // não cabem mais nela e pertencem à outra.
+  const cheia = { id: 920, status: 'pago', valor: 2400, pluggy_transaction_id: 'tx-antes', recorrencia_id: 60, data: '2026-09-02', projetada: false };
+  const { chamadas } = mockBanco(t, {
+    recorrencias: [
+      regra({ id: 60, valor: 1850, valor_min: 1500, valor_max: 2500 }),
+      regra({ id: 61, valor: 300, valor_min: 100, valor_max: 3000 }),
+    ],
+    linhas: [cheia],
+  });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-sintetica-9', valor: 300, data: '2026-09-06',
+  }));
+
+  assert.equal(resultado.recorrenciaId, 61);
+  assert.equal(insertDe(chamadas).params[10], 61);
+});
+
+test('ambiguidade sem faixa em nenhuma das regras continua sem vincular', async (t) => {
+  mockResolverIdentidade(t);
+  const logs = silenciarLogs(t);
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ id: 70 }), regra({ id: 71, dia_mes: 7 })] });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy());
+
+  assert.equal(resultado.recorrenciaId, null);
+  assert.equal(insertDe(chamadas).params[10], null);
+  assert.equal(logs.warn.length, 1);
+});
+
+test('faixa: lançamento que sozinho estoura o teto não vincula (vira avulso visível)', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor_min: 1500, valor_max: 2500 })] });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 9000 }));
+
+  assert.equal(resultado.recorrenciaId, null);
+  assert.equal(insertDe(chamadas).params[10], null);
+});
+
+test('faixa mantém o balde aberto depois do previsto — a comissão seguinte ainda entra', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  // Sem faixa, R$ 1.850 fechariam o mês e os R$ 300 seguintes virariam avulso.
+  const previstoCheio = { id: 921, status: 'pago', valor: 1850, pluggy_transaction_id: 'tx-antes', recorrencia_id: 42, data: '2026-09-03', projetada: false };
+  const { chamadas } = mockBanco(t, {
+    recorrencias: [regra({ valor: 1850, valor_min: 1500, valor_max: 2500 })],
+    linhas: [previstoCheio],
+  });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-sintetica-10', valor: 300, data: '2026-09-08',
+  }));
+
+  assert.equal(resultado.recorrenciaId, 42);
+  assert.equal(insertDe(chamadas).params[10], 42);
+});
+
+test('regra SEM faixa continua fechando o balde no previsto (nada mudou para as antigas)', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const previstoCheio = { id: 922, status: 'pago', valor: 1850, pluggy_transaction_id: 'tx-antes', recorrencia_id: 42, data: '2026-09-03', projetada: false };
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor: 1850 })], linhas: [previstoCheio] });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-sintetica-11', valor: 300, data: '2026-09-08',
+  }));
+
+  assert.equal(resultado.recorrenciaId, null);
+  assert.equal(insertDe(chamadas).params[10], null);
+});
+
+test('faixa: uma candidata só não paga a query extra de somas do mês', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor_min: 1500, valor_max: 2500 })] });
+
+  await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 1500 }));
+
+  assert.equal(
+    chamadas.filter((c) => c.sql.includes('GROUP BY recorrencia_id')).length, 0,
+    'o desempate só custa query quando há mais de uma candidata'
+  );
 });
 
 // ── Absorção da projeção (rede de proteção obrigatória) ──────────────────────
