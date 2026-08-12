@@ -72,6 +72,37 @@ test('criarRecorrencia: regra antiga (sem origem) continua gravando os dois NULL
   assert.equal(contaId, null);
 });
 
+test('criarRecorrencia: janela e faixa vêm no último argumento e viram colunas', async (t) => {
+  mockResolverIdentidade(t);
+  const cap = capturarInsert(t, 'recorrencias', [{ id: 10 }]);
+
+  await db.criarRecorrencia(
+    'user1@c.us', 'receita', 1850, 'Salário', 'Salário', 'mensal', 5, null,
+    '2026-08-05', null, null, 99,
+    { diaInicial: 1, diaLimite: 5, valorMin: 1500, valorMax: 2500 }
+  );
+
+  const [, , , , , , , , , , , , diaInicial, diaLimite, valorMin, valorMax] = cap.params;
+  assert.equal(diaInicial, 1);
+  assert.equal(diaLimite, 5);
+  assert.equal(valorMin, 1500);
+  assert.equal(valorMax, 2500);
+});
+
+test('criarRecorrencia: chamador antigo (sem o argumento) grava as quatro colunas NULL', async (t) => {
+  mockResolverIdentidade(t);
+  const cap = capturarInsert(t, 'recorrencias', [{ id: 11 }]);
+
+  // É o caso do agente do WhatsApp e da importação de extrato: eles não sabem
+  // que janela e faixa existem, e a regra criada tem de continuar valendo.
+  await db.criarRecorrencia(
+    'user1@c.us', 'despesa', 120.5, 'Netflix', 'Lazer', 'mensal', 10, null,
+    '2026-08-10', null
+  );
+
+  assert.deepEqual(cap.params.slice(12), [null, null, null, null]);
+});
+
 test('adicionarTransacaoComRecorrencia: propaga cartao_id da regra e deixa conta_id NULL', async (t) => {
   mockResolverIdentidade(t);
   const cap = capturarInsert(t, 'transacoes', [{ id: 1, numero_usuario: 31 }]);

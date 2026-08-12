@@ -1490,18 +1490,79 @@ function normalizarOrigem(cartaoId, contaId) {
   return { cartaoId: cartao, contaId: cartao ? null : (contaId || null) };
 }
 
-async function criarRecorrencia(usuarioId, tipo, valor, descricao, categoria, frequencia, diaMes, diaSemana, dataInicio, dataFim, cartaoId = null, contaId = null) {
+// normalizarRegraCasamento -> { diaInicial, diaLimite, valorMin, valorMax }
+//
+// Os dois eixos com que o usuário afina o casamento entre lançamento importado
+// e regra: em que faixa de DIAS a ocorrência daquele mês cai, e em que faixa de
+// VALOR o mês inteiro pode somar. Ver src/recorrencia-match.js para o uso.
+//
+// Ausência é resposta legítima e vira NULL: regra sem janela cai no dia_mes ± 5
+// derivado em código, e regra sem faixa fecha o balde no próprio valor — o
+// comportamento de antes destas colunas existirem. Nenhum dos dois campos é
+// obrigatório, e todo caminho que cria recorrência (WhatsApp, painel, API)
+// passa por aqui, inclusive os que nem sabem que eles existem.
+//
+// A janela é gravada só quando os DOIS lados vêm: limitesDaJanela precisa do
+// par para valer, e meia janela seria pior que nenhuma (o fallback derivado é
+// coerente, meio dado não é).
+//
+// Inversão (início > limite, mínimo > máximo) é erro de digitação e vira
+// exceção em vez de dado gravado: uma faixa invertida não é satisfeita por
+// lançamento nenhum, e falhar calado transformaria isso em "esta regra nunca
+// mais casa", meses depois, sem pista.
+function normalizarRegraCasamento({ diaInicial, diaLimite, valorMin, valorMax, frequencia } = {}) {
+  const dia = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = parseInt(v, 10);
+    return Number.isInteger(n) && n >= 1 && n <= 31 ? n : null;
+  };
+  const dinheiro = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+  };
+
+  let inicial = dia(diaInicial);
+  let limite = dia(diaLimite);
+  if (inicial !== null && limite !== null && inicial > limite) {
+    throw new Error('Janela de dias inválida: o dia inicial não pode ser maior que o dia limite');
+  }
+  // Janela é conceito de mês. Semanal/diária casam pelo dia da semana e
+  // ignorariam estas colunas — gravá-las só criaria dado morto e confuso.
+  if (inicial === null || limite === null || (frequencia && frequencia !== 'mensal' && frequencia !== 'anual')) {
+    inicial = null;
+    limite = null;
+  }
+
+  const min = dinheiro(valorMin);
+  const max = dinheiro(valorMax);
+  if (min !== null && max !== null && min > max) {
+    throw new Error('Faixa de valor inválida: o mínimo não pode ser maior que o máximo');
+  }
+
+  return { diaInicial: inicial, diaLimite: limite, valorMin: min, valorMax: max };
+}
+
+// `regra` (último argumento, opcional) carrega janela de dias e faixa de valor
+// — ver normalizarRegraCasamento. Objeto em vez de mais quatro posicionais
+// porque a lista já tem doze, e os chamadores antigos (agente do WhatsApp,
+// importação de extrato) continuam válidos sem tocar em nada: sem o argumento,
+// as quatro colunas ficam NULL e a regra se comporta como sempre.
+async function criarRecorrencia(usuarioId, tipo, valor, descricao, categoria, frequencia, diaMes, diaSemana, dataInicio, dataFim, cartaoId = null, contaId = null, regra = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const origem = normalizarOrigem(cartaoId, contaId);
+  const casamento = normalizarRegraCasamento({ ...regra, frequencia });
   const result = await pool.query(
     `INSERT INTO recorrencias
-       (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id,
+        dia_inicial, dia_limite, valor_min, valor_max)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      RETURNING id`,
     [uid, tipo, valor, descricao, categoria || 'Outros', frequencia,
      diaMes || null, diaSemana || null,
      dataInicio || dataHojeBR(), dataFim || null,
-     origem.cartaoId, origem.contaId]
+     origem.cartaoId, origem.contaId,
+     casamento.diaInicial, casamento.diaLimite, casamento.valorMin, casamento.valorMax]
   );
   return result.rows[0].id;
 }
@@ -1969,6 +2030,11 @@ async function buscarRecorrenciaPorId(usuarioId, recorrenciaId) {
 // com aquele recorrencia_id naquele YYYY-MM, a projeção da mesma regra para o
 // mesmo mês não é somada de novo (ver resumoMensal, calcularSaldos e
 // projetarProximosMeses).
+//
+// `opcoes` aceita, além de frequencia/vezes, a janela de dias e a faixa de
+// valor da regra (diaInicial, diaLimite, valorMin, valorMax) — os dois eixos
+// com que o próximo lançamento importado vai reconhecer esta recorrência. São
+// opcionais: sem eles a regra nasce com o comportamento derivado de sempre.
 async function tornarTransacaoRecorrente(usuarioId, numeroUsuario, opcoes = {}) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const frequencia = opcoes.frequencia === 'semanal' ? 'semanal' : 'mensal';
@@ -1978,6 +2044,9 @@ async function tornarTransacaoRecorrente(usuarioId, numeroUsuario, opcoes = {}) 
   if (vezes !== null && (!Number.isFinite(vezes) || vezes < 2)) {
     throw new Error('Número de repetições inválido (mínimo 2)');
   }
+  // Janela e faixa validadas ANTES de abrir a transação: erro de preenchimento
+  // não precisa de conexão nem de BEGIN para ser recusado.
+  const casamento = normalizarRegraCasamento({ ...opcoes, frequencia });
 
   const client = await pool.connect();
   try {
@@ -2023,11 +2092,13 @@ async function tornarTransacaoRecorrente(usuarioId, numeroUsuario, opcoes = {}) 
     const origem = normalizarOrigem(tx.cartao_id, tx.conta_id);
     const recRes = await client.query(
       `INSERT INTO recorrencias
-         (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         (usuario_id, tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id,
+          dia_inicial, dia_limite, valor_min, valor_max)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING id`,
       [uid, tx.tipo, tx.valor, tx.descricao, tx.categoria || 'Outros', frequencia,
-       diaMes, diaSemana, tx.data, dataFim, origem.cartaoId, origem.contaId]
+       diaMes, diaSemana, tx.data, dataFim, origem.cartaoId, origem.contaId,
+       casamento.diaInicial, casamento.diaLimite, casamento.valorMin, casamento.valorMax]
     );
     const recorrenciaId = recRes.rows[0].id;
 
@@ -2050,6 +2121,10 @@ async function tornarTransacaoRecorrente(usuarioId, numeroUsuario, opcoes = {}) 
       data_fim:    dataFim,
       cartao_id:   origem.cartaoId,
       conta_id:    origem.contaId,
+      dia_inicial: casamento.diaInicial,
+      dia_limite:  casamento.diaLimite,
+      valor_min:   casamento.valorMin,
+      valor_max:   casamento.valorMax,
     };
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* conexão já perdida */ }
@@ -6762,6 +6837,7 @@ module.exports = {
   excluirCaixinha,
   adicionarSaldoCaixinha,
   criarRecorrencia,
+  normalizarRegraCasamento,
   listarRecorrencias,
   calcularOcorrenciasNoPerodo,
   adicionarTransacaoComRecorrencia,

@@ -372,15 +372,24 @@ app.delete('/api/transactions/:id', autenticar, async (req, res) => {
 // Transforma um lançamento existente em recorrência (o modal de edição só
 // oferece isso para transação real, nunca para linha projetada).
 // A regra criada apenas PROJETA — ver db.tornarTransacaoRecorrente.
+//
+// Além de frequencia/vezes, aceita os dois eixos de casamento: janela de dias
+// (dia_inicial/dia_limite) e faixa de valor (valor_min/valor_max). Todos
+// opcionais — a validação e a normalização ficam em normalizarRegraCasamento,
+// para valerem igual aqui e no POST /api/recorrencias.
 app.post('/api/transactions/:id/recorrencia', autenticar, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (!id) return res.status(400).json({ erro: 'ID inválido' });
-    const { frequencia, vezes } = req.body || {};
+    const { frequencia, vezes, dia_inicial, dia_limite, valor_min, valor_max } = req.body || {};
     if (frequencia && !['mensal', 'semanal'].includes(frequencia)) {
       return res.status(400).json({ erro: 'frequencia deve ser mensal ou semanal' });
     }
-    const resultado = await db.tornarTransacaoRecorrente(req.usuarioId, id, { frequencia, vezes });
+    const resultado = await db.tornarTransacaoRecorrente(req.usuarioId, id, {
+      frequencia, vezes,
+      diaInicial: dia_inicial, diaLimite: dia_limite,
+      valorMin: valor_min, valorMax: valor_max,
+    });
     if (resultado.erro === 'nao_encontrada') return res.status(404).json({ erro: 'Transação não encontrada' });
     if (resultado.erro === 'ja_recorrente') {
       return res.status(409).json({ erro: 'Este lançamento já faz parte de uma recorrência', recorrencia_id: resultado.recorrencia_id });
@@ -1268,9 +1277,13 @@ app.get('/api/recorrencias', autenticar, async (req, res) => {
   }
 });
 
+// Recorrência nasce sempre de um lançamento (modal de nova transação ou modal
+// de editar). Este endpoint é o do modal de NOVA transação marcada como
+// recorrente — o dinheiro avulso, que não vem da Pluggy.
 app.post('/api/recorrencias', autenticar, async (req, res) => {
   try {
-    const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id } = req.body;
+    const { tipo, valor, descricao, categoria, frequencia, dia_mes, dia_semana, data_inicio, data_fim, cartao_id, conta_id,
+            dia_inicial, dia_limite, valor_min, valor_max } = req.body;
     if (!tipo || !valor || !descricao || !frequencia) {
       return res.status(400).json({ erro: 'tipo, valor, descricao e frequencia são obrigatórios' });
     }
@@ -1282,12 +1295,16 @@ app.post('/api/recorrencias', autenticar, async (req, res) => {
       data_inicio || new Date().toISOString().substring(0, 10),
       data_fim || null,
       cartao_id != null ? parseInt(cartao_id) : null,
-      conta_id  != null ? parseInt(conta_id)  : null
+      conta_id  != null ? parseInt(conta_id)  : null,
+      { diaInicial: dia_inicial, diaLimite: dia_limite, valorMin: valor_min, valorMax: valor_max }
     );
     res.json(resultado);
   } catch (err) {
     console.error('[WEB] POST /api/recorrencias:', err.message);
-    res.status(500).json({ erro: err.message });
+    // Janela ou faixa inconsistente é erro de preenchimento, não falha de
+    // servidor: o modal precisa do 400 para mostrar a mensagem ao usuário.
+    const preenchimento = /inválida/i.test(err.message);
+    res.status(preenchimento ? 400 : 500).json({ erro: err.message });
   }
 });
 

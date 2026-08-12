@@ -170,6 +170,128 @@ test('tornarTransacaoRecorrente: vezes inválido é rejeitado antes de tocar o b
   assert.equal(conectou, false);
 });
 
+// ── Janela de dias e faixa de valor na criação ───────────────────────────────
+//
+// Recorrência nasce sempre de um lançamento, e os dois eixos com que o próximo
+// lançamento importado vai reconhecê-la (janela + faixa) são preenchidos no
+// mesmo modal. São opcionais: sem eles, a regra nasce como sempre nasceu.
+
+const IDX = { diaInicial: 12, diaLimite: 13, valorMin: 14, valorMax: 15 };
+
+test('tornarTransacaoRecorrente: grava janela de dias e faixa de valor da regra', async (t) => {
+  mockResolverIdentidade(t);
+  const log = mockClient(t, TX_CONTA); // 2026-08-05, R$ 2.500
+
+  await db.tornarTransacaoRecorrente('user1@c.us', 901, {
+    frequencia: 'mensal', diaInicial: 1, diaLimite: 5, valorMin: 1500, valorMax: 2500,
+  });
+
+  const p = achar(log, 'INSERT INTO recorrencias').params;
+  assert.equal(p[IDX.diaInicial], 1);
+  assert.equal(p[IDX.diaLimite], 5);
+  assert.equal(p[IDX.valorMin], 1500);
+  assert.equal(p[IDX.valorMax], 2500);
+});
+
+test('tornarTransacaoRecorrente: sem janela e sem faixa as quatro colunas ficam NULL', async (t) => {
+  mockResolverIdentidade(t);
+  const log = mockClient(t, TX_CONTA);
+
+  await db.tornarTransacaoRecorrente('user1@c.us', 901, { frequencia: 'mensal' });
+
+  const p = achar(log, 'INSERT INTO recorrencias').params;
+  // NULL é "regra sem janela/sem faixa" — o comportamento anterior às colunas.
+  for (const idx of Object.values(IDX)) assert.equal(p[idx], null);
+});
+
+test('tornarTransacaoRecorrente: meia janela não é gravada (só um dos lados)', async (t) => {
+  mockResolverIdentidade(t);
+  const log = mockClient(t, TX_CONTA);
+
+  await db.tornarTransacaoRecorrente('user1@c.us', 901, { frequencia: 'mensal', diaInicial: 1 });
+
+  const p = achar(log, 'INSERT INTO recorrencias').params;
+  assert.equal(p[IDX.diaInicial], null, 'meia janela é pior que nenhuma: o fallback derivado é coerente');
+  assert.equal(p[IDX.diaLimite], null);
+});
+
+test('tornarTransacaoRecorrente: faixa aberta de um lado só é gravada', async (t) => {
+  mockResolverIdentidade(t);
+  const log = mockClient(t, TX_CONTA);
+
+  await db.tornarTransacaoRecorrente('user1@c.us', 901, { frequencia: 'mensal', valorMax: 3000 });
+
+  const p = achar(log, 'INSERT INTO recorrencias').params;
+  assert.equal(p[IDX.valorMin], null);
+  assert.equal(p[IDX.valorMax], 3000, 'só o teto já muda o encerramento do balde');
+});
+
+test('tornarTransacaoRecorrente: regra semanal não grava janela de dias', async (t) => {
+  mockResolverIdentidade(t);
+  const log = mockClient(t, TX_CONTA);
+
+  await db.tornarTransacaoRecorrente('user1@c.us', 901, {
+    frequencia: 'semanal', diaInicial: 1, diaLimite: 5, valorMax: 3000,
+  });
+
+  const p = achar(log, 'INSERT INTO recorrencias').params;
+  assert.equal(p[IDX.diaInicial], null, 'semanal casa pelo dia da semana — janela de mês seria dado morto');
+  assert.equal(p[IDX.diaLimite], null);
+  assert.equal(p[IDX.valorMax], 3000, 'a faixa continua valendo para semanal');
+});
+
+test('tornarTransacaoRecorrente: faixa invertida é recusada antes de tocar o banco', async (t) => {
+  mockResolverIdentidade(t);
+  let conectou = false;
+  t.mock.method(db.pool, 'connect', async () => { conectou = true; throw new Error('não deveria conectar'); });
+
+  await assert.rejects(
+    () => db.tornarTransacaoRecorrente('user1@c.us', 900, { frequencia: 'mensal', valorMin: 2500, valorMax: 1500 }),
+    /Faixa de valor inválida/
+  );
+  assert.equal(conectou, false);
+});
+
+test('tornarTransacaoRecorrente: janela invertida é recusada antes de tocar o banco', async (t) => {
+  mockResolverIdentidade(t);
+  t.mock.method(db.pool, 'connect', async () => { throw new Error('não deveria conectar'); });
+
+  await assert.rejects(
+    () => db.tornarTransacaoRecorrente('user1@c.us', 900, { frequencia: 'mensal', diaInicial: 20, diaLimite: 5 }),
+    /Janela de dias inválida/
+  );
+});
+
+// ── normalizarRegraCasamento: a validação compartilhada pelos dois caminhos ──
+
+test('normalizarRegraCasamento: campos ausentes viram NULL (regra sem janela/faixa)', () => {
+  assert.deepEqual(
+    db.normalizarRegraCasamento({}),
+    { diaInicial: null, diaLimite: null, valorMin: null, valorMax: null }
+  );
+  assert.deepEqual(
+    db.normalizarRegraCasamento({ diaInicial: '', diaLimite: '', valorMin: '', valorMax: '' }),
+    { diaInicial: null, diaLimite: null, valorMin: null, valorMax: null }
+  );
+});
+
+test('normalizarRegraCasamento: dia fora de 1–31 é descartado, não grampeado', () => {
+  const r = db.normalizarRegraCasamento({ diaInicial: 0, diaLimite: 40, frequencia: 'mensal' });
+  assert.equal(r.diaInicial, null);
+  assert.equal(r.diaLimite, null);
+});
+
+test('normalizarRegraCasamento: valor zero ou negativo não vira faixa', () => {
+  const r = db.normalizarRegraCasamento({ valorMin: 0, valorMax: -10 });
+  assert.equal(r.valorMin, null);
+  assert.equal(r.valorMax, null);
+});
+
+test('normalizarRegraCasamento: string do formulário vira número', () => {
+  const r = db.normalizarRegraCasamento({ diaInicial: '1', diaLimite: '5', valorMin: '1500.50', valorMax: '2500', frequencia: 'mensal' });
+  assert.deepEqual(r, { diaInicial: 1, diaLimite: 5, valorMin: 1500.5, valorMax: 2500 });
+});
+
 // ── Guard de origem exclusiva na edição ──────────────────────────────────────
 
 test('atualizarTransacao: conta_id não gruda em lançamento de cartão', async (t) => {
