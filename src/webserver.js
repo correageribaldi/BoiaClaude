@@ -1253,9 +1253,16 @@ app.delete('/api/lembretes/recorrente/:id', autenticar, async (req, res) => {
 });
 
 // ── Recorrências ─────────────────────────────────────────────────────────────
+// ?competencia=YYYY-MM (default: mês corrente) — cada regra volta com `balde`:
+// estado do mês de acumulação (soma real, previsto, falta, consolidado). Uma
+// única query agregada em buscarEstadosBaldeMes cobre todas as regras, sem
+// N+1 por linha.
 app.get('/api/recorrencias', autenticar, async (req, res) => {
   try {
-    res.json(await db.listarRecorrencias(req.usuarioId));
+    const competencia = String(req.query.competencia || '');
+    const regras = await db.listarRecorrencias(req.usuarioId);
+    const estados = await db.buscarEstadosBaldeMes(req.usuarioId, competencia, regras);
+    res.json(regras.map(r => ({ ...r, balde: estados.get(r.id) || null })));
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }

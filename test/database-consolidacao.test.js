@@ -205,3 +205,110 @@ test('faltaDaOcorrencia: mês futuro com entrada parcial ainda espera a diferen�
 test('faltaDaOcorrencia: mês consolidado não projeta nada, mesmo sem nenhuma entrada', () => {
   assert.equal(db.faltaDaOcorrencia(OCORRENCIA, REGRA, 0, { consolidado: true, hoje: '2026-09-03' }), 0);
 });
+
+// ── buscarEstadosBaldeMes: estado do balde de todas as regras, sem N+1 ──────
+//
+// Consumido pelo GET /api/recorrencias do painel — uma regra, um mês, um
+// estado {somaReal, qtdReal, previsto, falta, consolidado}. A regra de negócio
+// de "quanto falta" continua só em faltaDaOcorrencia; aqui é só agregação.
+
+const REGRA_SALARIO = {
+  id: 1, tipo: 'receita', valor: 1850, descricao: 'Salário', categoria: 'Outros',
+  frequencia: 'mensal', dia_mes: 5, dia_semana: null, cartao_id: null, conta_id: null,
+  data_inicio: '2020-01-01', data_fim: null,
+};
+// Regra que só começa a valer depois da competência testada — nenhuma
+// ocorrência cai em '2026-09'.
+const REGRA_FUTURA = {
+  id: 2, tipo: 'despesa', valor: 500, descricao: 'Assinatura nova', categoria: 'Outros',
+  frequencia: 'mensal', dia_mes: 10, dia_semana: null, cartao_id: null, conta_id: null,
+  data_inicio: '2026-10-01', data_fim: null,
+};
+
+function mockPoolQuery(t, { somaRows = [], consolidacoesRows = [] } = {}) {
+  const chamadas = [];
+  t.mock.method(db.pool, 'query', async (sql, params) => {
+    chamadas.push({ sql, params });
+    if (sql.includes('FROM recorrencias_consolidacoes')) return { rows: consolidacoesRows };
+    if (sql.includes('FROM transacoes') && sql.includes('GROUP BY recorrencia_id')) {
+      return { rows: somaRows };
+    }
+    throw new Error(`Query inesperada em mockPoolQuery: ${sql}`);
+  });
+  return chamadas;
+}
+
+test('buscarEstadosBaldeMes: regra com entrada parcial mostra soma real e o que falta', async (t) => {
+  mockResolverIdentidade(t);
+  mockPoolQuery(t, { somaRows: [{ recorrencia_id: 1, soma_real: 1500, qtd_real: 1 }] });
+
+  const estados = await db.buscarEstadosBaldeMes(USUARIO, '2026-09', [REGRA_SALARIO]);
+  const estado = estados.get(1);
+
+  assert.equal(estado.competencia, '2026-09');
+  assert.equal(estado.somaReal, 1500);
+  assert.equal(estado.qtdReal, 1);
+  assert.equal(estado.previsto, 1850);
+  assert.equal(estado.falta, 350);
+  assert.equal(estado.consolidado, false);
+});
+
+test('buscarEstadosBaldeMes: mês consolidado zera a falta mesmo com previsto calculado', async (t) => {
+  mockResolverIdentidade(t);
+  mockPoolQuery(t, {
+    somaRows: [{ recorrencia_id: 1, soma_real: 1500, qtd_real: 1 }],
+    consolidacoesRows: [{ recorrencia_id: 1, competencia: '2026-09', valor_total: 1500 }],
+  });
+
+  const estados = await db.buscarEstadosBaldeMes(USUARIO, '2026-09', [REGRA_SALARIO]);
+  const estado = estados.get(1);
+
+  assert.equal(estado.consolidado, true);
+  assert.equal(estado.falta, 0);
+  assert.equal(estado.previsto, 1850, 'previsto continua sendo o valor da regra, consolidar não apaga isso');
+});
+
+test('buscarEstadosBaldeMes: regra sem ocorrência na competência devolve falta e previsto null (não zero)', async (t) => {
+  mockResolverIdentidade(t);
+  mockPoolQuery(t, { somaRows: [] });
+
+  const estados = await db.buscarEstadosBaldeMes(USUARIO, '2026-09', [REGRA_FUTURA]);
+  const estado = estados.get(2);
+
+  assert.equal(estado.somaReal, 0);
+  assert.equal(estado.qtdReal, 0);
+  assert.equal(estado.previsto, null, 'null distingue "sem ocorrência prevista" de "previsto zero"');
+  assert.equal(estado.falta, null);
+});
+
+test('buscarEstadosBaldeMes: N regras custam sempre 2 queries — sem N+1', async (t) => {
+  mockResolverIdentidade(t);
+  const chamadas = mockPoolQuery(t, {
+    somaRows: [{ recorrencia_id: 1, soma_real: 1500, qtd_real: 1 }],
+  });
+
+  const regras = [REGRA_SALARIO, REGRA_FUTURA, { ...REGRA_SALARIO, id: 3 }, { ...REGRA_SALARIO, id: 4 }];
+  await db.buscarEstadosBaldeMes(USUARIO, '2026-09', regras);
+
+  assert.equal(chamadas.length, 2, 'uma query de soma agregada + uma de consolidações, não uma por regra');
+});
+
+test('buscarEstadosBaldeMes: sem regras não bate no banco', async (t) => {
+  mockResolverIdentidade(t);
+  const chamadas = mockPoolQuery(t);
+
+  const estados = await db.buscarEstadosBaldeMes(USUARIO, '2026-09', []);
+
+  assert.equal(estados.size, 0);
+  assert.equal(chamadas.length, 0);
+});
+
+test('buscarEstadosBaldeMes: competência fora do formato YYYY-MM cai para o mês corrente, não quebra', async (t) => {
+  mockResolverIdentidade(t);
+  const chamadas = mockPoolQuery(t, { somaRows: [] });
+
+  await db.buscarEstadosBaldeMes(USUARIO, 'lixo', [REGRA_SALARIO]);
+
+  const somaQuery = chamadas.find((c) => c.sql.includes('GROUP BY recorrencia_id'));
+  assert.match(somaQuery.params[2], /^\d{4}-\d{2}$/);
+});

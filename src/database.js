@@ -2215,6 +2215,92 @@ function faltaDaOcorrencia(ocorrencia, regra, somaReal, opcoes = {}) {
   return janelaEncerradaEm(regra, hoje) ? 0 : previsto - soma;
 }
 
+// buscarEstadosBaldeMes -> Map<recorrencia_id, estado> com o balde de TODAS as
+// regras do usuário num mês, numa ÚNICA consulta agregada.
+//
+// Existe para o painel web: a lista de recorrências precisa mostrar, por
+// regra, quanto já entrou de verdade contra o previsto. Chamar
+// buscarEstadoBalde (linha ~6106) uma vez por regra vira N+1 assim que o
+// usuário tem várias recorrências cadastradas — aqui é uma query de soma
+// agregada com ANY($ids) mais a mesma travessia de ocorrências que
+// resumoMensal/calcularSaldos/projetarProximosMeses já fazem. Não reimplementa
+// "quanto falta": delega para faltaDaOcorrencia, a mesma função que essas três
+// já usam.
+//
+// Recebe `regras` já carregadas (em vez de buscar de novo) porque quem chama
+// — o GET /api/recorrencias — já precisa da lista completa para outra coisa;
+// evita duas idas ao banco pela mesma tabela na mesma requisição.
+//
+// `falta` vem null quando a regra não tem nenhuma ocorrência prevista na
+// competência pedida (ex.: regra criada depois daquele mês, ou frequência
+// semanal que não cai naquele mês) — sem ocorrência não há o que projetar, e
+// null distingue esse caso de "falta zero porque já foi satisfeito".
+async function buscarEstadosBaldeMes(usuarioId, competencia, regras) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const comp = /^\d{4}-\d{2}$/.test(String(competencia || '')) ? competencia : dataHojeBR().slice(0, 7);
+
+  const listaRegras = regras || await listarRecorrencias(uid);
+  const estados = new Map();
+  if (listaRegras.length === 0) return estados;
+
+  const ids = listaRegras.map(r => r.id);
+
+  // Soma e contagem de lançamentos REAIS do mês, por regra — mesmo filtro
+  // (projetada = FALSE) usado em consolidarRecorrenciaMes e buscarEstadoBalde:
+  // projeção não é dinheiro que entrou.
+  const somaRes = await pool.query(
+    `SELECT recorrencia_id,
+            COALESCE(SUM(valor) FILTER (WHERE projetada = FALSE), 0)::float AS soma_real,
+            COUNT(*) FILTER (WHERE projetada = FALSE)::int AS qtd_real
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND recorrencia_id = ANY($2::int[])
+       AND TO_CHAR(data, 'YYYY-MM') = $3
+     GROUP BY recorrencia_id`,
+    [uid, ids, comp]
+  );
+  const somaPorRegra = new Map(somaRes.rows.map(r => [r.recorrencia_id, { somaReal: r.soma_real, qtdReal: r.qtd_real }]));
+
+  const consolidadas = new Set(
+    (await listarConsolidacoesNoPeriodo(uid, comp, comp)).map(c => c.recorrencia_id)
+  );
+
+  const [ano, mes] = comp.split('-').map(Number);
+  const inicioMesObj = new Date(ano, mes - 1, 1);
+  const fimMesObj = new Date(ano, mes, 0);
+  const ocorrencias = calcularOcorrenciasNoPerodo(listaRegras, inicioMesObj, fimMesObj);
+  const hoje = dataHojeBR();
+  const porId = new Map(listaRegras.map(r => [r.id, r]));
+
+  // Soma o previsto e a falta de todas as ocorrências da regra na competência
+  // — cobre frequência semanal/diária, que pode disparar mais de uma vez no
+  // mês; mensal/anual têm só uma.
+  const previstoPorRegra = new Map();
+  const faltaPorRegra = new Map();
+  for (const o of ocorrencias) {
+    const soma = (somaPorRegra.get(o.recorrencia_id) || {}).somaReal || 0;
+    const falta = faltaDaOcorrencia(
+      o, porId.get(o.recorrencia_id), soma,
+      { consolidado: consolidadas.has(o.recorrencia_id), hoje }
+    );
+    previstoPorRegra.set(o.recorrencia_id, (previstoPorRegra.get(o.recorrencia_id) || 0) + (Number(o.valor) || 0));
+    faltaPorRegra.set(o.recorrencia_id, (faltaPorRegra.get(o.recorrencia_id) || 0) + falta);
+  }
+
+  for (const id of ids) {
+    const base = somaPorRegra.get(id) || { somaReal: 0, qtdReal: 0 };
+    estados.set(id, {
+      competencia: comp,
+      somaReal: base.somaReal,
+      qtdReal: base.qtdReal,
+      previsto: previstoPorRegra.has(id) ? previstoPorRegra.get(id) : null,
+      falta: faltaPorRegra.has(id) ? faltaPorRegra.get(id) : null,
+      consolidado: consolidadas.has(id),
+    });
+  }
+  return estados;
+}
+
 async function excluirTransacao(usuarioId, numeroUsuario) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -6764,6 +6850,7 @@ module.exports = {
   desconsolidarRecorrenciaMes,
   listarConsolidacoesNoPeriodo,
   faltaDaOcorrencia,
+  buscarEstadosBaldeMes,
   removerTransacoesPluggyPorIds,
   calibrarSaldoInicialConta,
   atualizarCartaoPluggyDados,
