@@ -14,35 +14,37 @@
 // não pega esse caso: ele é parcial (WHERE recorrencia_id IS NOT NULL) e a
 // linha da Pluggy passa por baixo dele com NULL.
 //
-// Critério de casamento (decisão do dono do produto, deliberadamente rígida):
-// mesmo tipo + descrição equivalente + VALOR EXATO + data dentro de uma janela
-// em torno do dia esperado da regra. Sem tolerância percentual de valor: entre
-// não casar (o usuário vê a duplicata, que é visível e corrigível) e casar
-// errado (que reescreve o histórico em silêncio), a escolha é não casar.
+// Critério de casamento (decisão do dono do produto): mesma ORIGEM (descrição
+// normalizada) + mesmo tipo + data dentro da janela da regra. O valor NÃO
+// entra: uma recorrência de R$ 1.850 pode chegar como R$ 1.500 + R$ 350, e
+// exigir valor exato faria a segunda entrada virar lançamento avulso.
 //
-// O valor é o desempatador de verdade, não a descrição: em dados reais existem
-// duas recorrências com descrição IDÊNTICA ("Transferência Recebida|<mesma
-// pessoa>") e valores diferentes. Qualquer heurística que case só por texto
-// vincula à regra errada — e vincular errado é pior que não vincular.
+// O valor deixa de ser critério de casamento e vira critério de ENCERRAMENTO:
+// enquanto a soma real do mês não alcança o previsto e a janela não fechou, o
+// balde daquela recorrência segue aberto e novas entradas acumulam nele (ver
+// resolverVinculoRecorrencia em src/database.js).
+//
+// Consequência direta: duas regras com a mesma origem e a mesma janela ficam
+// indistinguíveis — o que antes o valor desempatava. Nesse caso nada é
+// vinculado e o conflito é logado; o desempate é do usuário, reorganizando as
+// regras. Vincular à regra errada reescreve o histórico em silêncio; não
+// vincular deixa um lançamento avulso, que é visível e corrigível.
 
 const { normalizarEstabelecimento } = require('./estabelecimento');
 
-// Janela, em dias corridos, em torno do dia esperado — frequências mensal e
-// anual.
+// A janela de uma regra mensal/anual é DADO DA REGRA (recorrencias.dia_inicial
+// e dia_limite). Esta constante só alimenta o fallback de regra antiga que
+// ainda não tem a janela preenchida, e o backfill da migração — ±5 dias em
+// torno de dia_mes, que é o comportamento que o sistema tinha antes de a
+// janela ser explícita.
 //
 // ±5 cobre o motivo real de deslocamento (ocorrência que cai em fim de semana
-// ou feriado e é antecipada/postergada, tipicamente 1-3 dias) com folga, e
-// ainda continua sendo um critério de verdade: 11 dias de ~30, cerca de um
-// terço do mês.
+// ou feriado e é antecipada/postergada, tipicamente 1-3 dias) com folga.
 //
-// Por que não uma janela maior: toda a proteção deste sistema é indexada por
-// MÊS — idx_transacoes_recorrencia_mes é (recorrencia_id, mês) e a supressão de
-// projeção em /api/transactions também é por recorrência dentro do período.
-// Uma janela que atravessasse a virada do mês casaria a transação com a
-// ocorrência de um mês enquanto ocupa o slot de outro: o mês vizinho voltaria a
-// duplicar, agora com vínculo errado. Por isso o dia esperado é sempre
-// calculado DENTRO do mês da própria transação (ver diaDentroDaJanela), e a
-// janela precisa caber nele.
+// A janela nunca atravessa a virada do mês, seja explícita ou derivada: o
+// balde é (recorrencia_id, mês), e uma janela que vazasse para o mês vizinho
+// acumularia a entrada no balde errado. Por isso os limites são sempre
+// grampeados dentro do mês da própria transação — ver limitesDaJanela.
 const JANELA_DIAS_PADRAO = 5;
 
 // Frequência semanal tem ciclo de 7 dias: a distância circular máxima entre
@@ -76,9 +78,9 @@ function diaDaSemana(p) {
 }
 
 // NUMERIC(12,2) nos dois lados (recorrencias.valor e transacoes.valor):
-// comparar em centavos inteiros é a precisão em que o dado realmente existe, e
-// evita o 0.1 + 0.2 do ponto flutuante. Isso NÃO é tolerância — 6500.00 casa
-// com 6500, mas 6500.01 não casa com 6500.00.
+// comparar e somar em centavos inteiros é a precisão em que o dado realmente
+// existe, e evita o 0.1 + 0.2 do ponto flutuante. Usado no encerramento do
+// balde por valor, não no casamento.
 function centavos(valor) {
   const n = Number(valor);
   if (!Number.isFinite(n)) return null;
@@ -110,13 +112,38 @@ function descricaoEquivalente(descricaoA, descricaoB) {
   return chaveA === chaveB;
 }
 
-// dia_mes 31 em mês de 30 dias (ou em fevereiro): a ocorrência real acontece no
-// último dia do mês. Sem o clamp, toda regra de dia 29/30/31 ficaria fora da
-// janela em boa parte do calendário.
-function diaDentroDaJanela(p, diaMes, janelaDias) {
-  if (!Number.isInteger(diaMes)) return false;
-  const esperado = Math.min(diaMes, diasNoMes(p.ano, p.mes));
-  return Math.abs(p.dia - esperado) <= janelaDias;
+// limitesDaJanela(regra, ano, mes) -> { inicio, limite } | null
+//
+// Janela da regra projetada num mês concreto, em dias daquele mês. Usa a
+// janela explícita (dia_inicial/dia_limite) e cai para dia_mes ± padrão nas
+// regras antigas que ainda não foram migradas.
+//
+// Grampeia tudo em [1, último dia do mês]: dia_limite 31 em fevereiro vira 28,
+// e uma regra de dia 31 continua fechando no último dia real do mês em vez de
+// nunca fechar. Sem isso, metade do calendário deixaria buracos.
+//
+// Exportada porque o encerramento do balde por data (src/database.js) precisa
+// responder "a janela deste mês já passou?" com exatamente o mesmo critério
+// que o casamento usa. Duas contas separadas divergiriam com o tempo.
+function limitesDaJanela(regra, ano, mes) {
+  if (!regra) return null;
+  const ultimoDia = diasNoMes(ano, mes);
+
+  let inicio = Number.isInteger(regra.dia_inicial) ? regra.dia_inicial : null;
+  let limite = Number.isInteger(regra.dia_limite) ? regra.dia_limite : null;
+
+  if (inicio === null || limite === null) {
+    if (!Number.isInteger(regra.dia_mes)) return null;
+    const esperado = Math.min(regra.dia_mes, ultimoDia);
+    inicio = esperado - JANELA_DIAS_PADRAO;
+    limite = esperado + JANELA_DIAS_PADRAO;
+  }
+
+  inicio = Math.min(Math.max(inicio, 1), ultimoDia);
+  limite = Math.min(Math.max(limite, 1), ultimoDia);
+  if (inicio > limite) return null;
+
+  return { inicio, limite };
 }
 
 // A vigência é conferida contra a DATA DO LANÇAMENTO, não contra CURRENT_DATE:
@@ -137,7 +164,6 @@ function regraVigenteNaData(regra, dataISO) {
 // MÊS da regra. Se as duas divergirem, o casamento passa a apontar para uma
 // ocorrência que a projeção nunca gera.
 function dentroDaJanela(regra, dataISO, opcoes = {}) {
-  const janelaDias = Number.isFinite(opcoes.janelaDias) ? opcoes.janelaDias : JANELA_DIAS_PADRAO;
   const janelaSemanal = Number.isFinite(opcoes.janelaDiasSemanal)
     ? opcoes.janelaDiasSemanal
     : JANELA_DIAS_SEMANAL;
@@ -156,18 +182,36 @@ function dentroDaJanela(regra, dataISO, opcoes = {}) {
       return Math.min(bruta, 7 - bruta) <= janelaSemanal;
     }
 
-    case 'anual':
+    case 'anual': {
       if (regra.dia_semana !== p.mes) return false;
-      return diaDentroDaJanela(p, regra.dia_mes, janelaDias);
+      const janela = limitesDaJanela(regra, p.ano, p.mes);
+      return !!janela && p.dia >= janela.inicio && p.dia <= janela.limite;
+    }
 
-    case 'mensal':
-      return diaDentroDaJanela(p, regra.dia_mes, janelaDias);
+    case 'mensal': {
+      const janela = limitesDaJanela(regra, p.ano, p.mes);
+      return !!janela && p.dia >= janela.inicio && p.dia <= janela.limite;
+    }
 
     // Frequência desconhecida (regra de versão futura, dado corrompido): não
     // casa. Silenciosamente pular é melhor que adivinhar uma convenção.
     default:
       return false;
   }
+}
+
+// janelaEncerradaEm(regra, dataISO) -> boolean
+//
+// "O prazo de acumulação daquele mês já passou nesta data?" Só faz sentido
+// para regra com janela de mês (mensal/anual); semanal/diária não tem prazo de
+// mês e nunca encerra por data.
+function janelaEncerradaEm(regra, dataISO) {
+  const p = partesData(dataISO);
+  if (!p || !regra) return false;
+  if (regra.frequencia !== 'mensal' && regra.frequencia !== 'anual') return false;
+  const janela = limitesDaJanela(regra, p.ano, p.mes);
+  if (!janela) return false;
+  return p.dia > janela.limite;
 }
 
 // filtrarRecorrenciasCompativeis(regras, lancamento, opcoes) -> regra[]
@@ -178,15 +222,12 @@ function dentroDaJanela(regra, dataISO, opcoes = {}) {
 // resolverVinculoRecorrencia em src/database.js). Embutir essa decisão aqui
 // esconderia a ambiguidade de quem precisa logá-la.
 //
-// Os filtros de tipo e valor são repetidos aqui mesmo já existindo na query
+// O filtro de tipo é repetido aqui mesmo já existindo na query
 // (buscarRecorrenciasCandidatas): a função precisa valer sozinha, sem depender
-// de qual SELECT a alimentou.
+// de qual SELECT a alimentou. `valor` não é filtro — ver o cabeçalho.
 function filtrarRecorrenciasCompativeis(regras, lancamento, opcoes = {}) {
   if (!Array.isArray(regras) || regras.length === 0) return [];
   if (!lancamento || !partesData(lancamento.data)) return [];
-
-  const centavosLancamento = centavos(lancamento.valor);
-  if (centavosLancamento === null) return [];
 
   const chave = normalizarEstabelecimento(lancamento.descricao);
   if (!chave) return [];
@@ -195,11 +236,30 @@ function filtrarRecorrenciasCompativeis(regras, lancamento, opcoes = {}) {
     if (!regra) return false;
     if (regra.ativo === false) return false;
     if (regra.tipo !== lancamento.tipo) return false;
-    if (centavos(regra.valor) !== centavosLancamento) return false;
     if (!regraVigenteNaData(regra, lancamento.data)) return false;
     if (normalizarEstabelecimento(regra.descricao) !== chave) return false;
     return dentroDaJanela(regra, lancamento.data, opcoes);
   });
+}
+
+// baldeFechado(estado) -> boolean
+//
+// Encerramento da acumulação, com as duas condições da especificação: o que
+// vier primeiro entre "a soma real alcançou o previsto" e "a janela do mês
+// passou". Consolidação manual fecha por decisão do usuário.
+//
+// Puro para poder ser testado sozinho e para que o painel, o sync e a projeção
+// respondam a mesma pergunta com a mesma conta.
+function baldeFechado({ valorPrevisto, somaReal, regra, data, consolidado = false }) {
+  if (consolidado) return true;
+  if (janelaEncerradaEm(regra, data)) return true;
+
+  const previsto = centavos(valorPrevisto);
+  const soma = centavos(somaReal);
+  if (previsto === null || soma === null) return false;
+  // Alcançar exatamente o previsto fecha. Ultrapassar é permitido (o real pode
+  // ser maior), só não abre espaço para uma entrada seguinte.
+  return soma >= previsto;
 }
 
 module.exports = {
@@ -207,5 +267,8 @@ module.exports = {
   JANELA_DIAS_SEMANAL,
   descricaoEquivalente,
   dentroDaJanela,
+  janelaEncerradaEm,
+  limitesDaJanela,
+  baldeFechado,
   filtrarRecorrenciasCompativeis,
 };

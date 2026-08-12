@@ -39,11 +39,13 @@ function regra(extra = {}) {
   return {
     id: 42,
     tipo: 'receita',
-    valor: 4321,
+    valor: 1850,
     descricao: DESCRICAO,
     frequencia: 'mensal',
     dia_mes: 5,
     dia_semana: null,
+    dia_inicial: 1,
+    dia_limite: 10,
     data_inicio: '2026-01-05',
     data_fim: null,
     ...extra,
@@ -54,7 +56,7 @@ function transacaoPluggy(extra = {}) {
   return {
     pluggyTransactionId: 'tx-sintetica-1',
     tipo: 'receita',
-    valor: 4321,
+    valor: 1500,
     descricao: DESCRICAO,
     categoria: 'Outras Receitas',
     data: '2026-09-05',
@@ -69,11 +71,14 @@ function transacaoPluggy(extra = {}) {
 // vez de só inspecionar SQL.
 function mockBanco(t, opcoes = {}) {
   const {
-    recorrencias = [], linhas = [],
+    recorrencias = [], linhas = [], consolidados = [],
     erroAoBuscarRecorrencias = false, insertVinculadoFalha = false,
   } = opcoes;
   const chamadas = [];
   let proximoId = 1000;
+
+  const doMes = (recorrenciaId, dataISO) => linhas.filter((l) => l.recorrencia_id === recorrenciaId
+    && String(l.data).slice(0, 7) === String(dataISO).slice(0, 7));
 
   t.mock.method(db.pool, 'query', async (sql, params) => {
     chamadas.push({ sql, params });
@@ -82,21 +87,33 @@ function mockBanco(t, opcoes = {}) {
       return { rows: opcoes.existente ? [opcoes.existente] : [] };
     }
 
+    if (sql.includes('FROM recorrencias_consolidacoes')) {
+      return { rows: consolidados.includes(`${params[0]}|${params[1]}`) ? [{ '?column?': 1 }] : [] };
+    }
+
     if (sql.includes('FROM recorrencias')) {
       if (erroAoBuscarRecorrencias) throw new Error('relation "recorrencias" does not exist');
       return { rows: recorrencias };
     }
 
-    if (sql.includes('SELECT id, status, pluggy_transaction_id')) {
-      return { rows: linhas.filter((l) => l.recorrencia_id === params[1]) };
+    // Estado do balde: soma do que é real, ids do que é projeção.
+    if (sql.includes('FILTER (WHERE projetada = FALSE)')) {
+      const mes = doMes(params[1], params[2]);
+      const reais = mes.filter((l) => !l.projetada);
+      return {
+        rows: [{
+          soma_real: reais.reduce((s, l) => s + l.valor, 0),
+          qtd_real: reais.length,
+          projecoes: mes.filter((l) => l.projetada).map((l) => l.id),
+        }],
+      };
     }
 
     if (sql.includes('DELETE FROM transacoes')) {
       const [ids, , recorrenciaId] = params;
       const alvo = linhas.filter((l) => ids.includes(l.id)
         && l.recorrencia_id === recorrenciaId
-        && l.status === 'pendente'
-        && l.pluggy_transaction_id === null);
+        && l.projetada === true);
       for (const linha of alvo) linhas.splice(linhas.indexOf(linha), 1);
       return { rowCount: alvo.length };
     }
@@ -112,9 +129,11 @@ function mockBanco(t, opcoes = {}) {
       linhas.push({
         id,
         status: params[6],
+        valor: params[2],
         pluggy_transaction_id: params[9],
         recorrencia_id: recorrenciaId,
         data: params[5],
+        projetada: false,
       });
       return { rows: [{ id }] };
     }
@@ -133,7 +152,7 @@ const buscaRecorrenciasDe = (chamadas) => chamadas.find((c) => c.sql.includes('F
 
 // ── Casamento e vínculo ──────────────────────────────────────────────────────
 
-test('vincula a transação real da Pluggy à recorrência quando descrição, valor exato e janela batem', async (t) => {
+test('vincula a transação real da Pluggy à recorrência quando origem, tipo e janela batem', async (t) => {
   mockResolverIdentidade(t);
   silenciarLogs(t);
   const { chamadas } = mockBanco(t, { recorrencias: [regra()] });
@@ -146,42 +165,21 @@ test('vincula a transação real da Pluggy à recorrência quando descrição, v
   assert.equal(deleteDe(chamadas), undefined, 'não havia projeção para absorver');
 });
 
-test('duas recorrências com a MESMA descrição e valores diferentes: cada transação vincula na sua', async (t) => {
+test('valor menor que o previsto vincula — é a primeira parcela do balde', async (t) => {
   mockResolverIdentidade(t);
   silenciarLogs(t);
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor: 1850 })] });
 
-  const regras = [regra({ id: 50, valor: 4321 }), regra({ id: 51, valor: 987.65 })];
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 1500 }));
 
-  const primeiro = mockBanco(t, { recorrencias: regras });
-  await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 4321 }));
-  assert.equal(insertDe(primeiro.chamadas).params[10], 50);
-
-  t.mock.restoreAll();
-  mockResolverIdentidade(t);
-  silenciarLogs(t);
-
-  const segundo = mockBanco(t, { recorrencias: regras });
-  await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ pluggyTransactionId: 'tx-sintetica-2', valor: 987.65 }));
-  assert.equal(insertDe(segundo.chamadas).params[10], 51);
-});
-
-test('valor diferente NÃO vincula, mesmo que a query devolva a regra', async (t) => {
-  mockResolverIdentidade(t);
-  silenciarLogs(t);
-  // A query já filtra por valor; a conferência em JS é a segunda camada, e é
-  // ela que está sob teste aqui.
-  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor: 4321 })] });
-
-  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 4321.01 }));
-
-  assert.equal(resultado.recorrenciaId, null);
-  assert.equal(insertDe(chamadas).params[10], null);
+  assert.equal(resultado.recorrenciaId, 42);
+  assert.equal(insertDe(chamadas).params[10], 42);
 });
 
 test('data fora da janela NÃO vincula', async (t) => {
   mockResolverIdentidade(t);
   silenciarLogs(t);
-  const { chamadas } = mockBanco(t, { recorrencias: [regra({ dia_mes: 5 })] });
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ dia_inicial: 1, dia_limite: 10 })] });
 
   const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ data: '2026-09-20' }));
 
@@ -210,18 +208,17 @@ test('cenário completo: projeção já materializada é ABSORVIDA pelo lançame
   const logs = silenciarLogs(t);
 
   // Estado antes: o usuário abriu o painel em setembro e a projeção da regra 42
-  // virou uma transação pendente, sem origem na Pluggy.
-  const projetada = { id: 900, status: 'pendente', pluggy_transaction_id: null, recorrencia_id: 42, data: '2026-09-05' };
+  // virou uma transação pendente marcada como projetada.
+  const projetada = { id: 900, status: 'pendente', valor: 1850, pluggy_transaction_id: null, recorrencia_id: 42, data: '2026-09-05', projetada: true };
   const { chamadas, linhas } = mockBanco(t, { recorrencias: [regra()], linhas: [projetada] });
 
-  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ data: '2026-09-05' }));
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ data: '2026-09-05', valor: 1850 }));
 
   assert.equal(resultado.recorrenciaId, 42);
 
   const del = deleteDe(chamadas);
   assert.deepEqual(del.params[0], [900]);
-  assert.match(del.sql, /status = 'pendente'/);
-  assert.match(del.sql, /pluggy_transaction_id IS NULL/);
+  assert.match(del.sql, /projetada = TRUE/);
 
   assert.equal(linhas.length, 1, 'o mês termina com UM lançamento, não dois');
   assert.equal(linhas[0].pluggy_transaction_id, 'tx-sintetica-1', 'o que sobrou é o lançamento real');
@@ -229,27 +226,98 @@ test('cenário completo: projeção já materializada é ABSORVIDA pelo lançame
   assert.ok(logs.log.some((l) => /absorvida/.test(l)));
 });
 
-test('mês ocupado por lançamento que NÃO é projeção: não absorve nada e não vincula', async (t) => {
+test('a projeção é absorvida uma vez só — a segunda entrada apenas acumula', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const projetada = { id: 900, status: 'pendente', valor: 1850, pluggy_transaction_id: null, recorrencia_id: 42, data: '2026-09-05', projetada: true };
+  const { linhas } = mockBanco(t, { recorrencias: [regra({ valor: 1850 })], linhas: [projetada] });
+
+  await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 1500, data: '2026-09-05' }));
+  await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ pluggyTransactionId: 'tx-sintetica-2', valor: 350, data: '2026-09-08' }));
+
+  assert.equal(linhas.length, 2);
+  assert.ok(linhas.every((l) => l.recorrencia_id === 42 && !l.projetada));
+});
+
+// ── Acumulação: o caso R$ 1.500 + R$ 350 ────────────────────────────────────
+
+test('duas entradas no mesmo mês acumulam na mesma recorrência (1.500 + 350 = 1.850)', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const { linhas } = mockBanco(t, { recorrencias: [regra({ valor: 1850 })] });
+
+  const primeira = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 1500, data: '2026-09-05' }));
+  const segunda = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-sintetica-2', valor: 350, data: '2026-09-08',
+  }));
+
+  assert.equal(primeira.recorrenciaId, 42);
+  assert.equal(segunda.recorrenciaId, 42, 'a segunda entrada NÃO pode virar avulsa');
+  assert.equal(linhas.length, 2);
+  assert.equal(linhas.reduce((s, l) => s + l.valor, 0), 1850);
+});
+
+test('entrada que chega com o balde já no valor previsto vira avulso', async (t) => {
   mockResolverIdentidade(t);
   const logs = silenciarLogs(t);
+  const cheio = { id: 910, status: 'pago', valor: 1850, pluggy_transaction_id: 'tx-anterior', recorrencia_id: 42, data: '2026-09-03', projetada: false };
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor: 1850 })], linhas: [cheio] });
 
-  // Lançamento que o usuário já marcou como pago à mão — dado dele, não é
-  // nosso para apagar.
-  const manual = { id: 901, status: 'pago', pluggy_transaction_id: null, recorrencia_id: 42, data: '2026-09-05' };
-  const { chamadas, linhas } = mockBanco(t, { recorrencias: [regra()], linhas: [manual] });
-
-  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy());
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-sintetica-3', valor: 500, data: '2026-09-09',
+  }));
 
   assert.equal(resultado.recorrenciaId, null);
-  assert.equal(deleteDe(chamadas), undefined, 'nada é apagado');
   assert.equal(insertDe(chamadas).params[10], null);
-  assert.equal(linhas.length, 2, 'duplicata visível é preferível a apagar dado do usuário');
-  assert.ok(logs.warn.some((l) => /não é projeção/.test(l)));
+  assert.ok(logs.log.some((l) => /balde .* já fechado/.test(l)));
+});
+
+test('entrada depois do dia limite vira avulso mesmo com o previsto não alcançado', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const parcial = { id: 911, status: 'pago', valor: 1500, pluggy_transaction_id: 'tx-anterior', recorrencia_id: 42, data: '2026-09-05', projetada: false };
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor: 1850, dia_inicial: 1, dia_limite: 10 })], linhas: [parcial] });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-sintetica-4', valor: 350, data: '2026-09-25',
+  }));
+
+  assert.equal(resultado.recorrenciaId, null, 'fora da janela não entra no balde');
+  assert.equal(insertDe(chamadas).params[10], null);
+});
+
+test('mês consolidado pelo usuário não recebe mais entradas', async (t) => {
+  mockResolverIdentidade(t);
+  const logs = silenciarLogs(t);
+  const { chamadas } = mockBanco(t, {
+    recorrencias: [regra({ valor: 1850 })],
+    consolidados: ['42|2026-09'],
+  });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({ valor: 100, data: '2026-09-06' }));
+
+  assert.equal(resultado.recorrenciaId, null);
+  assert.equal(insertDe(chamadas).params[10], null);
+  assert.ok(logs.log.some((l) => /consolidado=true/.test(l)));
+});
+
+test('balde de outro mês não interfere: setembro cheio não fecha outubro', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  const setembro = { id: 912, status: 'pago', valor: 1850, pluggy_transaction_id: 'tx-set', recorrencia_id: 42, data: '2026-09-05', projetada: false };
+  const { chamadas } = mockBanco(t, { recorrencias: [regra({ valor: 1850 })], linhas: [setembro] });
+
+  const resultado = await db.upsertTransacaoPluggy(USUARIO, transacaoPluggy({
+    pluggyTransactionId: 'tx-out', valor: 1850, data: '2026-10-05',
+  }));
+
+  assert.equal(resultado.recorrenciaId, 42);
+  assert.equal(insertDe(chamadas).params[10], 42);
 });
 
 // ── Robustez: nada aqui pode quebrar o laço de sincronização ─────────────────
 
-test('violação do índice único no INSERT vinculado não quebra o sync: regrava sem vínculo', async (t) => {
+test('trava antiga ainda de pé no banco (migração falhou) não quebra o sync: regrava sem vínculo', async (t) => {
   mockResolverIdentidade(t);
   const logs = silenciarLogs(t);
   const { chamadas } = mockBanco(t, { recorrencias: [regra()], insertVinculadoFalha: true });
@@ -261,7 +329,7 @@ test('violação do índice único no INSERT vinculado não quebra o sync: regra
   const inserts = chamadas.filter((c) => c.sql.includes('INSERT INTO transacoes'));
   assert.equal(inserts.length, 2, 'tenta vinculado, cai para não vinculado');
   assert.equal(inserts[1].params[10], null);
-  assert.ok(logs.error.some((l) => /mês já ocupado/.test(l)));
+  assert.ok(logs.error.some((l) => /trava antiga ainda ativa/.test(l)));
 });
 
 test('erro de banco ao avaliar o vínculo degrada para o comportamento antigo (grava sem vínculo)', async (t) => {

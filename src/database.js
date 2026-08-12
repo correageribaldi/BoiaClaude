@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const pluggyCrypto = require('./pluggyCrypto');
 const { normalizarEstabelecimento } = require('./estabelecimento');
 const { projetarParcelasRestantes } = require('./parcelamento');
-const { filtrarRecorrenciasCompativeis } = require('./recorrencia-match');
+const { filtrarRecorrenciasCompativeis, baldeFechado } = require('./recorrencia-match');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -5889,43 +5889,70 @@ async function resolverCategoriaPluggyPorTaxonomia(uid, categoriaPluggy, tipo, c
 // I/O: buscar candidatas, checar o mês e decidir o que fazer com uma projeção
 // já materializada.
 //
-// A query já corta por tipo + valor exato + vigência (é o filtro mais seletivo
-// e mantém barato o custo por transação nova do sync); descrição e janela de
-// data ficam para o módulo puro.
+// A query corta por tipo + vigência; descrição e janela ficam para o módulo
+// puro. Valor NÃO entra: a acumulação existe justamente para o caso em que a
+// entrada vale menos que o previsto.
 const DATA_ISO_ESTRITA = /^\d{4}-\d{2}-\d{2}$/;
 
-async function buscarRecorrenciasCandidatas(uid, { tipo, valor, data }) {
+async function buscarRecorrenciasCandidatas(uid, { tipo, data }) {
   const res = await pool.query(
     `SELECT id, tipo, valor::float AS valor, descricao, frequencia, dia_mes, dia_semana,
+            dia_inicial, dia_limite,
             TO_CHAR(data_inicio, 'YYYY-MM-DD') AS data_inicio,
             TO_CHAR(data_fim,    'YYYY-MM-DD') AS data_fim
      FROM recorrencias
      WHERE usuario_id = $1
        AND ativo = TRUE
        AND tipo = $2
-       AND valor = $3::numeric
-       AND data_inicio <= $4::date
-       AND (data_fim IS NULL OR data_fim >= $4::date)`,
-    [uid, tipo, valor, data]
+       AND data_inicio <= $3::date
+       AND (data_fim IS NULL OR data_fim >= $3::date)`,
+    [uid, tipo, data]
   );
   return res.rows;
 }
 
+// Estado do balde de uma recorrência num mês: quanto já entrou de verdade
+// (projeções não contam — elas são a estimativa que o real substitui) e quais
+// projeções ainda ocupam o mês.
+async function buscarEstadoBalde(uid, recorrenciaId, data) {
+  const res = await pool.query(
+    `SELECT
+       COALESCE(SUM(valor) FILTER (WHERE projetada = FALSE), 0)::float AS soma_real,
+       COUNT(*) FILTER (WHERE projetada = FALSE)::int AS qtd_real,
+       COALESCE(ARRAY_AGG(id) FILTER (WHERE projetada = TRUE), '{}')::int[] AS projecoes
+     FROM transacoes
+     WHERE usuario_id = $1
+       AND recorrencia_id = $2
+       AND date_trunc('month', data::timestamp) = date_trunc('month', $3::date::timestamp)`,
+    [uid, recorrenciaId, data]
+  );
+  const linha = res.rows[0] || {};
+  const consolidado = await pool.query(
+    `SELECT 1 FROM recorrencias_consolidacoes
+     WHERE recorrencia_id = $1 AND competencia = $2 LIMIT 1`,
+    [recorrenciaId, String(data).slice(0, 7)]
+  );
+  return {
+    somaReal: linha.soma_real || 0,
+    qtdReal: linha.qtd_real || 0,
+    projecoes: linha.projecoes || [],
+    consolidado: consolidado.rows.length > 0,
+  };
+}
+
 // resolverVinculoRecorrencia -> { recorrenciaId, absorver: id[] }
 //
-// recorrenciaId null = grava como sempre gravou (sem vínculo). É o fallback de
-// TODO caminho duvidoso deste fluxo — ambiguidade, mês já ocupado por
-// lançamento que não é projeção, descrição sem chave confiável. Não vincular
-// deixa a duplicata visível na tela, que o usuário corrige; vincular errado
-// reescreve o histórico em silêncio.
+// recorrenciaId null = grava como sempre gravou, lançamento avulso. É o
+// fallback de TODO caminho duvidoso — ambiguidade, balde fechado, descrição
+// sem chave confiável. Não vincular deixa um avulso na tela, que o usuário
+// enxerga e corrige; vincular errado reescreve o histórico em silêncio.
 //
-// `absorver` são as projeções (materializadas pelo painel: status 'pendente',
-// sem pluggy_transaction_id) que ocupam o mês daquela recorrência e precisam
-// SAIR antes de a transação real entrar no lugar delas. Sem esse passo o
-// cenário mais comum — usuário abre o painel e materializa o projetado, depois
-// a Pluggy traz o real — continuaria duplicando, agora com o agravante de o
-// INSERT vinculado bater no índice único.
-async function resolverVinculoRecorrencia(uid, { tipo, valor, descricao, data }) {
+// `absorver` são as PROJEÇÕES (projetada = TRUE) que ocupam o mês daquela
+// recorrência e precisam SAIR quando a primeira entrada real chega: a projeção
+// é a estimativa do mês inteiro, e mantê-la ao lado do dinheiro que entrou
+// contaria o valor duas vezes. A partir da segunda entrada não há mais
+// projeção para absorver — aí é acumulação pura.
+async function resolverVinculoRecorrencia(uid, { tipo, descricao, data }) {
   const semVinculo = { recorrenciaId: null, absorver: [] };
 
   if (!DATA_ISO_ESTRITA.test(String(data || ''))) return semVinculo;
@@ -5933,56 +5960,47 @@ async function resolverVinculoRecorrencia(uid, { tipo, valor, descricao, data })
   // de ir ao banco.
   if (!normalizarEstabelecimento(descricao)) return semVinculo;
 
-  const candidatas = await buscarRecorrenciasCandidatas(uid, { tipo, valor, data });
+  const candidatas = await buscarRecorrenciasCandidatas(uid, { tipo, data });
   if (candidatas.length === 0) return semVinculo;
 
-  const compativeis = filtrarRecorrenciasCompativeis(candidatas, { tipo, valor, descricao, data });
+  const compativeis = filtrarRecorrenciasCompativeis(candidatas, { tipo, descricao, data });
   if (compativeis.length === 0) return semVinculo;
 
-  // Ambiguidade real e esperada: duas regras com a MESMA descrição normalizada
-  // e o MESMO valor. Escolher uma seria sorteio. Log sem a descrição (contém
-  // nome de contraparte) — os ids bastam para investigar.
+  // Ambiguidade: duas regras com a MESMA origem e a MESMA janela. Sem o valor
+  // como desempate (a acumulação o removeu do casamento), não há critério
+  // técnico para escolher — escolher seria sorteio. O desempate é do usuário,
+  // reorganizando as regras. Log sem a descrição (contém nome de contraparte);
+  // os ids bastam para investigar.
   if (compativeis.length > 1) {
     console.warn(
       `[DB] Pluggy × recorrência: ${compativeis.length} regras casam com o mesmo lançamento ` +
-      `(${data}, ${tipo}, R$ ${valor}) — ids [${compativeis.map(r => r.id).join(', ')}]. ` +
+      `(${data}, ${tipo}) — ids [${compativeis.map(r => r.id).join(', ')}]. ` +
       `Nenhum vínculo criado (ambíguo).`
     );
     return semVinculo;
   }
 
   const regra = compativeis[0];
+  const balde = await buscarEstadoBalde(uid, regra.id, data);
 
-  // Mesma expressão do índice único idx_transacoes_recorrencia_mes, de
-  // propósito: o que esta checagem enxerga como "mês ocupado" tem que ser
-  // exatamente o que o banco vai recusar no INSERT.
-  const ocupadas = await pool.query(
-    `SELECT id, status, pluggy_transaction_id
-     FROM transacoes
-     WHERE usuario_id = $1
-       AND recorrencia_id = $2
-       AND date_trunc('month', data::timestamp) = date_trunc('month', $3::date::timestamp)`,
-    [uid, regra.id, data]
-  );
-
-  if (ocupadas.rows.length === 0) return { recorrenciaId: regra.id, absorver: [] };
-
-  const projetadas = ocupadas.rows.filter(
-    (linha) => linha.status === 'pendente' && linha.pluggy_transaction_id === null
-  );
-
-  // Alguma linha do mês não é projeção: outra transação da Pluggy já vinculada,
-  // ou um lançamento que o usuário mexeu (marcou como pago, lançou à mão). Não
-  // é nossa para apagar, e vincular por cima estouraria o índice único.
-  if (projetadas.length !== ocupadas.rows.length) {
-    console.warn(
-      `[DB] Pluggy × recorrência #${regra.id}: mês de ${data} já tem lançamento que não é projeção ` +
-      `— transação importada segue sem vínculo (revisar duplicata manualmente).`
+  // Balde fechado = a acumulação daquele mês acabou, por valor alcançado, por
+  // janela vencida ou por consolidação do usuário. A entrada que chega depois
+  // não pertence à recorrência: vira avulso.
+  if (baldeFechado({
+    valorPrevisto: regra.valor,
+    somaReal: balde.somaReal,
+    regra,
+    data,
+    consolidado: balde.consolidado,
+  })) {
+    console.log(
+      `[DB] Pluggy × recorrência #${regra.id}: balde de ${String(data).slice(0, 7)} já fechado ` +
+      `(${balde.qtdReal} entrada[s], consolidado=${balde.consolidado}) — lançamento entra como avulso.`
     );
     return semVinculo;
   }
 
-  return { recorrenciaId: regra.id, absorver: projetadas.map((linha) => linha.id) };
+  return { recorrenciaId: regra.id, absorver: balde.projecoes };
 }
 
 // Dedup por pluggy_transaction_id: UPDATE se já existe (valor/status/categoria
@@ -6056,7 +6074,7 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   let recorrenciaId = null;
   let absorver = [];
   try {
-    const vinculo = await resolverVinculoRecorrencia(uid, { tipo, valor, descricao, data });
+    const vinculo = await resolverVinculoRecorrencia(uid, { tipo, descricao, data });
     recorrenciaId = vinculo.recorrenciaId;
     absorver = vinculo.absorver;
   } catch (err) {
@@ -6066,16 +6084,14 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
   if (recorrenciaId && absorver.length > 0) {
     try {
       // Predicado repetido no DELETE (não só na leitura): fecha a janela entre
-      // consultar e apagar. Se a projeção deixou de ser projeção nesse meio
-      // tempo, o DELETE não pega nada e o INSERT vinculado bate no índice
-      // único — tratado logo abaixo.
+      // consultar e apagar. `projetada = TRUE` é a marca explícita — nunca
+      // apaga lançamento real, nem quando ele está pendente.
       const del = await pool.query(
         `DELETE FROM transacoes
          WHERE id = ANY($1::int[])
            AND usuario_id = $2
            AND recorrencia_id = $3
-           AND status = 'pendente'
-           AND pluggy_transaction_id IS NULL`,
+           AND projetada = TRUE`,
         [absorver, uid, recorrenciaId]
       );
       console.log(`[DB] Pluggy × recorrência #${recorrenciaId}: ${del.rowCount} projeção(ões) absorvida(s) pelo lançamento real de ${data}.`);
@@ -6101,13 +6117,13 @@ async function upsertTransacaoPluggy(usuarioId, dados) {
     const res = await inserir(recorrenciaId);
     return { id: res.rows[0].id, novo: true, recorrenciaId };
   } catch (err) {
-    // 23505 = unique_violation. Só pode vir do índice parcial
-    // idx_transacoes_recorrencia_mes (o mês daquela recorrência foi ocupado por
-    // outra conexão entre a checagem e o INSERT) — pluggy_transaction_id já foi
-    // testado no início da função. A transação da Pluggy precisa entrar de
-    // qualquer jeito: perder o vínculo é aceitável, perder o lançamento não.
+    // 23505 = unique_violation. No modelo de acumulação o INSERT real não tem
+    // índice que o proíba — este ramo cobre o caso em que a migração que
+    // derruba idx_transacoes_recorrencia_mes falhou e a trava antiga ainda
+    // está de pé no banco. A transação da Pluggy precisa entrar de qualquer
+    // jeito: perder o vínculo é aceitável, perder o lançamento não.
     if (recorrenciaId && err.code === '23505') {
-      console.error(`[DB] Pluggy × recorrência #${recorrenciaId}: mês já ocupado no momento do INSERT — transação gravada sem vínculo.`);
+      console.error(`[DB] Pluggy × recorrência #${recorrenciaId}: INSERT vinculado recusado pelo banco (trava antiga ainda ativa?) — transação gravada sem vínculo.`);
       const res = await inserir(null);
       return { id: res.rows[0].id, novo: true, recorrenciaId: null };
     }
