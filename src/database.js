@@ -1883,8 +1883,17 @@ async function desativarRecorrencia(usuarioId, recorrenciaId) {
     `UPDATE recorrencias SET ativo = FALSE WHERE id = $1 AND usuario_id = $2`,
     [recorrenciaId, uid]
   );
+  // Só apaga o que o PRÓPRIO sistema projetou. Uma pendente vinda da Pluggy
+  // (compra de cartão ainda não fechada, por exemplo) é fato consumado no
+  // extrato do usuário: desativar a regra significa "pare de projetar", nunca
+  // "apague o que já aconteceu". Sem o pluggy_transaction_id IS NULL o
+  // lançamento real sumiria da tela e o sync incremental não o traria de
+  // volta — a janela dele só busca transações novas.
   await pool.query(
-    `DELETE FROM transacoes WHERE recorrencia_id = $1 AND usuario_id = $2 AND status = 'pendente'`,
+    `DELETE FROM transacoes
+     WHERE recorrencia_id = $1 AND usuario_id = $2
+       AND status = 'pendente'
+       AND pluggy_transaction_id IS NULL`,
     [recorrenciaId, uid]
   );
 }

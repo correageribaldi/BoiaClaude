@@ -292,6 +292,28 @@ test('erro que não é violação de unicidade continua propagando (não engole 
   );
 });
 
+// ── Consequência do vínculo: o que "desativar recorrência" pode apagar ──────
+
+test('desativarRecorrencia apaga só o que o sistema projetou, nunca a pendente vinda da Pluggy', async (t) => {
+  mockResolverIdentidade(t);
+  silenciarLogs(t);
+  // Com o vínculo automático, uma compra de cartão ainda não fechada (status
+  // pendente na Pluggy) passa a carregar recorrencia_id. Desativar a regra
+  // significa "pare de projetar", não "apague o que já aconteceu no extrato" —
+  // e o sync incremental não traria o lançamento de volta.
+  const chamadas = [];
+  t.mock.method(db.pool, 'query', async (sql, params) => {
+    chamadas.push({ sql, params });
+    return { rows: [], rowCount: 0 };
+  });
+
+  await db.desativarRecorrencia(USUARIO, 42);
+
+  const del = chamadas.find((c) => c.sql.includes('DELETE FROM transacoes'));
+  assert.match(del.sql, /status = 'pendente'/);
+  assert.match(del.sql, /pluggy_transaction_id IS NULL/);
+});
+
 // ── Quando o vínculo NÃO é avaliado ──────────────────────────────────────────
 
 test('transação já existente (UPDATE) não reavalia vínculo — não fica indo e voltando a cada re-sync', async (t) => {
