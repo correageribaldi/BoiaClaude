@@ -212,6 +212,12 @@ app.get('/api/transactions', autenticar, async (req, res) => {
             .filter(t => t.recorrencia_id != null)
             .map(t => t.recorrencia_id)
         );
+        // Mês consolidado está fechado por decisão do usuário: mesmo sem
+        // nenhuma entrada real (ele consolidou justamente para dizer "não veio
+        // nada"), não pode ganhar projeção materializada de novo.
+        for (const c of await db.listarConsolidacoesNoPeriodo(req.usuarioId, dataInicio, dataFim)) {
+          idsComTransacao.add(c.recorrencia_id);
+        }
 
         const projetadas = ocorrencias
           .filter(o => !idsComTransacao.has(o.recorrencia_id))
@@ -394,6 +400,41 @@ app.delete('/api/recurrences/:id', autenticar, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[WEB] DELETE /api/recurrences/:id:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Consolidar: fecha o mês de uma recorrência pelo total REAL que entrou.
+// Ver consolidarRecorrenciaMes em src/database.js para o efeito completo —
+// grava a soma, apaga a projeção remanescente, fecha o balde. Reversível.
+app.post('/api/recorrencias/:id/consolidar', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const { competencia } = req.body;
+    if (!/^\d{4}-\d{2}$/.test(String(competencia || ''))) {
+      return res.status(400).json({ erro: 'competencia é obrigatória (YYYY-MM)' });
+    }
+    const resultado = await db.consolidarRecorrenciaMes(req.usuarioId, id, competencia);
+    if (resultado.erro === 'nao_encontrada') return res.status(404).json({ erro: 'Recorrência não encontrada' });
+    res.json(resultado);
+  } catch (err) {
+    console.error('[WEB] POST /api/recorrencias/:id/consolidar:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.delete('/api/recorrencias/:id/consolidar', autenticar, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ erro: 'ID inválido' });
+    const competencia = String(req.query.competencia || '');
+    if (!/^\d{4}-\d{2}$/.test(competencia)) {
+      return res.status(400).json({ erro: 'competencia é obrigatória (YYYY-MM)' });
+    }
+    res.json(await db.desconsolidarRecorrenciaMes(req.usuarioId, id, competencia));
+  } catch (err) {
+    console.error('[WEB] DELETE /api/recorrencias/:id/consolidar:', err.message);
     res.status(500).json({ erro: err.message });
   }
 });

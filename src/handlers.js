@@ -6046,9 +6046,25 @@ async function handleAgenda(usuarioId, periodo) {
   // Calcular projeções de recorrências para o período
   const ocorrencias = db.calcularOcorrenciasNoPerodo(regras, dataInicioObj, dataFimObj);
 
-  // Overlay: remover ocorrências que já têm transação real (pelo recorrencia_id)
-  const idsComTransacao = new Set(transacoes.filter(t => t.recorrencia_id != null).map(t => t.recorrencia_id));
-  const ocorrenciasSemCobertura = ocorrencias.filter(o => !idsComTransacao.has(o.recorrencia_id));
+  // Overlay: a ocorrência entra pelo que AINDA FALTA entrar naquele mês, não
+  // por "existe ou não existe transação". Recorrência que já recebeu parte do
+  // previsto continua esperando a diferença; a parte que entrou já está na
+  // lista de transações reais logo abaixo. Mesma conta de faltaDaOcorrencia
+  // usada no painel — ver src/database.js.
+  const somaPorChave = new Map();
+  for (const t of transacoes) {
+    if (t.recorrencia_id == null) continue;
+    const chave = `${t.recorrencia_id}|${String(t.data).slice(0, 7)}`;
+    somaPorChave.set(chave, (somaPorChave.get(chave) || 0) + (Number(t.valor) || 0));
+  }
+  const regraPorId = new Map(regras.map(r => [r.id, r]));
+  const ocorrenciasSemCobertura = ocorrencias
+    .map((o) => {
+      const chave = `${o.recorrencia_id}|${String(o.data).slice(0, 7)}`;
+      const falta = db.faltaDaOcorrencia(o, regraPorId.get(o.recorrencia_id), somaPorChave.get(chave) || 0);
+      return falta > 0 ? { ...o, valor: falta } : null;
+    })
+    .filter(Boolean);
 
   // Montar listas finais: transações reais + projeções sem cobertura
   const receitasReais   = transacoes.filter(t => t.tipo === 'receita');

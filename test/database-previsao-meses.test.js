@@ -19,7 +19,10 @@ function congelarHoje(t, isoUtc) {
 // Monta o pool falso a partir de um cenário declarativo.
 //   regras   → linhas de listarRecorrencias
 //   lancadas → linhas agregadas de transacoes (chave/tipo/total)
-//   vinculos → pares recorrencia_id + chave que JÁ viraram transação
+//   vinculos → tripla recorrencia_id + chave + total já entrado naquele mês.
+//              Virou SOMA (era só existência) com o modelo de acumulação: um
+//              mês que recebeu parte do previsto ainda projeta a diferença.
+//   consolidados → { recorrencia_id, competencia } fechados pelo usuário
 //   cartoes  → ids de cartão do usuário
 //   faturas  → pares cartao_id + chave que já têm transação "Fatura %"
 //   parcelas → { [cartaoId]: [{ valor, mes }] } — alimenta o projetarFaturasCartao
@@ -30,13 +33,14 @@ function congelarHoje(t, isoUtc) {
 function mockPool(t, cenario = {}) {
   const {
     regras = [], lancadas = [], vinculos = [], cartoes = [], faturas = [], parcelas = {},
-    parceladas = [],
+    parceladas = [], consolidados = [],
   } = cenario;
 
   t.mock.method(db.pool, 'query', async (sql, params) => {
+    if (sql.includes('FROM recorrencias_consolidacoes')) return { rows: consolidados };
     if (sql.includes('FROM recorrencias')) return { rows: regras };
     if (sql.includes('GROUP BY chave, tipo')) return { rows: lancadas };
-    if (sql.includes('DISTINCT recorrencia_id')) return { rows: vinculos };
+    if (sql.includes('GROUP BY recorrencia_id, chave')) return { rows: vinculos };
     if (sql.includes('FROM cartoes')) return { rows: cartoes.map(id => ({ id })) };
     if (sql.includes('DISTINCT cartao_id')) return { rows: faturas };
     if (sql.includes('parcela_grupo IS NOT NULL')) return { rows: parceladas };
@@ -120,7 +124,7 @@ test('projetarProximosMeses: parcela pendente futura já materializada NÃO é c
   mockPool(t, {
     regras: [REGRA_ALUGUEL],
     lancadas: [{ chave: '2026-09', tipo: 'despesa', total: 2000 }],
-    vinculos: [{ recorrencia_id: 1, chave: '2026-09' }],
+    vinculos: [{ recorrencia_id: 1, chave: '2026-09', total: 2000 }],
   });
 
   const r = await db.projetarProximosMeses('user1@c.us', 6);
@@ -142,7 +146,7 @@ test('projetarProximosMeses: supressão é por mês, não por regra — outros m
   mockPool(t, {
     regras: [REGRA_ALUGUEL],
     lancadas: [{ chave: '2026-08', tipo: 'despesa', total: 2000 }],
-    vinculos: [{ recorrencia_id: 1, chave: '2026-08' }],
+    vinculos: [{ recorrencia_id: 1, chave: '2026-08', total: 2000 }],
   });
 
   const r = await db.projetarProximosMeses('user1@c.us', 6);
@@ -151,6 +155,48 @@ test('projetarProximosMeses: supressão é por mês, não por regra — outros m
   for (const m of r.meses.slice(1)) {
     assert.equal(m.despesas.fixas, 2000, `${m.chave} não pode perder a projeção`);
   }
+});
+
+// ── Acumulação na previsão: o mês que recebeu parte do previsto ainda espera
+// a diferença. Antes disto a projeção era tudo ou nada — qualquer entrada
+// zerava o mês inteiro e a previsão subestimava o que ainda vinha. ──────────
+
+test('projetarProximosMeses: mês parcial projeta só a diferença que falta', async (t) => {
+  mockResolverIdentidade(t);
+  congelarHoje(t, '2026-08-10T15:00:00Z');
+  // Setembro recebeu R$ 800 de um aluguel de R$ 2.000: faltam R$ 1.200.
+  mockPool(t, {
+    regras: [REGRA_ALUGUEL],
+    lancadas: [{ chave: '2026-09', tipo: 'despesa', total: 800 }],
+    vinculos: [{ recorrencia_id: 1, chave: '2026-09', total: 800 }],
+  });
+
+  const r = await db.projetarProximosMeses('user1@c.us', 6);
+  const setembro = r.meses.find(m => m.chave === '2026-09');
+
+  assert.equal(setembro.despesas.lancadas, 800);
+  assert.equal(setembro.despesas.fixas, 1200, 'projeta a diferença, não o previsto cheio');
+  assert.equal(setembro.despesas.total, 2000, 'o mês continua valendo o previsto');
+});
+
+test('projetarProximosMeses: mês consolidado não projeta nada, nem a diferença', async (t) => {
+  mockResolverIdentidade(t);
+  congelarHoje(t, '2026-08-10T15:00:00Z');
+  // O usuário fechou setembro com os R$ 800 que entraram: o resto não vem.
+  mockPool(t, {
+    regras: [REGRA_ALUGUEL],
+    lancadas: [{ chave: '2026-09', tipo: 'despesa', total: 800 }],
+    vinculos: [{ recorrencia_id: 1, chave: '2026-09', total: 800 }],
+    consolidados: [{ recorrencia_id: 1, competencia: '2026-09', valor_total: 800 }],
+  });
+
+  const r = await db.projetarProximosMeses('user1@c.us', 6);
+  const setembro = r.meses.find(m => m.chave === '2026-09');
+  const outubro  = r.meses.find(m => m.chave === '2026-10');
+
+  assert.equal(setembro.despesas.fixas, 0);
+  assert.equal(setembro.despesas.total, 800, 'setembro vale o que realmente entrou');
+  assert.equal(outubro.despesas.fixas, 2000, 'consolidar setembro não muda o previsto de outubro');
 });
 
 test('projetarProximosMeses: fatura de cartão projetada entra só onde não há fatura lançada', async (t) => {

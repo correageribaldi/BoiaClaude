@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const pluggyCrypto = require('./pluggyCrypto');
 const { normalizarEstabelecimento } = require('./estabelecimento');
 const { projetarParcelasRestantes } = require('./parcelamento');
-const { filtrarRecorrenciasCompativeis, baldeFechado } = require('./recorrencia-match');
+const { filtrarRecorrenciasCompativeis, baldeFechado, janelaEncerradaEm } = require('./recorrencia-match');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -1716,45 +1716,58 @@ async function resumoMensal(usuarioId, mes, ano) {
     if (ocorrencias.length > 0) {
       const ids    = [...new Set(ocorrencias.map(o => o.recorrencia_id))];
       const anoMes = `${a}-${mesStr}`;
+      // SOMA, não existência: com acumulação, ter uma entrada não quer dizer
+      // que o mês está satisfeito — pode ter chegado metade. Projeções entram
+      // na soma de propósito, porque elas já aparecem em `totais` como
+      // lançadas; somá-las aqui é o que zera a projeção extra.
       const existRes = await pool.query(
-        `SELECT DISTINCT recorrencia_id FROM transacoes
+        `SELECT recorrencia_id, SUM(valor)::float AS total FROM transacoes
          WHERE usuario_id = $1
            AND recorrencia_id = ANY($2::int[])
-           AND TO_CHAR(data, 'YYYY-MM') = $3`,
+           AND TO_CHAR(data, 'YYYY-MM') = $3
+         GROUP BY recorrencia_id`,
         [uid, ids, anoMes]
       );
-      const jaTemTransacao = new Set(existRes.rows.map(row => row.recorrencia_id));
+      const somaPorRegra = new Map(existRes.rows.map(row => [row.recorrencia_id, row.total]));
+      const consolidadas = new Set(
+        (await listarConsolidacoesNoPeriodo(uid, anoMes, anoMes)).map(c => c.recorrencia_id)
+      );
+      const porId = new Map(regras.map(r => [r.id, r]));
       const hoje = dataHojeBR();
 
       for (const o of ocorrencias) {
-        if (jaTemTransacao.has(o.recorrencia_id)) continue;
+        const falta = faltaDaOcorrencia(
+          o, porId.get(o.recorrencia_id), somaPorRegra.get(o.recorrencia_id) || 0,
+          { consolidado: consolidadas.has(o.recorrencia_id), hoje }
+        );
+        if (falta <= 0) continue;
 
         // Adicionar à lista de totais como pendente
         const existingTotais = totais.find(t => t.tipo === o.tipo && t.status === 'pendente');
         if (existingTotais) {
-          existingTotais.total += o.valor;
+          existingTotais.total += falta;
           existingTotais.quantidade += 1;
         } else {
-          totais.push({ tipo: o.tipo, status: 'pendente', total: o.valor, quantidade: 1 });
+          totais.push({ tipo: o.tipo, status: 'pendente', total: falta, quantidade: 1 });
         }
 
         // Adicionar à lista por categoria
         const catEx = porCategoria.find(c => c.tipo === o.tipo && c.categoria === (o.categoria || 'Outros'));
         if (catEx) {
-          catEx.total += o.valor;
+          catEx.total += falta;
           catEx.quantidade += 1;
         } else {
-          porCategoria.push({ tipo: o.tipo, categoria: o.categoria || 'Outros', total: o.valor, quantidade: 1 });
+          porCategoria.push({ tipo: o.tipo, categoria: o.categoria || 'Outros', total: falta, quantidade: 1 });
         }
 
         // Se data já passou → atrasada
         if (o.data < hoje) {
           const atrasadaEx = atrasadas.find(at => at.tipo === o.tipo);
           if (atrasadaEx) {
-            atrasadaEx.total += o.valor;
+            atrasadaEx.total += falta;
             atrasadaEx.quantidade += 1;
           } else {
-            atrasadas.push({ tipo: o.tipo, quantidade: 1, total: o.valor });
+            atrasadas.push({ tipo: o.tipo, quantidade: 1, total: falta });
           }
         }
       }
@@ -1810,7 +1823,7 @@ async function buscarTransacoesPorDescricao(usuarioId, query, tipo) {
 // aqui: qualquer caminho de edição fica protegido do re-sync sem duplicar regra.
 async function atualizarTransacao(usuarioId, numeroUsuario, campo, novoValor) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
-  const camposPermitidos = ['valor', 'data', 'descricao', 'categoria', 'conta_id'];
+  const camposPermitidos = ['valor', 'data', 'descricao', 'categoria', 'conta_id', 'observacao'];
   if (!camposPermitidos.includes(campo)) throw new Error(`Campo inválido: ${campo}`);
 
   // Literal fixo, não interpolação de entrada — campo já passou pelo whitelist
@@ -2052,6 +2065,156 @@ async function desativarRecorrencia(usuarioId, recorrenciaId) {
   );
 }
 
+// ─── Consolidação de um mês de recorrência ───────────────────────────────────
+//
+// O QUE É: o usuário declara que aquele mês daquela recorrência está encerrado
+// pelo que REALMENTE entrou, e não pelo valor previsto na regra. Nasce do caso
+// em que o previsto é R$ 1.850 e o mês fechou com R$ 1.500 + R$ 350, ou com
+// R$ 1.500 e mais nada.
+//
+// EFEITO CONCRETO NO BANCO, e nada além disto:
+//   1. grava uma linha em recorrencias_consolidacoes com a SOMA REAL das
+//      entradas daquele mês (projeções não entram na soma) e a quantidade;
+//   2. apaga as projeções remanescentes do mês — o mês está fechado, uma
+//      projeção pendurada ali contaria valor que não vai entrar;
+//   3. nada mais. Não altera as transações reais, não mexe em recorrencias.valor.
+//
+// EFEITO NA PREVISÃO: enquanto existir a linha de consolidação, aquele mês
+// daquela recorrência não recebe projeção nenhuma (nem cheia nem parcial) nos
+// cálculos de saldo, resumo e previsão, e novas entradas da Pluggy não entram
+// mais no balde — viram lançamentos avulsos. Os MESES SEGUINTES seguem
+// projetando recorrencias.valor normalmente: consolidar setembro não redefine
+// o previsto de outubro. Se o valor da regra mudou de fato, quem muda é o
+// usuário, editando a regra — o sistema não reescreve a expectativa futura por
+// conta de um mês atípico.
+//
+// REVERSÍVEL: sim, e é por isso que é tabela e não flag espalhada nas
+// transações. desconsolidarRecorrenciaMes apaga a linha e o mês volta a
+// acumular e a projetar. O que a reversão NÃO desfaz são as projeções apagadas
+// no passo 2 — elas eram estimativa, e o painel materializa de novo na
+// próxima visita se o mês ainda estiver sem entrada real.
+async function consolidarRecorrenciaMes(usuarioId, recorrenciaId, competencia) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  if (!/^\d{4}-\d{2}$/.test(String(competencia || ''))) {
+    throw new Error('Competência inválida (esperado YYYY-MM)');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const regraRes = await client.query(
+      `SELECT id FROM recorrencias WHERE id = $1 AND usuario_id = $2`,
+      [recorrenciaId, uid]
+    );
+    if (regraRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { erro: 'nao_encontrada' };
+    }
+
+    const somaRes = await client.query(
+      `SELECT COALESCE(SUM(valor), 0)::float AS total, COUNT(*)::int AS quantidade
+       FROM transacoes
+       WHERE usuario_id = $1 AND recorrencia_id = $2
+         AND projetada = FALSE
+         AND TO_CHAR(data, 'YYYY-MM') = $3`,
+      [uid, recorrenciaId, competencia]
+    );
+    const { total, quantidade } = somaRes.rows[0];
+
+    const projRes = await client.query(
+      `DELETE FROM transacoes
+       WHERE usuario_id = $1 AND recorrencia_id = $2
+         AND projetada = TRUE
+         AND TO_CHAR(data, 'YYYY-MM') = $3`,
+      [uid, recorrenciaId, competencia]
+    );
+
+    // Reconsolidar o mesmo mês é atualizar o total, não empilhar linha nova.
+    await client.query(
+      `INSERT INTO recorrencias_consolidacoes (usuario_id, recorrencia_id, competencia, valor_total, quantidade)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (recorrencia_id, competencia)
+       DO UPDATE SET valor_total = EXCLUDED.valor_total,
+                     quantidade = EXCLUDED.quantidade,
+                     consolidado_em = NOW()`,
+      [uid, recorrenciaId, competencia, total, quantidade]
+    );
+
+    await client.query('COMMIT');
+    return {
+      recorrencia_id: recorrenciaId,
+      competencia,
+      valor_total: total,
+      quantidade,
+      projecoes_removidas: projRes.rowCount,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* conexão já perdida */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function desconsolidarRecorrenciaMes(usuarioId, recorrenciaId, competencia) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `DELETE FROM recorrencias_consolidacoes
+     WHERE usuario_id = $1 AND recorrencia_id = $2 AND competencia = $3`,
+    [uid, recorrenciaId, competencia]
+  );
+  return { desfeita: res.rowCount > 0 };
+}
+
+// Consolidações que tocam um período, como chaves "recorrencia_id|YYYY-MM" —
+// formato direto de consumo por quem projeta (ver faltaDaOcorrencia).
+async function listarConsolidacoesNoPeriodo(usuarioId, dataInicio, dataFim) {
+  const uid = await resolverUsuarioPrincipal(usuarioId);
+  const res = await pool.query(
+    `SELECT recorrencia_id, competencia, valor_total::float AS valor_total
+     FROM recorrencias_consolidacoes
+     WHERE usuario_id = $1
+       AND competencia >= $2 AND competencia <= $3`,
+    [uid, String(dataInicio).slice(0, 7), String(dataFim).slice(0, 7)]
+  );
+  return res.rows;
+}
+
+// faltaDaOcorrencia -> quanto daquela ocorrência ainda se espera receber/pagar
+//
+// Substitui o antigo "já tem transação no mês? então não projeta nada". Com
+// acumulação, ter UMA entrada não significa que o mês está satisfeito: o
+// previsto pode ter chegado pela metade. Projetar o previsto cheio contaria
+// duas vezes; projetar zero esconde o que ainda falta. A conta certa é a
+// diferença.
+//
+// Casos, nesta ordem:
+//   consolidado          -> 0   (usuário fechou o mês; o que entrou é o que foi)
+//   nada entrou          -> previsto  (comportamento de sempre, inclusive o
+//                                      alerta de "atrasada" quando a data passa)
+//   soma >= previsto     -> 0
+//   parcial, janela aberta -> previsto - soma
+//   parcial, janela fechada -> 0  (o resto não vem mais)
+//
+// Repare que só o caso parcial é novo. Mês sem nenhuma entrada e mês já
+// coberto continuam se comportando exatamente como antes.
+function faltaDaOcorrencia(ocorrencia, regra, somaReal, opcoes = {}) {
+  const { consolidado = false, hoje = dataHojeBR() } = opcoes;
+  if (consolidado) return 0;
+
+  const previsto = Number(ocorrencia.valor) || 0;
+  const soma = Number(somaReal) || 0;
+  if (soma <= 0) return previsto;
+  if (soma >= previsto) return 0;
+
+  const mesOcorrencia = String(ocorrencia.data).slice(0, 7);
+  const mesHoje = String(hoje).slice(0, 7);
+  if (mesOcorrencia < mesHoje) return 0;
+  if (mesOcorrencia > mesHoje) return previsto - soma;
+  return janelaEncerradaEm(regra, hoje) ? 0 : previsto - soma;
+}
+
 async function excluirTransacao(usuarioId, numeroUsuario) {
   const uid = await resolverUsuarioPrincipal(usuarioId);
   const result = await pool.query(
@@ -2081,7 +2244,7 @@ async function consultarTransacoes(usuarioId, filtros = {}) {
   // edição carrega e o que a busca por texto casa.
   let query = `
     SELECT numero_usuario as id, tipo, valor::float, descricao, categoria, TO_CHAR(data, 'YYYY-MM-DD') as data, status, recorrencia_id, cartao_id, conta_id,
-           parcela_atual, parcela_total,
+           parcela_atual, parcela_total, observacao, projetada,
            CASE WHEN descricao_manual THEN descricao
                 ELSE COALESCE(NULLIF(descricao_exibicao, ''), descricao) END AS descricao_exibida
     FROM transacoes
@@ -2282,19 +2445,30 @@ async function calcularSaldos(usuarioId) {
     if (ocorrencias.length > 0) {
       const ids = [...new Set(ocorrencias.map(o => o.recorrencia_id))];
       const anoMes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+      // Mesma troca de "existe?" por "quanto falta?" de resumoMensal: o saldo
+      // previsto de um mês que recebeu R$ 1.500 de R$ 1.850 ainda espera
+      // R$ 350, não R$ 0 nem R$ 1.850.
       const existRes = await pool.query(
-        `SELECT DISTINCT recorrencia_id FROM transacoes
+        `SELECT recorrencia_id, SUM(valor)::float AS total FROM transacoes
          WHERE usuario_id = $1
            AND recorrencia_id = ANY($2::int[])
-           AND TO_CHAR(data, 'YYYY-MM') = $3`,
+           AND TO_CHAR(data, 'YYYY-MM') = $3
+         GROUP BY recorrencia_id`,
         [uid, ids, anoMes]
       );
-      const jaTemTransacao = new Set(existRes.rows.map(row => row.recorrencia_id));
+      const somaPorRegra = new Map(existRes.rows.map(row => [row.recorrencia_id, row.total]));
+      const consolidadas = new Set(
+        (await listarConsolidacoesNoPeriodo(uid, anoMes, anoMes)).map(c => c.recorrencia_id)
+      );
+      const porId = new Map(regras.map(r => [r.id, r]));
       for (const o of ocorrencias) {
-        if (!jaTemTransacao.has(o.recorrencia_id)) {
-          if (o.tipo === 'receita') receitasRecorrentes += o.valor;
-          else despesasRecorrentes += o.valor;
-        }
+        const falta = faltaDaOcorrencia(
+          o, porId.get(o.recorrencia_id), somaPorRegra.get(o.recorrencia_id) || 0,
+          { consolidado: consolidadas.has(o.recorrencia_id), hoje: dataHojeBR() }
+        );
+        if (falta <= 0) continue;
+        if (o.tipo === 'receita') receitasRecorrentes += falta;
+        else despesasRecorrentes += falta;
       }
     }
   }
@@ -2490,22 +2664,37 @@ async function projetarProximosMeses(usuarioId, meses = 6) {
     if (ocorrencias.length > 0) {
       const ids = [...new Set(ocorrencias.map(o => o.recorrencia_id))];
       const existRes = await pool.query(
-        `SELECT DISTINCT recorrencia_id, TO_CHAR(data, 'YYYY-MM') as chave
+        `SELECT recorrencia_id, TO_CHAR(data, 'YYYY-MM') as chave, SUM(valor)::float AS total
          FROM transacoes
          WHERE usuario_id = $1
            AND recorrencia_id = ANY($2::int[])
-           AND data >= $3 AND data <= $4`,
+           AND data >= $3 AND data <= $4
+         GROUP BY recorrencia_id, chave`,
         [uid, ids, inicioJanela, fimJanela]
       );
-      const jaMaterializada = new Set(existRes.rows.map(r => `${r.recorrencia_id}|${r.chave}`));
+      // Soma por (recorrência, mês). O que já entrou é contado em LANÇADAS
+      // (bloco 1 acima); FIXAS só carrega o que falta para o previsto — é
+      // assim que o mês parcial fecha certo em vez de contar duas vezes ou
+      // sumir com a diferença.
+      const somaPorChave = new Map(existRes.rows.map(r => [`${r.recorrencia_id}|${r.chave}`, r.total]));
+      const consolidadas = new Set(
+        (await listarConsolidacoesNoPeriodo(uid, inicioJanela, fimJanela))
+          .map(c => `${c.recorrencia_id}|${c.competencia}`)
+      );
+      const porId = new Map(regras.map(r => [r.id, r]));
+      const hojeISO = dataHojeBR();
 
       for (const o of ocorrencias) {
         const chave = o.data.substring(0, 7);
         const m = porChave.get(chave);
         if (!m) continue;
-        if (jaMaterializada.has(`${o.recorrencia_id}|${chave}`)) continue;
-        if (o.tipo === 'receita') m.receitas.fixas += o.valor;
-        else m.despesas.fixas += o.valor;
+        const falta = faltaDaOcorrencia(
+          o, porId.get(o.recorrencia_id), somaPorChave.get(`${o.recorrencia_id}|${chave}`) || 0,
+          { consolidado: consolidadas.has(`${o.recorrencia_id}|${chave}`), hoje: hojeISO }
+        );
+        if (falta <= 0) continue;
+        if (o.tipo === 'receita') m.receitas.fixas += falta;
+        else m.despesas.fixas += falta;
       }
     }
   }
@@ -6571,6 +6760,10 @@ module.exports = {
   garantirCategoriaPrincipal,
   upsertTransacaoPluggy,
   resolverVinculoRecorrencia,
+  consolidarRecorrenciaMes,
+  desconsolidarRecorrenciaMes,
+  listarConsolidacoesNoPeriodo,
+  faltaDaOcorrencia,
   removerTransacoesPluggyPorIds,
   calibrarSaldoInicialConta,
   atualizarCartaoPluggyDados,
